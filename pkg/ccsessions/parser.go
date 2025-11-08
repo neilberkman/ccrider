@@ -53,12 +53,16 @@ type rawEntry struct {
 }
 
 // ParseFile parses a Claude Code session JSONL file
-func ParseFile(path string) (*ParsedSession, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open file: %w", err)
+func ParseFile(path string) (session *ParsedSession, err error) {
+	file, ferr := os.Open(path)
+	if ferr != nil {
+		return nil, fmt.Errorf("failed to open file: %w", ferr)
 	}
-	defer file.Close()
+	defer func() {
+		if cerr := file.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("failed to close file: %w", cerr)
+		}
+	}()
 
 	// Get file info for metadata
 	info, err := file.Stat()
@@ -70,7 +74,7 @@ func ParseFile(path string) (*ParsedSession, error) {
 	sessionID := filepath.Base(path)
 	sessionID = sessionID[:len(sessionID)-len(filepath.Ext(sessionID))]
 
-	session := &ParsedSession{
+	session = &ParsedSession{
 		SessionID: sessionID,
 		FilePath:  path,
 		FileSize:  info.Size(),
