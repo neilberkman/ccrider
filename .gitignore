@@ -1,0 +1,40 @@
+# Binaries
+ccrider
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Go
+*.test
+*.out
+vendor/
+go.work
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Worktrees
+.worktrees/
+
+# Build artifacts
+dist/
+build/
+bin/
+
+# Test coverage
+*.coverprofile
+coverage.html
