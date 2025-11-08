@@ -29,6 +29,14 @@ func TestSessionValidation(t *testing.T) {
 			},
 			wantErr: true,
 		},
+		{
+			name: "missing project path",
+			session: Session{
+				SessionID: "abc-123",
+				// ProjectPath is missing - should fail validation
+			},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
