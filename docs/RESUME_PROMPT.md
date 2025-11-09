@@ -28,11 +28,12 @@ This solves the problem of sessions that moved between directories (like git wor
 The default template is:
 
 ```
-Resuming session from {{last_updated}}. You were last working in: {{last_cwd}}
+Resuming session from {{last_updated}}.{{#different_directory}} You were last working in: {{last_cwd}}{{/different_directory}}
 
 IMPORTANT: This session has been inactive for {{time_since}}. Before proceeding: check git status, look around to understand what changed, and be careful not to overwrite any work in progress.
-
-First, navigate to where you left off.
+{{#different_directory}}
+First, navigate to where you left off: cd {{last_cwd}}{{/different_directory}}{{#same_directory}}
+You're already in the right directory.{{/same_directory}}
 ```
 
 ## Available Variables
@@ -43,6 +44,8 @@ You can use these variables in your custom template:
 - `{{last_cwd}}` - Last working directory from the session (e.g., "/Users/you/project/.worktrees/feature")
 - `{{time_since}}` - Human-readable time ago (e.g., "6 hours ago", "2 days ago")
 - `{{project_path}}` - Original project directory where session started (e.g., "/Users/you/project")
+- `{{#same_directory}}...{{/same_directory}}` - Conditional: renders only if `last_cwd` == `project_path`
+- `{{#different_directory}}...{{/different_directory}}` - Conditional: renders only if `last_cwd` != `project_path`
 
 ## Customizing the Prompt
 
@@ -86,7 +89,21 @@ This shows:
 ### Minimal prompt:
 
 ```
-Back in session from {{time_since}} ago. You were in {{last_cwd}}
+Back in session from {{time_since}} ago.{{#different_directory}} You were in {{last_cwd}}{{/different_directory}}
+```
+
+### Using conditionals for directory navigation:
+
+```
+Resuming from {{time_since}}.
+{{#same_directory}}
+You're already in the right directory ({{project_path}}).
+{{/same_directory}}
+{{#different_directory}}
+Navigate to where you left off: cd {{last_cwd}}
+{{/different_directory}}
+
+Check git status before continuing.
 ```
 
 ### Detailed prompt with checklist:

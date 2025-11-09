@@ -157,6 +157,7 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "o":
 		// Open in new terminal window
 		if m.currentSession != nil {
+			m.err = nil // Clear any previous errors
 			return m, openInNewTerminal(
 				m.currentSession.Session.ID,
 				m.currentSession.Session.Project,
@@ -287,7 +288,7 @@ func openInNewTerminal(sessionID, projectPath, lastCwd, updatedAt string) tea.Cm
 			return terminalSpawnedMsg{
 				success: false,
 				message: "Failed to load config",
-				err:     err,
+				err:     fmt.Errorf("config load: %w", err),
 			}
 		}
 
@@ -302,11 +303,16 @@ func openInNewTerminal(sessionID, projectPath, lastCwd, updatedAt string) tea.Cm
 			timeSince = humanize.Time(updatedTime)
 		}
 
-		templateData := map[string]string{
-			"last_updated": updatedAt,
-			"last_cwd":     lastCwd,
-			"time_since":   timeSince,
-			"project_path": projectPath,
+		// Check if we're already in the right directory
+		sameDir := (lastCwd == projectPath)
+
+		templateData := map[string]interface{}{
+			"last_updated":     updatedAt,
+			"last_cwd":         lastCwd,
+			"time_since":       timeSince,
+			"project_path":     projectPath,
+			"same_directory":   sameDir,
+			"different_directory": !sameDir,
 		}
 
 		// Render the resume prompt
@@ -334,14 +340,14 @@ func openInNewTerminal(sessionID, projectPath, lastCwd, updatedAt string) tea.Cm
 		if err := spawner.Spawn(spawnCfg); err != nil {
 			return terminalSpawnedMsg{
 				success: false,
-				message: fmt.Sprintf("Failed to spawn terminal: %v", err),
+				message: fmt.Sprintf("Spawn failed: %v | Cmd: %s", err, shellCmd),
 				err:     err,
 			}
 		}
 
 		return terminalSpawnedMsg{
 			success: true,
-			message: "Opened session in new terminal window",
+			message: fmt.Sprintf("SUCCESS: Spawned terminal with: %s", shellCmd),
 		}
 	}
 }
@@ -365,7 +371,7 @@ func (m Model) viewDetail() string {
 		content += searchBox
 	} else {
 		footer := fmt.Sprintf("\n%3.f%%", m.viewport.ScrollPercent()*100)
-		footer += "\n\nr: resume | f: fork | c: copy command | /: search | j/k: scroll | esc: back | q: quit"
+		footer += "\n\nr: resume | f: fork | o: open in new terminal | c: copy | /: search | j/k: scroll | esc: back | q: quit"
 		content += footer
 	}
 

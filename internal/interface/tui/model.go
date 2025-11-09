@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"fmt"
+
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -98,9 +100,14 @@ func New(database *db.DB) Model {
 	inSessionTi.CharLimit = 200
 	inSessionTi.Width = 50
 
+	// Create empty list initially (will be populated when sessions load)
+	emptyList := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
+	emptyList.Title = "Claude Code Sessions"
+
 	return Model{
 		db:              database,
 		mode:            listView,
+		list:            emptyList,
 		searchInput:     ti,
 		inSessionSearch: inSessionTi,
 	}
@@ -186,9 +193,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case terminalSpawnedMsg:
 		// Show feedback about terminal spawn (success or failure)
-		// For now, just set error state if it failed
-		if !msg.success {
-			m.err = msg.err
+		// Show message regardless of success/failure so user knows what happened
+		if msg.success {
+			m.err = fmt.Errorf("%s", msg.message) // Show success message
+		} else {
+			m.err = fmt.Errorf("%s: %v", msg.message, msg.err)
 		}
 		// TUI stays open - user can continue browsing
 		return m, nil

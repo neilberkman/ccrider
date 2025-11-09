@@ -6,11 +6,12 @@ import (
 	"strings"
 )
 
-const DefaultResumePrompt = `Resuming session from {{last_updated}}. You were last working in: {{last_cwd}}
+const DefaultResumePrompt = `Resuming session from {{last_updated}}.{{#different_directory}} You were last working in: {{last_cwd}}{{/different_directory}}
 
 IMPORTANT: This session has been inactive for {{time_since}}. Before proceeding: check git status, look around to understand what changed, and be careful not to overwrite any work in progress.
-
-First, navigate to where you left off.`
+{{#different_directory}}
+First, navigate to where you left off: cd {{last_cwd}}{{/different_directory}}{{#same_directory}}
+You're already in the right directory.{{/same_directory}}`
 
 type Config struct {
 	ResumePromptTemplate string

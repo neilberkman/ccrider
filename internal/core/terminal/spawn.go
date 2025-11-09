@@ -58,13 +58,49 @@ func (s *Spawner) Spawn(cfg SpawnConfig) error {
 }
 
 func (s *Spawner) spawnGhostty(cfg SpawnConfig) error {
-	// Ghostty: +new-window opens in existing instance
-	cmd := exec.Command("ghostty",
-		"+new-window",
-		"--working-directory="+cfg.WorkingDir,
-		"-e", "bash", "-l", "-c", cfg.Command,
-	)
-	return cmd.Start()
+	// Ghostty on macOS: Use clipboard + paste approach
+	// Save current clipboard, use it, then restore
+	fullCmd := fmt.Sprintf("cd %s && %s", cfg.WorkingDir, cfg.Command)
+
+	// Save current clipboard
+	savedClip, _ := exec.Command("pbpaste").Output()
+
+	// Copy command to clipboard
+	clipCmd := exec.Command("pbcopy")
+	clipCmd.Stdin = strings.NewReader(fullCmd)
+	if err := clipCmd.Run(); err != nil {
+		return fmt.Errorf("failed to copy to clipboard: %w", err)
+	}
+
+	script := `
+tell application "Ghostty" to activate
+delay 0.2
+
+tell application "System Events"
+	tell process "Ghostty"
+		keystroke "t" using command down
+		delay 0.3
+		keystroke "v" using command down
+		delay 0.1
+		keystroke return
+	end tell
+end tell
+`
+
+	cmd := exec.Command("osascript", "-e", script)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+
+	// Restore clipboard in background after a delay
+	go func() {
+		exec.Command("sleep", "1").Run()
+		restoreCmd := exec.Command("pbcopy")
+		restoreCmd.Stdin = strings.NewReader(string(savedClip))
+		restoreCmd.Run()
+	}()
+
+	return nil
 }
 
 func (s *Spawner) spawnITerm(cfg SpawnConfig) error {
