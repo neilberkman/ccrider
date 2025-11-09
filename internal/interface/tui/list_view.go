@@ -18,9 +18,11 @@ func (i sessionListItem) FilterValue() string {
 }
 
 func (i sessionListItem) Title() string {
+	// Priority: Claude summary > first message (truncated) > session ID
 	if i.session.Summary != "" {
 		return i.session.Summary
 	}
+	// Summary is already populated with first message in loadSessions, but if empty, show ID
 	return i.session.ID[:12] + "..."
 }
 
