@@ -34,6 +34,7 @@ type Model struct {
 	searchInput        textinput.Model
 	searchResults      []searchResult
 	searchSelectedIdx  int
+	searchViewOffset   int // First visible result index (for scrolling)
 
 	// In-session search state
 	inSessionSearch      textinput.Model
@@ -115,11 +116,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.searchSelectedIdx >= len(m.searchResults) {
 					m.searchSelectedIdx = len(m.searchResults) - 1
 				}
+				// Scroll viewport if needed (adjust in search_view.go)
+				linesPerResult := 7
+				availableHeight := m.height - 8
+				maxVisibleResults := availableHeight / linesPerResult
+				if maxVisibleResults < 2 {
+					maxVisibleResults = 2
+				}
+				if m.searchSelectedIdx >= m.searchViewOffset+maxVisibleResults {
+					m.searchViewOffset = m.searchSelectedIdx - maxVisibleResults + 1
+				}
 				return m, nil
 			} else if msg.Type == tea.MouseWheelUp {
 				m.searchSelectedIdx--
 				if m.searchSelectedIdx < 0 {
 					m.searchSelectedIdx = 0
+				}
+				// Scroll viewport if needed
+				if m.searchSelectedIdx < m.searchViewOffset {
+					m.searchViewOffset = m.searchSelectedIdx
 				}
 				return m, nil
 			}

@@ -35,6 +35,7 @@ func (m Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.searchInput.SetValue("")
 		m.searchResults = nil
 		m.searchSelectedIdx = 0
+		m.searchViewOffset = 0
 		return m, nil
 
 	case "enter":
@@ -52,6 +53,7 @@ func (m Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.searchSelectedIdx >= len(m.searchResults) {
 				m.searchSelectedIdx = len(m.searchResults) - 1
 			}
+			m = adjustSearchViewport(m)
 		}
 		return m, nil
 
@@ -61,6 +63,7 @@ func (m Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.searchSelectedIdx < 0 {
 				m.searchSelectedIdx = 0
 			}
+			m = adjustSearchViewport(m)
 		}
 		return m, nil
 	}
@@ -71,7 +74,29 @@ func (m Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Perform live search on every keystroke
 	query := m.searchInput.Value()
 	m.searchSelectedIdx = 0
+	m.searchViewOffset = 0 // Reset scroll on new search
 	return m, tea.Batch(cmd, performSearch(m.db, query))
+}
+
+// adjustSearchViewport ensures selected item is visible
+func adjustSearchViewport(m Model) Model {
+	linesPerResult := 7
+	availableHeight := m.height - 8
+	maxVisibleResults := availableHeight / linesPerResult
+	if maxVisibleResults < 2 {
+		maxVisibleResults = 2
+	}
+
+	// If selected is below visible window, scroll down
+	if m.searchSelectedIdx >= m.searchViewOffset+maxVisibleResults {
+		m.searchViewOffset = m.searchSelectedIdx - maxVisibleResults + 1
+	}
+	// If selected is above visible window, scroll up
+	if m.searchSelectedIdx < m.searchViewOffset {
+		m.searchViewOffset = m.searchSelectedIdx
+	}
+
+	return m
 }
 
 func (m Model) viewSearch() string {
@@ -98,16 +123,20 @@ func (m Model) viewSearch() string {
 		// Reserve: 4 for header, 4 for footer = 8 total
 		linesPerResult := 7
 		availableHeight := m.height - 8
-		maxResults := availableHeight / linesPerResult
+		maxVisibleResults := availableHeight / linesPerResult
 
-		if maxResults < 2 {
-			maxResults = 2
-		}
-		if maxResults > len(m.searchResults) {
-			maxResults = len(m.searchResults)
+		if maxVisibleResults < 2 {
+			maxVisibleResults = 2
 		}
 
-		for i := 0; i < maxResults; i++ {
+		// Calculate visible window
+		startIdx := m.searchViewOffset
+		endIdx := startIdx + maxVisibleResults
+		if endIdx > len(m.searchResults) {
+			endIdx = len(m.searchResults)
+		}
+
+		for i := startIdx; i < endIdx; i++ {
 			result := m.searchResults[i]
 			isSelected := i == m.searchSelectedIdx
 
@@ -154,8 +183,12 @@ func (m Model) viewSearch() string {
 			b.WriteString("\n\n")
 		}
 
-		if len(m.searchResults) > maxResults {
-			b.WriteString(searchMetaStyle.Render(fmt.Sprintf("... and %d more results\n", len(m.searchResults)-maxResults)))
+		// Show scroll indicators
+		if startIdx > 0 {
+			b.WriteString(searchMetaStyle.Render(fmt.Sprintf("... %d results above\n", startIdx)))
+		}
+		if endIdx < len(m.searchResults) {
+			b.WriteString(searchMetaStyle.Render(fmt.Sprintf("... %d results below\n", len(m.searchResults)-endIdx)))
 		}
 	}
 
