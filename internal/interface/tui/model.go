@@ -182,6 +182,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.searchResults = msg.results
 		return m, nil
 
+	case sessionLaunchedMsg:
+		if msg.success {
+			// Successfully launched - quit ccrider
+			return m, tea.Quit
+		} else {
+			// Failed to launch - show error
+			m.err = msg.err
+			return m, nil
+		}
+
 	case errMsg:
 		m.err = msg.err
 		return m, nil
