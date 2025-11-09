@@ -1,0 +1,106 @@
+package tui
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/charmbracelet/bubbles/list"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/dustin/go-humanize"
+)
+
+var (
+	titleStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("205"))
+
+	itemStyle = lipgloss.NewStyle().
+			PaddingLeft(2)
+
+	selectedItemStyle = lipgloss.NewStyle().
+				PaddingLeft(1).
+				Foreground(lipgloss.Color("170")).
+				Bold(true)
+)
+
+type sessionListItem struct {
+	session sessionItem
+}
+
+func (i sessionListItem) FilterValue() string {
+	return i.session.Summary + " " + i.session.Project
+}
+
+func (i sessionListItem) Title() string {
+	if i.session.Summary != "" {
+		return i.session.Summary
+	}
+	return i.session.ID[:12] + "..."
+}
+
+func (i sessionListItem) Description() string {
+	return fmt.Sprintf("%s | %d messages | Updated: %s",
+		i.session.Project, i.session.MessageCount, formatTime(i.session.UpdatedAt))
+}
+
+func createSessionList(sessions []sessionItem, width, height int) list.Model {
+	items := make([]list.Item, len(sessions))
+	for i, s := range sessions {
+		items[i] = sessionListItem{session: s}
+	}
+
+	delegate := list.NewDefaultDelegate()
+	delegate.Styles.SelectedTitle = selectedItemStyle
+	delegate.Styles.SelectedDesc = selectedItemStyle.Faint(true)
+
+	l := list.New(items, delegate, width, height-4)
+	l.Title = "Claude Code Sessions"
+	l.Styles.Title = titleStyle
+	l.SetShowStatusBar(true)
+	l.SetFilteringEnabled(true)
+
+	return l
+}
+
+func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "enter":
+		if selected, ok := m.list.SelectedItem().(sessionListItem); ok {
+			return m, loadSessionDetail(m.db, selected.session.ID)
+		}
+		return m, nil
+
+	case "/":
+		m.mode = searchView
+		return m, nil
+	}
+
+	var cmd tea.Cmd
+	m.list, cmd = m.list.Update(msg)
+	return m, cmd
+}
+
+func (m Model) viewList() string {
+	header := titleStyle.Render("Claude Code Sessions")
+	footer := "\n\nPress Enter to view | / to search | ? for help | q to quit"
+
+	if len(m.sessions) == 0 {
+		return header + "\n\nNo sessions found. Run 'ccrider sync' to import sessions." + footer
+	}
+
+	return m.list.View() + footer
+}
+
+func formatTime(t string) string {
+	// Parse SQLite datetime format
+	parsed, err := time.Parse("2006-01-02T15:04:05.999Z07:00", t)
+	if err != nil {
+		// Try without timezone
+		parsed, err = time.Parse("2006-01-02 15:04:05", t)
+		if err != nil {
+			return t
+		}
+	}
+	return humanize.Time(parsed)
+}

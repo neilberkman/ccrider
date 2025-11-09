@@ -130,7 +130,27 @@ func (i *Importer) ImportSession(session *ccsessions.ParsedSession) error {
 
 	// Insert messages (use INSERT OR IGNORE to skip duplicates from resumed sessions)
 	messagesInserted := 0
+	foundSubstantiveUser := false
+
 	for _, msg := range session.Messages {
+		// Skip messages with no text content (tool_use/tool_result only)
+		trimmed := strings.TrimSpace(msg.TextContent)
+		if trimmed == "" {
+			continue
+		}
+
+		// Skip all messages until we find the first substantive user message
+		// (warmups, greetings, etc. are all noise before actual conversation)
+		if !foundSubstantiveUser {
+			if msg.Type == "user" && trimmed != "Warmup" && len(trimmed) > 10 {
+				// Found first real user message - start including from here
+				foundSubstantiveUser = true
+			} else {
+				// Skip everything before first substantive user message
+				continue
+			}
+		}
+
 		result, err := tx.Exec(`
 			INSERT OR IGNORE INTO messages (
 				uuid, session_id, parent_uuid, type, sender,

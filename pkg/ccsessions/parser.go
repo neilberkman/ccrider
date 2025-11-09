@@ -156,13 +156,32 @@ func parseMessage(raw *rawEntry, sequence int) (*ParsedMessage, error) {
 	// Extract text content and sender based on type
 	switch raw.Type {
 	case "user":
-		var userMsg struct {
+		// Try array format first (newer format with tool_use/tool_result)
+		var userMsgArray struct {
 			Role    string `json:"role"`
-			Content string `json:"content"`
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text,omitempty"`
+			} `json:"content"`
 		}
-		if err := json.Unmarshal(raw.Message, &userMsg); err == nil {
-			msg.TextContent = userMsg.Content
+		if err := json.Unmarshal(raw.Message, &userMsgArray); err == nil {
+			// Extract text from text blocks only
+			for _, block := range userMsgArray.Content {
+				if block.Type == "text" {
+					msg.TextContent += block.Text + "\n"
+				}
+			}
 			msg.Sender = "human"
+		} else {
+			// Fall back to string format (older format)
+			var userMsgString struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			}
+			if err := json.Unmarshal(raw.Message, &userMsgString); err == nil {
+				msg.TextContent = userMsgString.Content
+				msg.Sender = "human"
+			}
 		}
 
 	case "assistant":
