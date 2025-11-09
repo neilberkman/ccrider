@@ -107,6 +107,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 
+	case tea.MouseMsg:
+		// Handle mouse wheel scrolling in search view
+		if m.mode == searchView && len(m.searchResults) > 0 {
+			if msg.Type == tea.MouseWheelDown {
+				m.searchSelectedIdx++
+				if m.searchSelectedIdx >= len(m.searchResults) {
+					m.searchSelectedIdx = len(m.searchResults) - 1
+				}
+				return m, nil
+			} else if msg.Type == tea.MouseWheelUp {
+				m.searchSelectedIdx--
+				if m.searchSelectedIdx < 0 {
+					m.searchSelectedIdx = 0
+				}
+				return m, nil
+			}
+		}
+
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "q":

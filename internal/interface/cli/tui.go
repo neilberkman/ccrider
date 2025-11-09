@@ -31,6 +31,7 @@ func runTUI(cmd *cobra.Command, args []string) error {
 	p := tea.NewProgram(
 		tui.New(database),
 		tea.WithAltScreen(),
+		tea.WithMouseCellMotion(),
 	)
 
 	if _, err := p.Run(); err != nil {
