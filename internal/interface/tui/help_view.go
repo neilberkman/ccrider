@@ -33,6 +33,10 @@ SESSION LIST VIEW
 
 SESSION DETAIL VIEW
 ───────────────────
+  r            Resume session in Claude Code
+  f            Fork session (new session ID)
+  c            Copy resume command to clipboard
+  /            Search within session
   j/k          Scroll line by line
   d/u          Scroll half page
   g/G          Jump to top/bottom
@@ -41,8 +45,8 @@ SESSION DETAIL VIEW
 
 SEARCH VIEW
 ───────────
-  Type         Enter search query
-  Enter        Search or open selected session
+  Type         Enter search query (live)
+  Enter        Open selected session
   j/k          Navigate results
   esc          Back to session list
   q            Quit

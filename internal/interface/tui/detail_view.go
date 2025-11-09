@@ -134,10 +134,24 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = listView
 		return m, nil
 
-	case "o", "O":
-		// Open/resume session in Claude Code
+	case "r":
+		// Resume session in Claude Code
 		if m.currentSession != nil {
-			return m, launchClaudeSession(m.currentSession.Session.ID)
+			return m, launchClaudeSession(m.currentSession.Session.ID, false)
+		}
+		return m, nil
+
+	case "f":
+		// Fork session (resume with new session ID)
+		if m.currentSession != nil {
+			return m, launchClaudeSession(m.currentSession.Session.ID, true)
+		}
+		return m, nil
+
+	case "c":
+		// Copy resume command to clipboard
+		if m.currentSession != nil {
+			return m, copyResumeCommand(m.currentSession.Session.ID)
 		}
 		return m, nil
 
@@ -191,17 +205,52 @@ func findMatches(messages []messageItem, query string) []int {
 
 type sessionLaunchedMsg struct {
 	success bool
+	message string
 	err     error
 }
 
-func launchClaudeSession(sessionID string) tea.Cmd {
+func launchClaudeSession(sessionID string, fork bool) tea.Cmd {
 	return func() tea.Msg {
-		cmd := exec.Command("claude", "--resume", sessionID)
+		args := []string{"--resume", sessionID}
+		if fork {
+			args = append(args, "--fork-session")
+		}
+
+		cmd := exec.Command("claude", args...)
 		err := cmd.Start()
 		if err != nil {
 			return sessionLaunchedMsg{success: false, err: err}
 		}
-		return sessionLaunchedMsg{success: true}
+
+		msg := "Launching Claude Code..."
+		if fork {
+			msg = "Forking session in Claude Code..."
+		}
+		return sessionLaunchedMsg{success: true, message: msg}
+	}
+}
+
+func copyResumeCommand(sessionID string) tea.Cmd {
+	return func() tea.Msg {
+		cmd := "claude --resume " + sessionID
+		// Try to copy to clipboard using pbcopy (macOS)
+		clipCmd := exec.Command("pbcopy")
+		clipCmd.Stdin = strings.NewReader(cmd)
+		err := clipCmd.Run()
+
+		if err != nil {
+			// Fallback: just show the command
+			return sessionLaunchedMsg{
+				success: false,
+				message: "Command: " + cmd,
+				err:     err,
+			}
+		}
+
+		return sessionLaunchedMsg{
+			success: true,
+			message: "Resume command copied to clipboard!",
+		}
 	}
 }
 
@@ -224,7 +273,7 @@ func (m Model) viewDetail() string {
 		content += searchBox
 	} else {
 		footer := fmt.Sprintf("\n%3.f%%", m.viewport.ScrollPercent()*100)
-		footer += "\n\no: open in Claude | /: search | j/k: scroll | d/u: half page | g/G: top/bottom | esc: back | q: quit"
+		footer += "\n\nr: resume | f: fork | c: copy command | /: search | j/k: scroll | esc: back | q: quit"
 		content += footer
 	}
 
