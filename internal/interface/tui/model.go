@@ -58,12 +58,13 @@ type Model struct {
 }
 
 type sessionItem struct {
-	ID          string
-	Summary     string
-	Project     string
-	MessageCount int
-	UpdatedAt   string
-	CreatedAt   string
+	ID                string
+	Summary           string
+	Project           string
+	MessageCount      int
+	UpdatedAt         string
+	CreatedAt         string
+	MatchesCurrentDir bool // True if session project matches current working directory
 }
 
 type sessionDetail struct {
