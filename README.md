@@ -96,8 +96,21 @@ Once configured, you can ask Claude to:
 
 The MCP server provides read-only access to your session database with full-text search capabilities.
 
+## Configuration
+
+See [CONFIGURATION.md](docs/CONFIGURATION.md) for details on configuring ccrider.
+
+Quick example to skip permission prompts:
+
+```toml
+# ~/.config/ccrider/config.toml
+dangerously_skip_permissions = true
+```
+
 ## Documentation
 
+- [Configuration](docs/CONFIGURATION.md)
+- [Resume Prompts](docs/RESUME_PROMPT.md)
 - [Design Document](docs/plans/2025-11-08-ccrider-design.md)
 - [Schema Documentation](research/schema.md)
 - [Requirements](research/requirements.md)
