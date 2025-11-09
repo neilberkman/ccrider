@@ -76,11 +76,8 @@ func (m Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) viewSearch() string {
 	var b strings.Builder
 
-	// Header
-	b.WriteString(searchHeaderStyle.Render("Search Sessions"))
-	b.WriteString("\n\n")
-
-	// Search input
+	// Header with search input
+	b.WriteString(searchHeaderStyle.Render("Search: "))
 	b.WriteString(m.searchInput.View())
 	b.WriteString("\n\n")
 
