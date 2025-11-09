@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/yourusername/ccrider/internal/core/config"
 	"github.com/yourusername/ccrider/internal/core/db"
+	"github.com/yourusername/ccrider/internal/core/session"
 	"github.com/yourusername/ccrider/internal/interface/tui"
 )
 
@@ -122,10 +123,8 @@ func execClaude(sessionID, projectPath, lastCwd, updatedAt string, fork bool) er
 		cmd = fmt.Sprintf("claude --resume %s \"$(cat %s)\"", sessionID, tmpfile.Name())
 	}
 
-	// IMPORTANT: Start in projectPath so claude --resume can find the session
-	// The resume prompt already tells Claude where the session last was (lastCwd)
-	// DO NOT CHANGE THIS - see commit db2bc33
-	workDir := projectPath
+	// Resolve working directory (always projectPath, see session.ResolveWorkingDir)
+	workDir := session.ResolveWorkingDir(projectPath, lastCwd)
 
 	// Debug: print what we're doing
 	fmt.Fprintf(os.Stderr, "[ccrider] cd %s && %s\n", workDir, cmd)

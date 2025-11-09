@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/dustin/go-humanize"
 	"github.com/yourusername/ccrider/internal/core/config"
+	"github.com/yourusername/ccrider/internal/core/session"
 	"github.com/yourusername/ccrider/internal/core/terminal"
 )
 
@@ -251,12 +252,8 @@ func launchClaudeSession(sessionID, projectPath, lastCwd, updatedAt string, fork
 
 func copyResumeCommand(sessionID, projectPath, lastCwd string) tea.Cmd {
 	return func() tea.Msg {
-		// Decide which directory to use
-		// Prefer lastCwd if it's different from projectPath (e.g., git worktrees)
-		workDir := projectPath
-		if lastCwd != "" && lastCwd != projectPath {
-			workDir = lastCwd
-		}
+		// Resolve working directory (always projectPath, see session.ResolveWorkingDir)
+		workDir := session.ResolveWorkingDir(projectPath, lastCwd)
 
 		// Create a command that cd's to the working directory and runs claude
 		var cmd string
@@ -353,9 +350,8 @@ func openInNewTerminal(sessionID, projectPath, lastCwd, updatedAt string) tea.Cm
 		// Use shell with the prompt as an argument to claude
 		shellCmd := fmt.Sprintf("claude --resume %s '%s'", sessionID, resumePrompt)
 
-		// IMPORTANT: Start in projectPath so claude --resume can find the session
-		// The resume prompt already tells Claude where the session last was (lastCwd)
-		workDir := projectPath
+		// Resolve working directory (always projectPath, see session.ResolveWorkingDir)
+		workDir := session.ResolveWorkingDir(projectPath, lastCwd)
 
 		// Create spawner with custom command from config
 		spawner := &terminal.Spawner{
