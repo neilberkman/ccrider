@@ -236,6 +236,11 @@ func loadSessions(database *db.DB, filterByProject bool, projectPath string) tea
 				s.Summary = firstLine(firstMsg, 80)
 			}
 
+			// Check if session matches current directory (for highlighting)
+			if projectPath != "" && strings.Contains(s.Project, projectPath) {
+				s.MatchesCurrentDir = true
+			}
+
 			sessions = append(sessions, s)
 		}
 
