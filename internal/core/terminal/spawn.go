@@ -17,6 +17,7 @@ type Spawner struct {
 type SpawnConfig struct {
 	WorkingDir string
 	Command    string // Full shell command to execute
+	Message    string // Optional message to show before command (e.g., "Starting Claude Code...")
 }
 
 // Spawn opens a new terminal window and runs the command
@@ -60,7 +61,11 @@ func (s *Spawner) Spawn(cfg SpawnConfig) error {
 func (s *Spawner) spawnGhostty(cfg SpawnConfig) error {
 	// Ghostty on macOS: Use clipboard + paste approach
 	// Save current clipboard, use it, then restore
-	fullCmd := fmt.Sprintf("cd %s && %s", cfg.WorkingDir, cfg.Command)
+	fullCmd := fmt.Sprintf("cd %s", cfg.WorkingDir)
+	if cfg.Message != "" {
+		fullCmd += fmt.Sprintf(" && echo '%s'", cfg.Message)
+	}
+	fullCmd += fmt.Sprintf(" && %s", cfg.Command)
 
 	// Save current clipboard
 	savedClip, _ := exec.Command("pbpaste").Output()
@@ -105,14 +110,20 @@ end tell
 
 func (s *Spawner) spawnITerm(cfg SpawnConfig) error {
 	// iTerm2: Use AppleScript
+	fullCmd := fmt.Sprintf("cd %s", cfg.WorkingDir)
+	if cfg.Message != "" {
+		fullCmd += fmt.Sprintf(" && echo '%s'", cfg.Message)
+	}
+	fullCmd += fmt.Sprintf(" && %s", cfg.Command)
+
 	script := fmt.Sprintf(`
 tell application "iTerm"
 	create window with default profile
 	tell current session of current window
-		write text "cd %s && %s"
+		write text %s
 	end tell
 end tell
-`, shellEscape(cfg.WorkingDir), shellEscape(cfg.Command))
+`, shellEscape(fullCmd))
 
 	cmd := exec.Command("osascript", "-e", script)
 	return cmd.Start()
@@ -121,7 +132,12 @@ end tell
 func (s *Spawner) spawnTerminalApp(cfg SpawnConfig) error {
 	// Terminal.app: Use AppleScript to open new tab in frontmost window
 	// If no windows exist, creates a new window
-	fullCmd := fmt.Sprintf("cd %s && %s", shellEscape(cfg.WorkingDir), shellEscape(cfg.Command))
+	fullCmd := fmt.Sprintf("cd %s", cfg.WorkingDir)
+	if cfg.Message != "" {
+		fullCmd += fmt.Sprintf(" && echo '%s'", cfg.Message)
+	}
+	fullCmd += fmt.Sprintf(" && %s", cfg.Command)
+	fullCmd = shellEscape(fullCmd)
 
 	script := fmt.Sprintf(`
 tell application "Terminal"

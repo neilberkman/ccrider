@@ -362,6 +362,7 @@ func openInNewTerminal(sessionID, projectPath, lastCwd, updatedAt string) tea.Cm
 		spawnCfg := terminal.SpawnConfig{
 			WorkingDir: workDir,
 			Command:    shellCmd,
+			Message:    "Starting Claude Code (this may take a few seconds)...",
 		}
 
 		if err := spawner.Spawn(spawnCfg); err != nil {

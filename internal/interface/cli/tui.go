@@ -126,8 +126,16 @@ func execClaude(sessionID, projectPath, lastCwd, updatedAt string, fork bool) er
 	// Resolve working directory (always projectPath, see session.ResolveWorkingDir)
 	workDir := session.ResolveWorkingDir(projectPath, lastCwd)
 
-	// Debug: print what we're doing
+	// Show what we're doing
 	fmt.Fprintf(os.Stderr, "[ccrider] cd %s && %s\n", workDir, cmd)
+
+	// Start spinner (Claude Code can take a few seconds to start)
+	spinner := session.NewSpinner("Starting Claude Code (this may take a few seconds)...")
+	spinner.Start()
+	defer spinner.Stop()
+
+	// Give spinner a moment to show before exec
+	time.Sleep(100 * time.Millisecond)
 
 	// Change to working directory
 	if workDir != "" {
