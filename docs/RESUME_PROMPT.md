@@ -28,13 +28,12 @@ This solves the problem of sessions that moved between directories (like git wor
 The default template is:
 
 ```
-Resuming session from {{last_updated}}.{{#different_directory}} You were last working in: {{last_cwd}}{{/different_directory}}
+Resuming session from {{last_updated}}.{{#different_directory}} Started in your last working directory: {{last_cwd}}{{/different_directory}}
 
 IMPORTANT: This session has been inactive for {{time_since}}. Before proceeding: check git status, look around to understand what changed, and be careful not to overwrite any work in progress.
-{{#different_directory}}
-First, navigate to where you left off: cd {{last_cwd}}{{/different_directory}}{{#same_directory}}
-You're already in the right directory.{{/same_directory}}
 ```
+
+Note: ccrider automatically starts Claude in the correct directory (preferring `last_cwd` over `project_path`), so the template doesn't need to tell Claude to navigate - it's already there!
 
 ## Available Variables
 
@@ -92,15 +91,12 @@ This shows:
 Back in session from {{time_since}} ago.{{#different_directory}} You were in {{last_cwd}}{{/different_directory}}
 ```
 
-### Using conditionals for directory navigation:
+### Using conditionals for context:
 
 ```
 Resuming from {{time_since}}.
-{{#same_directory}}
-You're already in the right directory ({{project_path}}).
-{{/same_directory}}
 {{#different_directory}}
-Navigate to where you left off: cd {{last_cwd}}
+Note: Started in {{last_cwd}} (you were working in a different directory than the project root).
 {{/different_directory}}
 
 Check git status before continuing.
