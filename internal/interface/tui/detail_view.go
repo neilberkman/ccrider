@@ -137,21 +137,21 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "r":
 		// Resume session in Claude Code
 		if m.currentSession != nil {
-			return m, launchClaudeSession(m.currentSession.Session.ID, false)
+			return m, launchClaudeSession(m.currentSession.Session.ID, m.currentSession.Session.Project, false)
 		}
 		return m, nil
 
 	case "f":
 		// Fork session (resume with new session ID)
 		if m.currentSession != nil {
-			return m, launchClaudeSession(m.currentSession.Session.ID, true)
+			return m, launchClaudeSession(m.currentSession.Session.ID, m.currentSession.Session.Project, true)
 		}
 		return m, nil
 
 	case "c":
 		// Copy resume command to clipboard
 		if m.currentSession != nil {
-			return m, copyResumeCommand(m.currentSession.Session.ID)
+			return m, copyResumeCommand(m.currentSession.Session.ID, m.currentSession.Session.Project)
 		}
 		return m, nil
 
@@ -209,7 +209,7 @@ type sessionLaunchedMsg struct {
 	err     error
 }
 
-func launchClaudeSession(sessionID string, fork bool) tea.Cmd {
+func launchClaudeSession(sessionID, projectPath string, fork bool) tea.Cmd {
 	return func() tea.Msg {
 		args := []string{"--resume", sessionID}
 		if fork {
@@ -217,22 +217,34 @@ func launchClaudeSession(sessionID string, fork bool) tea.Cmd {
 		}
 
 		cmd := exec.Command("claude", args...)
+		// Set working directory to project path
+		if projectPath != "" {
+			cmd.Dir = projectPath
+		}
+
 		err := cmd.Start()
 		if err != nil {
 			return sessionLaunchedMsg{success: false, err: err}
 		}
 
-		msg := "Launching Claude Code..."
+		msg := fmt.Sprintf("Launching Claude Code in %s...", projectPath)
 		if fork {
-			msg = "Forking session in Claude Code..."
+			msg = fmt.Sprintf("Forking session in %s...", projectPath)
 		}
 		return sessionLaunchedMsg{success: true, message: msg}
 	}
 }
 
-func copyResumeCommand(sessionID string) tea.Cmd {
+func copyResumeCommand(sessionID, projectPath string) tea.Cmd {
 	return func() tea.Msg {
-		cmd := "claude --resume " + sessionID
+		// Create a command that cd's to the project and runs claude
+		var cmd string
+		if projectPath != "" {
+			cmd = fmt.Sprintf("cd %s && claude --resume %s", projectPath, sessionID)
+		} else {
+			cmd = fmt.Sprintf("claude --resume %s", sessionID)
+		}
+
 		// Try to copy to clipboard using pbcopy (macOS)
 		clipCmd := exec.Command("pbcopy")
 		clipCmd.Stdin = strings.NewReader(cmd)
