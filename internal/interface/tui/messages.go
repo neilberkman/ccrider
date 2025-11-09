@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"database/sql"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -217,9 +216,9 @@ func firstLine(s string, maxLen int) string {
 
 func loadSessionDetail(database *db.DB, sessionID string) tea.Cmd {
 	return func() tea.Msg {
-		// Get session info including last cwd
+		// Get session info + last cwd
 		var session sessionItem
-		var lastCwd sql.NullString
+		var lastCwd string
 		err := database.QueryRow(`
 			SELECT
 				s.session_id,
@@ -228,18 +227,21 @@ func loadSessionDetail(database *db.DB, sessionID string) tea.Cmd {
 				(SELECT COUNT(*) FROM messages WHERE session_id = s.id) as actual_message_count,
 				s.updated_at,
 				s.created_at,
-				(SELECT cwd FROM messages WHERE session_id = s.id AND cwd IS NOT NULL AND cwd != '' AND cwd != '/' ORDER BY sequence DESC LIMIT 1) as last_cwd
+				COALESCE(
+					(SELECT cwd FROM messages
+					 WHERE session_id = s.id
+					   AND cwd IS NOT NULL
+					   AND cwd != ''
+					   AND cwd != '/'
+					 ORDER BY sequence DESC LIMIT 1),
+					s.project_path
+				) as last_cwd
 			FROM sessions s
 			WHERE s.session_id = ?
 		`, sessionID).Scan(&session.ID, &session.Summary, &session.Project,
 			&session.MessageCount, &session.UpdatedAt, &session.CreatedAt, &lastCwd)
 		if err != nil {
 			return errMsg{err}
-		}
-
-		// Use last cwd if available, otherwise fall back to project_path
-		if lastCwd.Valid && lastCwd.String != "" {
-			session.Project = lastCwd.String
 		}
 
 		// Get messages
@@ -265,8 +267,10 @@ func loadSessionDetail(database *db.DB, sessionID string) tea.Cmd {
 
 		return sessionDetailLoadedMsg{
 			detail: sessionDetail{
-				Session:  session,
-				Messages: messages,
+				Session:   session,
+				Messages:  messages,
+				LastCwd:   lastCwd,
+				UpdatedAt: session.UpdatedAt,
 			},
 		}
 	}

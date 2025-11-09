@@ -10,24 +10,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-var (
-	userStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("cyan")).
-			Bold(true)
-
-	assistantStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("green")).
-			Bold(true)
-
-	systemStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("yellow")).
-			Bold(true)
-
-	timestampStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240")).
-			Faint(true)
-)
-
 func createViewport(detail sessionDetail, width, height int) viewport.Model {
 	vp := viewport.New(width, height-8)
 	vp.SetContent(renderConversation(detail))
@@ -137,14 +119,26 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "r":
 		// Resume session in Claude Code
 		if m.currentSession != nil {
-			return m, launchClaudeSession(m.currentSession.Session.ID, m.currentSession.Session.Project, false)
+			return m, launchClaudeSession(
+				m.currentSession.Session.ID,
+				m.currentSession.Session.Project,
+				m.currentSession.LastCwd,
+				m.currentSession.UpdatedAt,
+				false,
+			)
 		}
 		return m, nil
 
 	case "f":
 		// Fork session (resume with new session ID)
 		if m.currentSession != nil {
-			return m, launchClaudeSession(m.currentSession.Session.ID, m.currentSession.Session.Project, true)
+			return m, launchClaudeSession(
+				m.currentSession.Session.ID,
+				m.currentSession.Session.Project,
+				m.currentSession.LastCwd,
+				m.currentSession.UpdatedAt,
+				true,
+			)
 		}
 		return m, nil
 
@@ -209,24 +203,23 @@ type sessionLaunchedMsg struct {
 	err         error
 	sessionID   string
 	projectPath string
+	lastCwd     string
+	updatedAt   string
 	fork        bool
 }
 
-func launchClaudeSession(sessionID, projectPath string, fork bool) tea.Cmd {
+func launchClaudeSession(sessionID, projectPath, lastCwd, updatedAt string, fork bool) tea.Cmd {
 	return func() tea.Msg {
 		// We need to exec() to replace the process, but bubbletea makes this tricky
 		// Instead, we'll return a special message telling the TUI to quit,
 		// then the CLI layer will exec claude
-		args := []string{"--resume", sessionID}
-		if fork {
-			args = append(args, "--fork-session")
-		}
-
 		return sessionLaunchedMsg{
 			success:     true,
 			message:     fmt.Sprintf("cd %s && claude --resume %s", projectPath, sessionID),
 			sessionID:   sessionID,
 			projectPath: projectPath,
+			lastCwd:     lastCwd,
+			updatedAt:   updatedAt,
 			fork:        fork,
 		}
 	}

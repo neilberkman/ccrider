@@ -4,9 +4,13 @@ import (
 	"fmt"
 	"os"
 	"syscall"
+	"time"
 
+	"github.com/cbroglie/mustache"
+	"github.com/dustin/go-humanize"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
+	"github.com/yourusername/ccrider/internal/core/config"
 	"github.com/yourusername/ccrider/internal/core/db"
 	"github.com/yourusername/ccrider/internal/interface/tui"
 )
@@ -46,26 +50,77 @@ func runTUI(cmd *cobra.Command, args []string) error {
 	if m, ok := finalModel.(tui.Model); ok {
 		if m.LaunchSessionID != "" {
 			// Exec claude to replace this process
-			return execClaude(m.LaunchSessionID, m.LaunchProjectPath, m.LaunchFork)
+			return execClaude(
+				m.LaunchSessionID,
+				m.LaunchProjectPath,
+				m.LaunchLastCwd,
+				m.LaunchUpdatedAt,
+				m.LaunchFork,
+			)
 		}
 	}
 
 	return nil
 }
 
-func execClaude(sessionID, projectPath string, fork bool) error {
-	// Build claude command
+func execClaude(sessionID, projectPath, lastCwd, updatedAt string, fork bool) error {
+	// Load config to get resume prompt template
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	// Build template data
+	updatedTime, _ := time.Parse("2006-01-02 15:04:05", updatedAt)
+	if updatedTime.IsZero() {
+		updatedTime, _ = time.Parse(time.RFC3339, updatedAt)
+	}
+
+	timeSince := "unknown"
+	if !updatedTime.IsZero() {
+		timeSince = humanize.Time(updatedTime)
+	}
+
+	templateData := map[string]string{
+		"last_updated": updatedAt,
+		"last_cwd":     lastCwd,
+		"time_since":   timeSince,
+		"project_path": projectPath,
+	}
+
+	// Render the resume prompt
+	resumePrompt, err := mustache.Render(cfg.ResumePromptTemplate, templateData)
+	if err != nil {
+		// Fall back to simple prompt if template fails
+		resumePrompt = fmt.Sprintf("Resuming session. You were last in: %s", lastCwd)
+	}
+
+	// Write prompt to temp file and pass via command substitution
+	// This avoids all shell escaping issues
+	tmpfile, err := os.CreateTemp("", "ccrider-prompt-*.txt")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %w", err)
+	}
+	defer os.Remove(tmpfile.Name())
+
+	if _, err := tmpfile.Write([]byte(resumePrompt)); err != nil {
+		tmpfile.Close()
+		return fmt.Errorf("failed to write prompt: %w", err)
+	}
+	tmpfile.Close()
+
+	// Build claude command with prompt from file
 	var cmd string
 	if fork {
-		cmd = fmt.Sprintf("claude --resume %s --fork-session", sessionID)
+		cmd = fmt.Sprintf("claude --resume %s --fork-session \"$(cat %s)\"", sessionID, tmpfile.Name())
 	} else {
-		cmd = fmt.Sprintf("claude --resume %s", sessionID)
+		cmd = fmt.Sprintf("claude --resume %s \"$(cat %s)\"", sessionID, tmpfile.Name())
 	}
 
 	// Debug: print what we're doing
 	fmt.Fprintf(os.Stderr, "[ccrider] cd %s && %s\n", projectPath, cmd)
 
-	// Change to project directory
+	// Change to project directory (where session files are stored)
 	if projectPath != "" {
 		if err := os.Chdir(projectPath); err != nil {
 			return fmt.Errorf("failed to cd to %s: %w", projectPath, err)

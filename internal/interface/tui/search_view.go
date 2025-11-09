@@ -5,25 +5,6 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-)
-
-var (
-	searchHeaderStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("205"))
-
-	searchMatchStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("170")).
-				Bold(true)
-
-	searchMetaStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("241")).
-			Faint(true)
-
-	searchSelectedStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("170")).
-				Bold(true)
 )
 
 func (m Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -53,7 +34,7 @@ func (m Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.searchSelectedIdx >= len(m.searchResults) {
 				m.searchSelectedIdx = len(m.searchResults) - 1
 			}
-			m = adjustSearchViewport(m)
+			return adjustSearchViewport(m), nil
 		}
 		return m, nil
 
@@ -63,7 +44,7 @@ func (m Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.searchSelectedIdx < 0 {
 				m.searchSelectedIdx = 0
 			}
-			m = adjustSearchViewport(m)
+			return adjustSearchViewport(m), nil
 		}
 		return m, nil
 	}
@@ -76,27 +57,6 @@ func (m Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.searchSelectedIdx = 0
 	m.searchViewOffset = 0 // Reset scroll on new search
 	return m, tea.Batch(cmd, performSearch(m.db, query))
-}
-
-// adjustSearchViewport ensures selected item is visible
-func adjustSearchViewport(m Model) Model {
-	linesPerResult := 7
-	availableHeight := m.height - 8
-	maxVisibleResults := availableHeight / linesPerResult
-	if maxVisibleResults < 2 {
-		maxVisibleResults = 2
-	}
-
-	// If selected is below visible window, scroll down
-	if m.searchSelectedIdx >= m.searchViewOffset+maxVisibleResults {
-		m.searchViewOffset = m.searchSelectedIdx - maxVisibleResults + 1
-	}
-	// If selected is above visible window, scroll up
-	if m.searchSelectedIdx < m.searchViewOffset {
-		m.searchViewOffset = m.searchSelectedIdx
-	}
-
-	return m
 }
 
 func (m Model) viewSearch() string {

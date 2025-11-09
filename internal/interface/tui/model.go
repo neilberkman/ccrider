@@ -45,6 +45,8 @@ type Model struct {
 	// Launch state (for exec after quit)
 	LaunchSessionID   string
 	LaunchProjectPath string
+	LaunchLastCwd     string
+	LaunchUpdatedAt   string
 	LaunchFork        bool
 }
 
@@ -58,8 +60,10 @@ type sessionItem struct {
 }
 
 type sessionDetail struct {
-	Session  sessionItem
-	Messages []messageItem
+	Session   sessionItem
+	Messages  []messageItem
+	LastCwd   string // Last working directory from messages
+	UpdatedAt string // When session was last active
 }
 
 type messageItem struct {
@@ -115,33 +119,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseMsg:
 		// Handle mouse wheel scrolling in search view
-		if m.mode == searchView && len(m.searchResults) > 0 {
+		if m.mode == searchView {
 			if msg.Type == tea.MouseWheelDown {
-				m.searchSelectedIdx++
-				if m.searchSelectedIdx >= len(m.searchResults) {
-					m.searchSelectedIdx = len(m.searchResults) - 1
-				}
-				// Scroll viewport if needed (adjust in search_view.go)
-				linesPerResult := 7
-				availableHeight := m.height - 8
-				maxVisibleResults := availableHeight / linesPerResult
-				if maxVisibleResults < 2 {
-					maxVisibleResults = 2
-				}
-				if m.searchSelectedIdx >= m.searchViewOffset+maxVisibleResults {
-					m.searchViewOffset = m.searchSelectedIdx - maxVisibleResults + 1
-				}
-				return m, nil
+				return handleSearchMouseWheel(m, true), nil
 			} else if msg.Type == tea.MouseWheelUp {
-				m.searchSelectedIdx--
-				if m.searchSelectedIdx < 0 {
-					m.searchSelectedIdx = 0
-				}
-				// Scroll viewport if needed
-				if m.searchSelectedIdx < m.searchViewOffset {
-					m.searchViewOffset = m.searchSelectedIdx
-				}
-				return m, nil
+				return handleSearchMouseWheel(m, false), nil
 			}
 		}
 
@@ -192,6 +174,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Store launch info for CLI to exec after quit
 			m.LaunchSessionID = msg.sessionID
 			m.LaunchProjectPath = msg.projectPath
+			m.LaunchLastCwd = msg.lastCwd
+			m.LaunchUpdatedAt = msg.updatedAt
 			m.LaunchFork = msg.fork
 			return m, tea.Quit
 		} else {
