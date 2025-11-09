@@ -116,6 +116,10 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.projectFilterEnabled = !m.projectFilterEnabled
 		// Reload sessions with new filter
 		return m, loadSessions(m.db, m.projectFilterEnabled, m.currentDirectory)
+
+	case "s":
+		// Trigger sync
+		return m, syncSessions(m.db, m.projectFilterEnabled, m.currentDirectory)
 	}
 
 	var cmd tea.Cmd
@@ -125,7 +129,7 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) viewList() string {
 	header := titleStyle.Render("Claude Code Sessions")
-	footer := "\n\nEnter: view | o: open in new tab | /: search | p: toggle project filter | ?: help | q: quit"
+	footer := "\n\nEnter: view | o: open in new tab | /: search | p: toggle project filter | s: sync | ?: help | q: quit"
 
 	// Show filter status if enabled
 	if m.projectFilterEnabled {
@@ -133,7 +137,7 @@ func (m Model) viewList() string {
 	}
 
 	if len(m.sessions) == 0 {
-		return header + "\n\nNo sessions found. Run 'ccrider sync' to import sessions." + footer
+		return header + "\n\nNo sessions found. Press 's' to sync or run 'ccrider sync'." + footer
 	}
 
 	return m.list.View() + footer

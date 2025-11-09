@@ -1,10 +1,13 @@
 package tui
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/yourusername/ccrider/internal/core/db"
+	"github.com/yourusername/ccrider/internal/core/importer"
 )
 
 type errMsg struct {
@@ -362,5 +365,33 @@ func loadSessionDetail(database *db.DB, sessionID string) tea.Cmd {
 				UpdatedAt: session.UpdatedAt,
 			},
 		}
+	}
+}
+
+type syncCompletedMsg struct {
+	success bool
+	err     error
+}
+
+func syncSessions(database *db.DB, filterByProject bool, projectPath string) tea.Cmd {
+	return func() tea.Msg {
+		// Get default Claude directory
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return errMsg{err}
+		}
+		sourcePath := filepath.Join(home, ".claude", "projects")
+
+		// Run the sync
+		imp := importer.New(database)
+		if err := imp.ImportDirectory(sourcePath, nil); err != nil {
+			return syncCompletedMsg{
+				success: false,
+				err:     err,
+			}
+		}
+
+		// After sync completes, reload sessions
+		return loadSessions(database, filterByProject, projectPath)()
 	}
 }

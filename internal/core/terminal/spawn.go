@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 )
 
@@ -30,9 +31,12 @@ func (s *Spawner) Spawn(cfg SpawnConfig) error {
 	// Auto-detect terminal
 	termProgram := os.Getenv("TERM_PROGRAM")
 
+	// Check TERM_PROGRAM env var first
 	switch termProgram {
 	case "ghostty":
-		return s.spawnGhostty(cfg)
+		if runtime.GOOS == "darwin" {
+			return s.spawnGhostty(cfg)
+		}
 	case "iTerm.app":
 		return s.spawnITerm(cfg)
 	case "Apple_Terminal":
@@ -41,21 +45,39 @@ func (s *Spawner) Spawn(cfg SpawnConfig) error {
 		return s.spawnWezTerm(cfg)
 	case "kitty":
 		return s.spawnKitty(cfg)
-	default:
-		// Try to detect by checking for CLI tools
+	}
+
+	// Try to detect by checking for CLI tools
+	if _, err := exec.LookPath("wezterm"); err == nil {
+		return s.spawnWezTerm(cfg)
+	}
+	if _, err := exec.LookPath("kitty"); err == nil {
+		return s.spawnKitty(cfg)
+	}
+
+	// Linux-specific terminals
+	if runtime.GOOS == "linux" {
+		if _, err := exec.LookPath("gnome-terminal"); err == nil {
+			return s.spawnGnomeTerminal(cfg)
+		}
+		if _, err := exec.LookPath("konsole"); err == nil {
+			return s.spawnKonsole(cfg)
+		}
+		if _, err := exec.LookPath("xterm"); err == nil {
+			return s.spawnXTerm(cfg)
+		}
+	}
+
+	// macOS-specific fallbacks
+	if runtime.GOOS == "darwin" {
 		if _, err := exec.LookPath("ghostty"); err == nil {
 			return s.spawnGhostty(cfg)
 		}
-		if _, err := exec.LookPath("wezterm"); err == nil {
-			return s.spawnWezTerm(cfg)
-		}
-		if _, err := exec.LookPath("kitty"); err == nil {
-			return s.spawnKitty(cfg)
-		}
-
-		// Last resort: macOS Terminal.app via open
+		// Last resort: macOS Terminal.app
 		return s.spawnTerminalApp(cfg)
 	}
+
+	return fmt.Errorf("could not detect supported terminal. Set terminal_command in config")
 }
 
 func (s *Spawner) spawnGhostty(cfg SpawnConfig) error {
@@ -182,6 +204,34 @@ func (s *Spawner) spawnCustom(cfg SpawnConfig) error {
 	cmdStr = strings.ReplaceAll(cmdStr, "{command}", cfg.Command)
 
 	cmd := exec.Command("bash", "-c", cmdStr)
+	return cmd.Start()
+}
+
+func (s *Spawner) spawnGnomeTerminal(cfg SpawnConfig) error {
+	// GNOME Terminal
+	cmd := exec.Command("gnome-terminal",
+		"--working-directory="+cfg.WorkingDir,
+		"--",
+		"bash", "-l", "-c", cfg.Command,
+	)
+	return cmd.Start()
+}
+
+func (s *Spawner) spawnKonsole(cfg SpawnConfig) error {
+	// KDE Konsole
+	cmd := exec.Command("konsole",
+		"--workdir", cfg.WorkingDir,
+		"-e", "bash", "-l", "-c", cfg.Command,
+	)
+	return cmd.Start()
+}
+
+func (s *Spawner) spawnXTerm(cfg SpawnConfig) error {
+	// XTerm - basic but universally available
+	fullCmd := fmt.Sprintf("cd %s && %s", cfg.WorkingDir, cfg.Command)
+	cmd := exec.Command("xterm",
+		"-e", "bash", "-l", "-c", fullCmd,
+	)
 	return cmd.Start()
 }
 
