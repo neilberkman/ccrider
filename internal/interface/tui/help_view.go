@@ -27,7 +27,7 @@ SESSION LIST VIEW
 ─────────────────
   ↑/↓, j/k     Navigate sessions
   Enter        View session details
-  /            Search (coming soon)
+  /            Search messages
   ?            Show this help
   q            Quit
 
@@ -36,6 +36,14 @@ SESSION DETAIL VIEW
   j/k          Scroll line by line
   d/u          Scroll half page
   g/G          Jump to top/bottom
+  esc          Back to session list
+  q            Quit
+
+SEARCH VIEW
+───────────
+  Type         Enter search query
+  Enter        Search or open selected session
+  j/k          Navigate results
   esc          Back to session list
   q            Quit
 

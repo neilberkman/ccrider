@@ -17,6 +17,49 @@ type sessionDetailLoadedMsg struct {
 	detail sessionDetail
 }
 
+type searchResultsMsg struct {
+	results []searchResult
+}
+
+func performSearch(database *db.DB, query string) tea.Cmd {
+	return func() tea.Msg {
+		if query == "" {
+			return searchResultsMsg{results: []searchResult{}}
+		}
+
+		rows, err := database.Query(`
+			SELECT
+				s.session_id,
+				COALESCE(s.summary, '') as summary,
+				s.project_path,
+				m.type as message_type,
+				SUBSTR(m.text_content, 1, 200) as snippet,
+				s.updated_at
+			FROM messages m
+			JOIN sessions s ON m.session_id = s.id
+			WHERE m.text_content LIKE '%' || ? || '%'
+			ORDER BY s.updated_at DESC
+			LIMIT 100
+		`, query)
+		if err != nil {
+			return errMsg{err}
+		}
+		defer rows.Close()
+
+		var results []searchResult
+		for rows.Next() {
+			var r searchResult
+			if err := rows.Scan(&r.SessionID, &r.Summary, &r.Project,
+				&r.MessageType, &r.MatchSnippet, &r.UpdatedAt); err != nil {
+				return errMsg{err}
+			}
+			results = append(results, r)
+		}
+
+		return searchResultsMsg{results: results}
+	}
+}
+
 func loadSessions(database *db.DB) tea.Cmd {
 	return func() tea.Msg {
 		rows, err := database.Query(`

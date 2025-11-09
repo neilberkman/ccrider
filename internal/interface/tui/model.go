@@ -2,6 +2,7 @@ package tui
 
 import (
 	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/yourusername/ccrider/internal/core/db"
@@ -28,6 +29,11 @@ type Model struct {
 	// Current session data
 	sessions       []sessionItem
 	currentSession *sessionDetail
+
+	// Search state
+	searchInput        textinput.Model
+	searchResults      []searchResult
+	searchSelectedIdx  int
 }
 
 type sessionItem struct {
@@ -50,10 +56,26 @@ type messageItem struct {
 	Timestamp string
 }
 
+type searchResult struct {
+	SessionID    string
+	Summary      string
+	Project      string
+	MessageType  string
+	MatchSnippet string
+	UpdatedAt    string
+}
+
 func New(database *db.DB) Model {
+	ti := textinput.New()
+	ti.Placeholder = "Search messages..."
+	ti.Focus()
+	ti.CharLimit = 200
+	ti.Width = 50
+
 	return Model{
-		db:   database,
-		mode: listView,
+		db:          database,
+		mode:        listView,
+		searchInput: ti,
 	}
 }
 
@@ -104,6 +126,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.currentSession = &msg.detail
 		m.viewport = createViewport(msg.detail, m.width, m.height)
 		m.mode = detailView
+		return m, nil
+
+	case searchResultsMsg:
+		m.searchResults = msg.results
 		return m, nil
 
 	case errMsg:
