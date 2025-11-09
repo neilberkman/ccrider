@@ -3,6 +3,8 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -15,6 +17,12 @@ type DB struct {
 
 // New creates a new database connection and initializes schema
 func New(dbPath string) (*DB, error) {
+	// Ensure parent directory exists
+	dbDir := filepath.Dir(dbPath)
+	if err := os.MkdirAll(dbDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create database directory: %w", err)
+	}
+
 	// Open with WAL mode for concurrent reads
 	dsn := dbPath + "?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)"
 	conn, err := sql.Open("sqlite", dsn)
