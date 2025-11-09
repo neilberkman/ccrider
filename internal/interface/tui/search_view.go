@@ -85,17 +85,22 @@ func (m Model) viewSearch() string {
 
 	// Results
 	if m.searchResults == nil {
-		b.WriteString(searchMetaStyle.Render("Type to search (live)"))
+		b.WriteString(searchMetaStyle.Render("Type to search (minimum 2 characters)"))
 	} else if len(m.searchResults) == 0 {
 		b.WriteString(searchMetaStyle.Render("No results found"))
 	} else {
 		b.WriteString(fmt.Sprintf(searchMetaStyle.Render("Found %d sessions:"), len(m.searchResults)))
 		b.WriteString("\n\n")
 
-		// Show results (limit to screen height, accounting for header)
-		maxResults := m.height - 15
-		if maxResults < 3 {
-			maxResults = 3
+		// Calculate max results based on screen height
+		// Each result takes ~7 lines (header + project + 3 matches + spacing)
+		// Reserve: 4 for header, 4 for footer = 8 total
+		linesPerResult := 7
+		availableHeight := m.height - 8
+		maxResults := availableHeight / linesPerResult
+
+		if maxResults < 2 {
+			maxResults = 2
 		}
 		if maxResults > len(m.searchResults) {
 			maxResults = len(m.searchResults)
@@ -156,7 +161,7 @@ func (m Model) viewSearch() string {
 	if len(m.searchResults) > 0 {
 		b.WriteString("\n\nj/k: navigate | Enter: open session | esc: back | q: quit")
 	} else {
-		b.WriteString("\n\nType to search (live) | esc: back | q: quit")
+		b.WriteString("\n\nType to search (min 2 chars) | esc: back | q: quit")
 	}
 
 	return b.String()

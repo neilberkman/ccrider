@@ -5,17 +5,24 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/yourusername/ccrider/internal/core/db"
+	"github.com/yourusername/ccrider/internal/core/importer"
 )
 
 // SearchSessionsArgs defines arguments for the search_sessions tool
 type SearchSessionsArgs struct {
-	Query   string `json:"query" jsonschema:"description=Search term to match against message content,required"`
-	Limit   int    `json:"limit,omitempty" jsonschema:"description=Max number of sessions to return (default: 10)"`
-	Project string `json:"project,omitempty" jsonschema:"description=Filter by project path"`
+	Query            string `json:"query" jsonschema:"description=Search term to match against message content,required"`
+	Limit            int    `json:"limit,omitempty" jsonschema:"description=Max number of sessions to return (default: 10)"`
+	Project          string `json:"project,omitempty" jsonschema:"description=Filter by project path"`
+	CurrentSessionID string `json:"current_session_id,omitempty" jsonschema:"description=Current session ID to search within (searches only this session)"`
+	ExcludeCurrent   bool   `json:"exclude_current,omitempty" jsonschema:"description=Exclude current session from results (searches only other sessions)"`
+	AfterDate        string `json:"after_date,omitempty" jsonschema:"description=Only sessions updated after this date (ISO 8601 format, e.g. 2025-01-01)"`
+	BeforeDate       string `json:"before_date,omitempty" jsonschema:"description=Only sessions updated before this date (ISO 8601 format)"`
 }
 
 // GetSessionDetailArgs defines arguments for the get_session_detail tool
@@ -91,7 +98,7 @@ func StartServer(dbPath string) error {
 
 	// Register search_sessions tool
 	searchTool := mcp.NewTool("search_sessions",
-		mcp.WithDescription("Search Claude Code sessions for a query string across all message content"),
+		mcp.WithDescription("Search Claude Code sessions for a query string across all message content. Can search current session only, exclude current session, or search all sessions. Supports date and project filtering."),
 		mcp.WithString("query",
 			mcp.Required(),
 			mcp.Description("Search term to match against message content")),
@@ -99,6 +106,14 @@ func StartServer(dbPath string) error {
 			mcp.Description("Max number of sessions to return (default: 10)")),
 		mcp.WithString("project",
 			mcp.Description("Filter by project path")),
+		mcp.WithString("current_session_id",
+			mcp.Description("Current session ID - if provided, searches ONLY within this session (useful for finding earlier parts of current conversation)")),
+		mcp.WithBoolean("exclude_current",
+			mcp.Description("If true, excludes current session from results (searches only other sessions). Requires current_session_id to be set.")),
+		mcp.WithString("after_date",
+			mcp.Description("Only sessions updated after this date (ISO 8601 format, e.g. '2025-01-01' or '2025-01-08T10:00:00Z')")),
+		mcp.WithString("before_date",
+			mcp.Description("Only sessions updated before this date (ISO 8601 format)")),
 	)
 	s.AddTool(searchTool, makeSearchSessionsHandler(database))
 
@@ -124,8 +139,31 @@ func StartServer(dbPath string) error {
 	return server.ServeStdio(s)
 }
 
+// syncDatabase ensures the database is up-to-date before running tool queries
+func syncDatabase(ctx context.Context, database *db.DB) error {
+	// Get Claude Code projects directory
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("failed to get home dir: %w", err)
+	}
+	sourcePath := filepath.Join(home, ".claude", "projects")
+
+	// Import from Claude directory (silent, no progress output for MCP)
+	imp := importer.New(database)
+	if err := imp.ImportDirectory(sourcePath, nil); err != nil {
+		return fmt.Errorf("failed to sync: %w", err)
+	}
+
+	return nil
+}
+
 func makeSearchSessionsHandler(database *db.DB) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		// Sync database before running query
+		if err := syncDatabase(ctx, database); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("sync failed: %v", err)), nil
+		}
+
 		var args SearchSessionsArgs
 		argsBytes, _ := json.Marshal(request.Params.Arguments)
 		if err := json.Unmarshal(argsBytes, &args); err != nil {
@@ -138,7 +176,7 @@ func makeSearchSessionsHandler(database *db.DB) func(context.Context, mcp.CallTo
 			limit = 10
 		}
 
-		// Build query
+		// Build query with filters
 		query := `
 			SELECT
 				s.session_id,
@@ -153,20 +191,38 @@ func makeSearchSessionsHandler(database *db.DB) func(context.Context, mcp.CallTo
 			WHERE m.text_content LIKE '%' || ? || '%'
 		`
 
+		queryArgs := []interface{}{args.Query}
+
+		// Filter by current session only (compact cycles use case)
+		if args.CurrentSessionID != "" {
+			if args.ExcludeCurrent {
+				query += " AND s.session_id != ?"
+			} else {
+				query += " AND s.session_id = ?"
+			}
+			queryArgs = append(queryArgs, args.CurrentSessionID)
+		}
+
+		// Filter by project
 		if args.Project != "" {
 			query += " AND s.project_path = ?"
+			queryArgs = append(queryArgs, args.Project)
+		}
+
+		// Filter by date range
+		if args.AfterDate != "" {
+			query += " AND s.updated_at > ?"
+			queryArgs = append(queryArgs, args.AfterDate)
+		}
+		if args.BeforeDate != "" {
+			query += " AND s.updated_at < ?"
+			queryArgs = append(queryArgs, args.BeforeDate)
 		}
 
 		query += " ORDER BY s.updated_at DESC, m.sequence ASC LIMIT 200"
 
 		// Execute query
-		var rows *sql.Rows
-		var err error
-		if args.Project != "" {
-			rows, err = database.Query(query, args.Query, args.Project)
-		} else {
-			rows, err = database.Query(query, args.Query)
-		}
+		rows, err := database.Query(query, queryArgs...)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil
 		}
@@ -241,6 +297,11 @@ func makeSearchSessionsHandler(database *db.DB) func(context.Context, mcp.CallTo
 
 func makeGetSessionDetailHandler(database *db.DB) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		// Sync database before running query
+		if err := syncDatabase(ctx, database); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("sync failed: %v", err)), nil
+		}
+
 		var args GetSessionDetailArgs
 		argsBytes, _ := json.Marshal(request.Params.Arguments)
 		if err := json.Unmarshal(argsBytes, &args); err != nil {
@@ -298,6 +359,11 @@ func makeGetSessionDetailHandler(database *db.DB) func(context.Context, mcp.Call
 
 func makeListRecentSessionsHandler(database *db.DB) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		// Sync database before running query
+		if err := syncDatabase(ctx, database); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("sync failed: %v", err)), nil
+		}
+
 		var args ListRecentSessionsArgs
 		argsBytes, _ := json.Marshal(request.Params.Arguments)
 		if err := json.Unmarshal(argsBytes, &args); err != nil {

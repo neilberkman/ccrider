@@ -15,13 +15,17 @@ An MCP (Model Context Protocol) server that allows Claude Code to search and ret
 
 ### `search_sessions`
 
-Search across all sessions for a query string.
+Search across all sessions for a query string. Supports current session awareness for compact cycles and date filtering.
 
 **Arguments:**
 
 - `query` (required): Search term to match against message content
 - `limit` (optional): Max number of sessions to return (default: 10)
 - `project` (optional): Filter by project path
+- `current_session_id` (optional): Current session ID - if provided, searches ONLY within this session (useful for finding earlier parts of current conversation)
+- `exclude_current` (optional): If true, excludes current session from results (searches only other sessions). Requires current_session_id to be set.
+- `after_date` (optional): Only sessions updated after this date (ISO 8601 format, e.g. '2025-01-01' or '2025-01-08T10:00:00Z')
+- `before_date` (optional): Only sessions updated before this date (ISO 8601 format)
 
 **Returns:**
 
@@ -107,11 +111,20 @@ Get recent sessions, optionally filtered by project.
 
 ### Architecture (Based on Clippy Pattern)
 
-Following clippy's library-first approach:
+Following clippy's library-first approach with core/interface separation:
 
-1. **Core Logic** (`internal/core/`): Already exists with db, importer, parser
-2. **MCP Server** (`cmd/ccrider/mcp/server.go`): New package for MCP protocol
-3. **Main Entry** (`cmd/ccrider/main.go`): Add `serve-mcp` subcommand
+1. **Core Logic** (`internal/core/`): Database queries and business logic
+2. **MCP Interface** (`cmd/ccrider/mcp/server.go`): MCP protocol implementation
+3. **CLI Entry** (`internal/interface/cli/mcp.go`): serve-mcp subcommand
+
+### Database Sync Strategy
+
+All MCP tools automatically sync the database before executing queries to ensure up-to-date results. The sync is:
+
+- **Silent**: No progress output to avoid polluting MCP responses
+- **Incremental**: Only imports new or changed sessions (hash-based deduplication)
+- **Centralized**: Single `syncDatabase()` function called by all tool handlers
+- **Fast**: Typically <100ms for incremental syncs
 
 ### Technology Stack
 
@@ -146,27 +159,57 @@ MCP servers are configured in Claude Desktop's config file:
 
 ## Development Plan
 
-### Phase 1: Basic MCP Server
+### Phase 1: Basic MCP Server ✅
 
-1. Add `github.com/mark3labs/mcp-go` dependency
-2. Create `cmd/ccrider/mcp/server.go` (following clippy pattern)
-3. Implement `search_sessions` tool
-4. Add `serve-mcp` subcommand to main.go
-5. Test with Claude Desktop
+1. ✅ Add `github.com/mark3labs/mcp-go` dependency
+2. ✅ Create `cmd/ccrider/mcp/server.go` (following clippy pattern)
+3. ✅ Implement `search_sessions` tool with enhanced parameters
+4. ✅ Add `serve-mcp` subcommand via `internal/interface/cli/mcp.go`
+5. ✅ Add automatic database sync to all tools
 
-### Phase 2: Full Toolset
+### Phase 2: Full Toolset ✅
 
-1. Implement `get_session_detail` tool
-2. Implement `list_recent_sessions` tool
-3. Add project filtering support
-4. Optimize queries for MCP usage
+1. ✅ Implement `get_session_detail` tool
+2. ✅ Implement `list_recent_sessions` tool
+3. ✅ Add project filtering support
+4. ✅ Add current session awareness (compact cycles support)
+5. ✅ Add date filtering (after_date, before_date)
+6. ✅ Optimize queries for MCP usage
 
-### Phase 3: Advanced Features
+### Phase 3: Advanced Features (Future)
 
 1. Semantic search (if feasible)
 2. Session tagging/categorization
 3. Cross-project pattern detection
 4. Export capabilities
+
+## Current Status
+
+**Implemented Features:**
+
+- ✅ Three MCP tools: search_sessions, get_session_detail, list_recent_sessions
+- ✅ Current session awareness (search within current session or exclude it)
+- ✅ Date filtering (ISO 8601 format)
+- ✅ Project filtering
+- ✅ Automatic database sync before each query
+- ✅ Silent incremental sync (hash-based deduplication)
+- ✅ Full conversation retrieval
+- ✅ Session grouping (up to 3 match snippets per session)
+
+**Configuration Example:**
+
+Add to `~/.config/claude/config.json`:
+
+```json
+{
+  "mcpServers": {
+    "ccrider": {
+      "command": "ccrider",
+      "args": ["serve-mcp"]
+    }
+  }
+}
+```
 
 ## Reference Implementation
 

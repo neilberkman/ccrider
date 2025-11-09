@@ -23,8 +23,9 @@ type searchResultsMsg struct {
 
 func performSearch(database *db.DB, query string) tea.Cmd {
 	return func() tea.Msg {
-		if query == "" {
-			return searchResultsMsg{results: []searchResult{}}
+		// Minimum 2 characters to search (avoid useless single-char results)
+		if len(query) < 2 {
+			return searchResultsMsg{results: nil}
 		}
 
 		rows, err := database.Query(`
