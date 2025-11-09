@@ -41,6 +41,11 @@ type Model struct {
 	inSessionSearchMode  bool
 	inSessionMatches     []int // message indices that match
 	inSessionMatchIdx    int   // current match index
+
+	// Launch state (for exec after quit)
+	LaunchSessionID   string
+	LaunchProjectPath string
+	LaunchFork        bool
 }
 
 type sessionItem struct {
@@ -184,7 +189,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case sessionLaunchedMsg:
 		if msg.success {
-			// Successfully launched - quit ccrider
+			// Store launch info for CLI to exec after quit
+			m.LaunchSessionID = msg.sessionID
+			m.LaunchProjectPath = msg.projectPath
+			m.LaunchFork = msg.fork
 			return m, tea.Quit
 		} else {
 			// Failed to launch - show error

@@ -204,34 +204,31 @@ func findMatches(messages []messageItem, query string) []int {
 }
 
 type sessionLaunchedMsg struct {
-	success bool
-	message string
-	err     error
+	success     bool
+	message     string
+	err         error
+	sessionID   string
+	projectPath string
+	fork        bool
 }
 
 func launchClaudeSession(sessionID, projectPath string, fork bool) tea.Cmd {
 	return func() tea.Msg {
+		// We need to exec() to replace the process, but bubbletea makes this tricky
+		// Instead, we'll return a special message telling the TUI to quit,
+		// then the CLI layer will exec claude
 		args := []string{"--resume", sessionID}
 		if fork {
 			args = append(args, "--fork-session")
 		}
 
-		cmd := exec.Command("claude", args...)
-		// Set working directory to project path
-		if projectPath != "" {
-			cmd.Dir = projectPath
+		return sessionLaunchedMsg{
+			success:     true,
+			message:     fmt.Sprintf("cd %s && claude --resume %s", projectPath, sessionID),
+			sessionID:   sessionID,
+			projectPath: projectPath,
+			fork:        fork,
 		}
-
-		err := cmd.Start()
-		if err != nil {
-			return sessionLaunchedMsg{success: false, err: err}
-		}
-
-		msg := fmt.Sprintf("Launching Claude Code in %s...", projectPath)
-		if fork {
-			msg = fmt.Sprintf("Forking session in %s...", projectPath)
-		}
-		return sessionLaunchedMsg{success: true, message: msg}
 	}
 }
 
