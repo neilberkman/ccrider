@@ -192,14 +192,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case terminalSpawnedMsg:
-		// Show feedback about terminal spawn (success or failure)
-		// Show message regardless of success/failure so user knows what happened
-		if msg.success {
-			m.err = fmt.Errorf("%s", msg.message) // Show success message
+		// Show feedback only on failure
+		// On success, just clear error and keep TUI usable
+		if !msg.success {
+			m.err = fmt.Errorf("Failed to open session: %v", msg.err)
 		} else {
-			m.err = fmt.Errorf("%s: %v", msg.message, msg.err)
+			m.err = nil // Clear any previous errors
 		}
-		// TUI stays open - user can continue browsing
+		// TUI stays open - user can continue browsing and launching more sessions
 		return m, nil
 
 	case errMsg:

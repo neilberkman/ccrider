@@ -359,14 +359,12 @@ func openInNewTerminal(sessionID, projectPath, lastCwd, updatedAt string) tea.Cm
 		if err := spawner.Spawn(spawnCfg); err != nil {
 			return terminalSpawnedMsg{
 				success: false,
-				message: fmt.Sprintf("Spawn failed: %v | Cmd: %s", err, shellCmd),
 				err:     err,
 			}
 		}
 
 		return terminalSpawnedMsg{
 			success: true,
-			message: fmt.Sprintf("SUCCESS: Spawned terminal with: %s", shellCmd),
 		}
 	}
 }
