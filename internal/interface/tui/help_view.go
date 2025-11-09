@@ -45,11 +45,10 @@ SESSION DETAIL VIEW
 
 SEARCH VIEW
 ───────────
-  Type         Enter search query (live)
+  Type         Enter search query (all keys work, min 2 chars)
+  Ctrl+j/k     Navigate results (or use arrow keys ↑↓)
   Enter        Open selected session
-  j/k          Navigate results
   esc          Back to session list
-  q            Quit
 
 Press any key to return to session list
 `

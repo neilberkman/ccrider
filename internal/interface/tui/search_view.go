@@ -45,7 +45,8 @@ func (m Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case "down", "j":
+	// Navigation: Use Ctrl+j/k or arrow keys (allow j/k to be typed in search)
+	case "ctrl+j", "down":
 		if len(m.searchResults) > 0 {
 			m.searchSelectedIdx++
 			if m.searchSelectedIdx >= len(m.searchResults) {
@@ -54,7 +55,7 @@ func (m Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case "up", "k":
+	case "ctrl+k", "up":
 		if len(m.searchResults) > 0 {
 			m.searchSelectedIdx--
 			if m.searchSelectedIdx < 0 {
@@ -64,7 +65,7 @@ func (m Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Update text input
+	// Update text input (all other keys including j/k/q go here)
 	m.searchInput, cmd = m.searchInput.Update(msg)
 
 	// Perform live search on every keystroke
@@ -159,9 +160,9 @@ func (m Model) viewSearch() string {
 	}
 
 	if len(m.searchResults) > 0 {
-		b.WriteString("\n\nj/k: navigate | Enter: open session | esc: back | q: quit")
+		b.WriteString("\n\nCtrl+j/k or ↑↓: navigate | Enter: open | esc: back")
 	} else {
-		b.WriteString("\n\nType to search (min 2 chars) | esc: back | q: quit")
+		b.WriteString("\n\nType to search (min 2 chars, all keys work) | esc: back")
 	}
 
 	return b.String()

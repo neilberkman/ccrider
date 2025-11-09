@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"strings"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/yourusername/ccrider/internal/core/db"
 )
@@ -28,6 +30,44 @@ func performSearch(database *db.DB, query string) tea.Cmd {
 			return searchResultsMsg{results: nil}
 		}
 
+		// First, get the top 50 sessions that have matches
+		sessionRows, err := database.Query(`
+			SELECT DISTINCT s.session_id
+			FROM messages m
+			JOIN sessions s ON m.session_id = s.id
+			WHERE m.text_content LIKE '%' || ? || '%'
+			ORDER BY s.updated_at DESC
+			LIMIT 50
+		`, query)
+		if err != nil {
+			return errMsg{err}
+		}
+
+		var sessionIDs []string
+		for sessionRows.Next() {
+			var sid string
+			if err := sessionRows.Scan(&sid); err != nil {
+				sessionRows.Close()
+				return errMsg{err}
+			}
+			sessionIDs = append(sessionIDs, sid)
+		}
+		sessionRows.Close()
+
+		if len(sessionIDs) == 0 {
+			return searchResultsMsg{results: []searchResult{}}
+		}
+
+		// Build placeholders for IN clause
+		placeholders := make([]string, len(sessionIDs))
+		args := make([]interface{}, len(sessionIDs)+1)
+		args[0] = query
+		for i, sid := range sessionIDs {
+			placeholders[i] = "?"
+			args[i+1] = sid
+		}
+
+		// Now get matches from those sessions (up to 3 per session)
 		rows, err := database.Query(`
 			SELECT
 				s.session_id,
@@ -40,9 +80,9 @@ func performSearch(database *db.DB, query string) tea.Cmd {
 			FROM messages m
 			JOIN sessions s ON m.session_id = s.id
 			WHERE m.text_content LIKE '%' || ? || '%'
+			  AND s.session_id IN (`+strings.Join(placeholders, ",")+`)
 			ORDER BY s.updated_at DESC, m.sequence ASC
-			LIMIT 200
-		`, query)
+		`, args...)
 		if err != nil {
 			return errMsg{err}
 		}
