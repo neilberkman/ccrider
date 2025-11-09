@@ -1,11 +1,9 @@
 package main
 
 import (
-	"fmt"
-	"os"
+	"github.com/yourusername/ccrider/internal/interface/cli"
 )
 
 func main() {
-	fmt.Println("ccrider v0.1.0")
-	os.Exit(0)
+	cli.Execute()
 }
