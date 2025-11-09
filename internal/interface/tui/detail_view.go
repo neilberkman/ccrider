@@ -149,6 +149,18 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case "o":
+		// Open in new terminal window
+		if m.currentSession != nil {
+			return m, openInNewTerminal(
+				m.currentSession.Session.ID,
+				m.currentSession.Session.Project,
+				m.currentSession.LastCwd,
+				m.currentSession.UpdatedAt,
+			)
+		}
+		return m, nil
+
 	case "ctrl+f", "/":
 		m.inSessionSearchMode = true
 		m.inSessionSearch.Focus()
@@ -252,6 +264,27 @@ func copyResumeCommand(sessionID, projectPath string) tea.Cmd {
 		return sessionLaunchedMsg{
 			success: true,
 			message: "Resume command copied to clipboard!",
+		}
+	}
+}
+
+type terminalSpawnedMsg struct {
+	success bool
+	message string
+	err     error
+}
+
+func openInNewTerminal(sessionID, projectPath, lastCwd, updatedAt string) tea.Cmd {
+	return func() tea.Msg {
+		// Build the resume command (we'll launch it in new terminal)
+		cmd := fmt.Sprintf("claude --resume %s", sessionID)
+
+		// For now, just show a message that this is not yet implemented
+		// We'll implement the full terminal spawning logic
+		return terminalSpawnedMsg{
+			success: false,
+			message: "Open in new terminal: not yet implemented\nCommand: cd " + projectPath + " && " + cmd,
+			err:     fmt.Errorf("not implemented"),
 		}
 	}
 }

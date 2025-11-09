@@ -29,8 +29,9 @@ SESSION LIST VIEW
 
 SESSION DETAIL VIEW
 ───────────────────
-  r            Resume session in Claude Code
-  f            Fork session (new session ID)
+  r            Resume session in Claude Code (replaces TUI)
+  f            Fork session (new session ID, replaces TUI)
+  o            Open session in new terminal window
   c            Copy resume command to clipboard
   /            Search within session
   j/k          Scroll line by line
