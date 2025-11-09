@@ -81,11 +81,16 @@ func execClaude(sessionID, projectPath, lastCwd, updatedAt string, fork bool) er
 		timeSince = humanize.Time(updatedTime)
 	}
 
-	templateData := map[string]string{
-		"last_updated": updatedAt,
-		"last_cwd":     lastCwd,
-		"time_since":   timeSince,
-		"project_path": projectPath,
+	// Check if we're already in the right directory
+	sameDir := (lastCwd == projectPath)
+
+	templateData := map[string]interface{}{
+		"last_updated":     updatedAt,
+		"last_cwd":         lastCwd,
+		"time_since":       timeSince,
+		"project_path":     projectPath,
+		"same_directory":   sameDir,
+		"different_directory": !sameDir,
 	}
 
 	// Render the resume prompt
@@ -117,13 +122,20 @@ func execClaude(sessionID, projectPath, lastCwd, updatedAt string, fork bool) er
 		cmd = fmt.Sprintf("claude --resume %s \"$(cat %s)\"", sessionID, tmpfile.Name())
 	}
 
-	// Debug: print what we're doing
-	fmt.Fprintf(os.Stderr, "[ccrider] cd %s && %s\n", projectPath, cmd)
+	// Decide which directory to start in
+	// Prefer lastCwd if it's different from projectPath (e.g., git worktrees)
+	workDir := projectPath
+	if lastCwd != "" && lastCwd != projectPath {
+		workDir = lastCwd
+	}
 
-	// Change to project directory (where session files are stored)
-	if projectPath != "" {
-		if err := os.Chdir(projectPath); err != nil {
-			return fmt.Errorf("failed to cd to %s: %w", projectPath, err)
+	// Debug: print what we're doing
+	fmt.Fprintf(os.Stderr, "[ccrider] cd %s && %s\n", workDir, cmd)
+
+	// Change to working directory
+	if workDir != "" {
+		if err := os.Chdir(workDir); err != nil {
+			return fmt.Errorf("failed to cd to %s: %w", workDir, err)
 		}
 	}
 

@@ -150,7 +150,11 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "c":
 		// Copy resume command to clipboard
 		if m.currentSession != nil {
-			return m, copyResumeCommand(m.currentSession.Session.ID, m.currentSession.Session.Project)
+			return m, copyResumeCommand(
+				m.currentSession.Session.ID,
+				m.currentSession.Session.Project,
+				m.currentSession.LastCwd,
+			)
 		}
 		return m, nil
 
@@ -243,12 +247,19 @@ func launchClaudeSession(sessionID, projectPath, lastCwd, updatedAt string, fork
 	}
 }
 
-func copyResumeCommand(sessionID, projectPath string) tea.Cmd {
+func copyResumeCommand(sessionID, projectPath, lastCwd string) tea.Cmd {
 	return func() tea.Msg {
-		// Create a command that cd's to the project and runs claude
+		// Decide which directory to use
+		// Prefer lastCwd if it's different from projectPath (e.g., git worktrees)
+		workDir := projectPath
+		if lastCwd != "" && lastCwd != projectPath {
+			workDir = lastCwd
+		}
+
+		// Create a command that cd's to the working directory and runs claude
 		var cmd string
-		if projectPath != "" {
-			cmd = fmt.Sprintf("cd %s && claude --resume %s", projectPath, sessionID)
+		if workDir != "" {
+			cmd = fmt.Sprintf("cd %s && claude --resume %s", workDir, sessionID)
 		} else {
 			cmd = fmt.Sprintf("claude --resume %s", sessionID)
 		}
@@ -326,6 +337,14 @@ func openInNewTerminal(sessionID, projectPath, lastCwd, updatedAt string) tea.Cm
 		// Use shell with the prompt as an argument to claude
 		shellCmd := fmt.Sprintf("claude --resume %s '%s'", sessionID, resumePrompt)
 
+		// Decide which directory to start in
+		// Prefer lastCwd if it's different from projectPath (e.g., git worktrees)
+		// This way we start where the user was actually working
+		workDir := projectPath
+		if lastCwd != "" && lastCwd != projectPath {
+			workDir = lastCwd
+		}
+
 		// Create spawner with custom command from config
 		spawner := &terminal.Spawner{
 			CustomCommand: cfg.TerminalCommand,
@@ -333,7 +352,7 @@ func openInNewTerminal(sessionID, projectPath, lastCwd, updatedAt string) tea.Cm
 
 		// Spawn new terminal window
 		spawnCfg := terminal.SpawnConfig{
-			WorkingDir: projectPath,
+			WorkingDir: workDir,
 			Command:    shellCmd,
 		}
 
