@@ -152,11 +152,15 @@ func (m Model) viewSearch() string {
 		}
 	}
 
+	// Footer with comprehensive help
+	b.WriteString("\n\n")
 	if len(m.searchResults) > 0 {
-		b.WriteString("\n\nCtrl+j/k or ↑↓: navigate | Enter: open | esc: back")
+		b.WriteString("Ctrl+j/k or ↑↓: navigate | Enter: open session | esc: back to list | ?: help")
 	} else {
-		b.WriteString("\n\nType to search (min 2 chars, all keys work) | esc: back")
+		b.WriteString("Type to search (min 2 chars) | esc: back to list | ?: help")
 	}
+	b.WriteString("\n")
+	b.WriteString(searchMetaStyle.Render("Filters: project:path | after:yesterday | after:3-days-ago | before:2024-11-01"))
 
 	return b.String()
 }

@@ -37,15 +37,42 @@ func performSearch(database *db.DB, query string) tea.Cmd {
 			return searchResultsMsg{results: nil}
 		}
 
-		// First, get the top 50 sessions that have matches
-		sessionRows, err := database.Query(`
+		// Parse filters from query
+		filters := ParseSearchQuery(query)
+		searchQuery := filters.Query
+		if searchQuery == "" {
+			searchQuery = query // Fallback if only filters
+		}
+
+		// Build SQL query with filters
+		sqlQuery := `
 			SELECT DISTINCT s.session_id
 			FROM messages m
 			JOIN sessions s ON m.session_id = s.id
 			WHERE m.text_content LIKE '%' || ? || '%'
-			ORDER BY s.updated_at DESC
-			LIMIT 50
-		`, query)
+		`
+		args := []interface{}{searchQuery}
+
+		// Add project filter
+		if filters.Project != "" {
+			sqlQuery += " AND s.project_path LIKE '%' || ? || '%'"
+			args = append(args, filters.Project)
+		}
+
+		// Add date filters
+		if filters.HasAfter {
+			sqlQuery += " AND s.updated_at >= ?"
+			args = append(args, filters.AfterDate.Format("2006-01-02 15:04:05"))
+		}
+		if filters.HasBefore {
+			sqlQuery += " AND s.updated_at <= ?"
+			args = append(args, filters.BeforeDate.Format("2006-01-02 15:04:05"))
+		}
+
+		sqlQuery += " ORDER BY s.updated_at DESC LIMIT 50"
+
+		// First, get the top 50 sessions that have matches
+		sessionRows, err := database.Query(sqlQuery, args...)
 		if err != nil {
 			return errMsg{err}
 		}
@@ -67,11 +94,11 @@ func performSearch(database *db.DB, query string) tea.Cmd {
 
 		// Build placeholders for IN clause
 		placeholders := make([]string, len(sessionIDs))
-		args := make([]interface{}, len(sessionIDs)+1)
-		args[0] = query
+		matchArgs := make([]interface{}, 0, len(sessionIDs)+1)
+		matchArgs = append(matchArgs, searchQuery)
 		for i, sid := range sessionIDs {
 			placeholders[i] = "?"
-			args[i+1] = sid
+			matchArgs = append(matchArgs, sid)
 		}
 
 		// Now get matches from those sessions (up to 3 per session)
@@ -89,7 +116,7 @@ func performSearch(database *db.DB, query string) tea.Cmd {
 			WHERE m.text_content LIKE '%' || ? || '%'
 			  AND s.session_id IN (`+strings.Join(placeholders, ",")+`)
 			ORDER BY s.updated_at DESC, m.sequence ASC
-		`, args...)
+		`, matchArgs...)
 		if err != nil {
 			return errMsg{err}
 		}
