@@ -76,24 +76,26 @@ func (m Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) viewSearch() string {
 	var b strings.Builder
 
-	// Header with search input
+	// Header with search input - ALWAYS at top
 	b.WriteString(searchHeaderStyle.Render("Search: "))
 	b.WriteString(m.searchInput.View())
+	b.WriteString("\n")
+	b.WriteString(strings.Repeat("─", 80))
 	b.WriteString("\n\n")
 
 	// Results
 	if m.searchResults == nil {
-		b.WriteString(searchMetaStyle.Render("Type to search and press Enter"))
+		b.WriteString(searchMetaStyle.Render("Type to search (live)"))
 	} else if len(m.searchResults) == 0 {
 		b.WriteString(searchMetaStyle.Render("No results found"))
 	} else {
-		b.WriteString(fmt.Sprintf(searchMetaStyle.Render("Found %d matches:"), len(m.searchResults)))
+		b.WriteString(fmt.Sprintf(searchMetaStyle.Render("Found %d sessions:"), len(m.searchResults)))
 		b.WriteString("\n\n")
 
-		// Show results (limit to screen height)
-		maxResults := m.height - 12
-		if maxResults < 5 {
-			maxResults = 5
+		// Show results (limit to screen height, accounting for header)
+		maxResults := m.height - 15
+		if maxResults < 3 {
+			maxResults = 3
 		}
 		if maxResults > len(m.searchResults) {
 			maxResults = len(m.searchResults)
