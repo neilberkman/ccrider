@@ -81,9 +81,61 @@ func renderConversation(detail sessionDetail) string {
 }
 
 func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Handle in-session search mode
+	if m.inSessionSearchMode {
+		switch msg.String() {
+		case "esc":
+			m.inSessionSearchMode = false
+			m.inSessionSearch.SetValue("")
+			m.inSessionMatches = nil
+			m.inSessionMatchIdx = 0
+			return m, nil
+
+		case "enter":
+			// Perform search
+			query := m.inSessionSearch.Value()
+			if query != "" && m.currentSession != nil {
+				m.inSessionMatches = findMatches(m.currentSession.Messages, query)
+				m.inSessionMatchIdx = 0
+			}
+			return m, nil
+
+		case "ctrl+n", "n":
+			// Next match
+			if len(m.inSessionMatches) > 0 {
+				m.inSessionMatchIdx++
+				if m.inSessionMatchIdx >= len(m.inSessionMatches) {
+					m.inSessionMatchIdx = 0
+				}
+			}
+			return m, nil
+
+		case "ctrl+p", "p":
+			// Previous match
+			if len(m.inSessionMatches) > 0 {
+				m.inSessionMatchIdx--
+				if m.inSessionMatchIdx < 0 {
+					m.inSessionMatchIdx = len(m.inSessionMatches) - 1
+				}
+			}
+			return m, nil
+
+		default:
+			var cmd tea.Cmd
+			m.inSessionSearch, cmd = m.inSessionSearch.Update(msg)
+			return m, cmd
+		}
+	}
+
+	// Normal detail view navigation
 	switch msg.String() {
 	case "esc", "q":
 		m.mode = listView
+		return m, nil
+
+	case "ctrl+f", "/":
+		m.inSessionSearchMode = true
+		m.inSessionSearch.Focus()
 		return m, nil
 
 	case "j", "down":
@@ -116,13 +168,41 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func findMatches(messages []messageItem, query string) []int {
+	var matches []int
+	lowerQuery := strings.ToLower(query)
+
+	for i, msg := range messages {
+		if strings.Contains(strings.ToLower(msg.Content), lowerQuery) {
+			matches = append(matches, i)
+		}
+	}
+
+	return matches
+}
+
 func (m Model) viewDetail() string {
 	if m.currentSession == nil {
 		return "No session loaded"
 	}
 
-	footer := fmt.Sprintf("\n%3.f%%", m.viewport.ScrollPercent()*100)
-	footer += "\n\nj/k: scroll | d/u: half page | g/G: top/bottom | esc: back | q: quit"
+	content := m.viewport.View()
 
-	return m.viewport.View() + footer
+	// Add search box if in search mode
+	if m.inSessionSearchMode {
+		searchBox := "\n" + m.inSessionSearch.View()
+		if len(m.inSessionMatches) > 0 {
+			searchBox += fmt.Sprintf(" [%d/%d matches]", m.inSessionMatchIdx+1, len(m.inSessionMatches))
+		} else if m.inSessionSearch.Value() != "" {
+			searchBox += " [no matches]"
+		}
+		searchBox += "\nn/p: next/prev match | Enter: search | esc: exit search"
+		content += searchBox
+	} else {
+		footer := fmt.Sprintf("\n%3.f%%", m.viewport.ScrollPercent()*100)
+		footer += "\n\n/: search in session | j/k: scroll | d/u: half page | g/G: top/bottom | esc: back | q: quit"
+		content += footer
+	}
+
+	return content
 }

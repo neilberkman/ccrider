@@ -34,6 +34,12 @@ type Model struct {
 	searchInput        textinput.Model
 	searchResults      []searchResult
 	searchSelectedIdx  int
+
+	// In-session search state
+	inSessionSearch      textinput.Model
+	inSessionSearchMode  bool
+	inSessionMatches     []int // message indices that match
+	inSessionMatchIdx    int   // current match index
 }
 
 type sessionItem struct {
@@ -60,9 +66,14 @@ type searchResult struct {
 	SessionID    string
 	Summary      string
 	Project      string
-	MessageType  string
-	MatchSnippet string
 	UpdatedAt    string
+	Matches      []matchInfo
+}
+
+type matchInfo struct {
+	MessageType string
+	Snippet     string
+	Sequence    int
 }
 
 func New(database *db.DB) Model {
@@ -72,10 +83,16 @@ func New(database *db.DB) Model {
 	ti.CharLimit = 200
 	ti.Width = 50
 
+	inSessionTi := textinput.New()
+	inSessionTi.Placeholder = "Search in session..."
+	inSessionTi.CharLimit = 200
+	inSessionTi.Width = 50
+
 	return Model{
-		db:          database,
-		mode:        listView,
-		searchInput: ti,
+		db:              database,
+		mode:            listView,
+		searchInput:     ti,
+		inSessionSearch: inSessionTi,
 	}
 }
 

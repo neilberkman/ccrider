@@ -32,28 +32,74 @@ func performSearch(database *db.DB, query string) tea.Cmd {
 				s.session_id,
 				COALESCE(s.summary, '') as summary,
 				s.project_path,
+				s.updated_at,
 				m.type as message_type,
 				SUBSTR(m.text_content, 1, 200) as snippet,
-				s.updated_at
+				m.sequence
 			FROM messages m
 			JOIN sessions s ON m.session_id = s.id
 			WHERE m.text_content LIKE '%' || ? || '%'
-			ORDER BY s.updated_at DESC
-			LIMIT 100
+			ORDER BY s.updated_at DESC, m.sequence ASC
+			LIMIT 200
 		`, query)
 		if err != nil {
 			return errMsg{err}
 		}
 		defer rows.Close()
 
-		var results []searchResult
+		// Group matches by session
+		sessionMap := make(map[string]*searchResult)
+		seenMessages := make(map[string]map[int]bool) // sessionID -> sequence -> seen
+		var sessionOrder []string
+
 		for rows.Next() {
-			var r searchResult
-			if err := rows.Scan(&r.SessionID, &r.Summary, &r.Project,
-				&r.MessageType, &r.MatchSnippet, &r.UpdatedAt); err != nil {
+			var sessionID, summary, project, updatedAt, msgType, snippet string
+			var sequence int
+			if err := rows.Scan(&sessionID, &summary, &project, &updatedAt,
+				&msgType, &snippet, &sequence); err != nil {
 				return errMsg{err}
 			}
-			results = append(results, r)
+
+			// Create or get existing session result
+			result, exists := sessionMap[sessionID]
+			if !exists {
+				result = &searchResult{
+					SessionID: sessionID,
+					Summary:   summary,
+					Project:   project,
+					UpdatedAt: updatedAt,
+					Matches:   []matchInfo{},
+				}
+				sessionMap[sessionID] = result
+				sessionOrder = append(sessionOrder, sessionID)
+				seenMessages[sessionID] = make(map[int]bool)
+			}
+
+			// Skip if we've already seen this message
+			if seenMessages[sessionID][sequence] {
+				continue
+			}
+
+			// Add this match to the session (limit to 3 distinct messages per session)
+			if len(result.Matches) < 3 {
+				result.Matches = append(result.Matches, matchInfo{
+					MessageType: msgType,
+					Snippet:     snippet,
+					Sequence:    sequence,
+				})
+				seenMessages[sessionID][sequence] = true
+			}
+		}
+
+		// Convert map to slice in order
+		var results []searchResult
+		for _, sessionID := range sessionOrder {
+			results = append(results, *sessionMap[sessionID])
+		}
+
+		// Limit to 50 sessions
+		if len(results) > 50 {
+			results = results[:50]
 		}
 
 		return searchResultsMsg{results: results}

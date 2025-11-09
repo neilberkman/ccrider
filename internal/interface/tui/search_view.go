@@ -106,30 +106,47 @@ func (m Model) viewSearch() string {
 			result := m.searchResults[i]
 			isSelected := i == m.searchSelectedIdx
 
-			// Session summary or first line of match
+			// Session header
 			summary := result.Summary
+			if summary == "" && len(result.Matches) > 0 {
+				summary = firstLine(result.Matches[0].Snippet, 60)
+			}
 			if summary == "" {
-				summary = firstLine(result.MatchSnippet, 80)
+				summary = "[No summary]"
 			}
 
 			// Add selection indicator
 			prefix := "  "
 			if isSelected {
-				prefix = "> "
+				prefix = "► "
 				summary = searchSelectedStyle.Render(summary)
 			} else {
 				summary = searchMatchStyle.Render(summary)
 			}
 
-			b.WriteString(fmt.Sprintf("%s%s\n", prefix, summary))
-			b.WriteString(fmt.Sprintf("  %s | %s message\n",
-				searchMetaStyle.Render(result.Project),
-				result.MessageType))
+			// Session header with match count
+			matchCount := fmt.Sprintf("(%d %s)", len(result.Matches),
+				map[bool]string{true: "match", false: "matches"}[len(result.Matches) == 1])
+			b.WriteString(fmt.Sprintf("%s%s %s\n", prefix, summary,
+				searchMetaStyle.Render(matchCount)))
+			b.WriteString(fmt.Sprintf("  %s\n", searchMetaStyle.Render(result.Project)))
 
-			// Show snippet with query highlighted
+			// Show each match with clear separation
 			query := m.searchInput.Value()
-			snippet := highlightQuery(result.MatchSnippet, query)
-			b.WriteString(fmt.Sprintf("  %s\n\n", snippet))
+			for j, match := range result.Matches {
+				typeLabel := fmt.Sprintf("[%s]", match.MessageType)
+				b.WriteString(fmt.Sprintf("    %s ", searchMetaStyle.Render(typeLabel)))
+
+				snippet := highlightQuery(match.Snippet, query)
+				// Trim and show first line
+				snippetLine := firstLine(snippet, 100)
+				b.WriteString(fmt.Sprintf("%s", snippetLine))
+
+				if j < len(result.Matches)-1 {
+					b.WriteString("\n")
+				}
+			}
+			b.WriteString("\n\n")
 		}
 
 		if len(m.searchResults) > maxResults {
