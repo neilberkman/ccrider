@@ -184,6 +184,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+	case terminalSpawnedMsg:
+		// Show feedback about terminal spawn (success or failure)
+		// For now, just set error state if it failed
+		if !msg.success {
+			m.err = msg.err
+		}
+		// TUI stays open - user can continue browsing
+		return m, nil
+
 	case errMsg:
 		m.err = msg.err
 		return m, nil

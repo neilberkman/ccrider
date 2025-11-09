@@ -1,6 +1,17 @@
-# Resume Prompt Customization
+# Resume & Terminal Configuration
 
-When you resume a session using `ccrider tui` (press 'r' on a session), ccrider sends a contextual prompt to Claude Code to help set the right context.
+## Resume Actions
+
+When viewing a session in `ccrider tui`, you have multiple ways to resume:
+
+- **`r` - Resume** - Quit ccrider and launch Claude in the same terminal
+- **`f` - Fork** - Same as resume but creates a new session ID
+- **`o` - Open in New Terminal** - Launch Claude in a new terminal window (keeps ccrider open)
+- **`c` - Copy Command** - Copy the resume command to clipboard
+
+## Resume Prompt Customization
+
+When you resume a session (via `r`, `f`, or `o`), ccrider sends a contextual prompt to Claude Code to help set the right context.
 
 ## How It Works
 
@@ -102,4 +113,55 @@ Original: {{project_path}}
 Last dir: {{last_cwd}}
 
 If this is a worktree: check git branch and verify you're on the right branch before making changes.
+```
+
+## Terminal Spawn Customization
+
+The `o` key opens a session in a new terminal window. ccrider auto-detects your terminal and uses the appropriate method.
+
+### Supported Terminals (Auto-Detected)
+
+- **Ghostty** - Uses `ghostty +new-window` (native IPC)
+- **iTerm2** - Uses AppleScript
+- **Terminal.app** - Uses AppleScript
+- **WezTerm** - Uses `wezterm cli spawn`
+- **Kitty** - Uses `kitty @ launch`
+
+Detection is based on the `$TERM_PROGRAM` environment variable.
+
+### Custom Terminal Command
+
+If auto-detection doesn't work or you want to use a different method, create:
+
+```bash
+~/.config/ccrider/terminal_command.txt
+```
+
+**Template variables:**
+
+- `{cwd}` - Working directory (project path)
+- `{command}` - Full command to execute (includes `claude --resume ...` with prompt)
+
+**Example for Alacritty:**
+
+```bash
+alacritty --working-directory {cwd} -e bash -l -c {command}
+```
+
+**Example for custom Ghostty config:**
+
+```bash
+ghostty +new-window --working-directory={cwd} --config=my-config -e {command}
+```
+
+**Example for tmux (spawn new window in existing session):**
+
+```bash
+tmux new-window -c {cwd} {command}
+```
+
+The custom command is run via `bash -c`, so you can use shell features like pipes, redirects, etc.
+
+```
+
 ```

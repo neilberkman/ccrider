@@ -4,10 +4,15 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 
+	"github.com/cbroglie/mustache"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/dustin/go-humanize"
+	"github.com/yourusername/ccrider/internal/core/config"
+	"github.com/yourusername/ccrider/internal/core/terminal"
 )
 
 func createViewport(detail sessionDetail, width, height int) viewport.Model {
@@ -276,15 +281,67 @@ type terminalSpawnedMsg struct {
 
 func openInNewTerminal(sessionID, projectPath, lastCwd, updatedAt string) tea.Cmd {
 	return func() tea.Msg {
-		// Build the resume command (we'll launch it in new terminal)
-		cmd := fmt.Sprintf("claude --resume %s", sessionID)
+		// Load config to get terminal command and resume prompt template
+		cfg, err := config.Load()
+		if err != nil {
+			return terminalSpawnedMsg{
+				success: false,
+				message: "Failed to load config",
+				err:     err,
+			}
+		}
 
-		// For now, just show a message that this is not yet implemented
-		// We'll implement the full terminal spawning logic
+		// Build template data for resume prompt
+		updatedTime, _ := time.Parse("2006-01-02 15:04:05", updatedAt)
+		if updatedTime.IsZero() {
+			updatedTime, _ = time.Parse(time.RFC3339, updatedAt)
+		}
+
+		timeSince := "unknown"
+		if !updatedTime.IsZero() {
+			timeSince = humanize.Time(updatedTime)
+		}
+
+		templateData := map[string]string{
+			"last_updated": updatedAt,
+			"last_cwd":     lastCwd,
+			"time_since":   timeSince,
+			"project_path": projectPath,
+		}
+
+		// Render the resume prompt
+		resumePrompt, err := mustache.Render(cfg.ResumePromptTemplate, templateData)
+		if err != nil {
+			// Fall back to simple prompt if template fails
+			resumePrompt = fmt.Sprintf("Resuming session. You were last in: %s", lastCwd)
+		}
+
+		// Build the full command that will run in the new terminal
+		// Use shell with the prompt as an argument to claude
+		shellCmd := fmt.Sprintf("claude --resume %s '%s'", sessionID, resumePrompt)
+
+		// Create spawner with custom command from config
+		spawner := &terminal.Spawner{
+			CustomCommand: cfg.TerminalCommand,
+		}
+
+		// Spawn new terminal window
+		spawnCfg := terminal.SpawnConfig{
+			WorkingDir: projectPath,
+			Command:    shellCmd,
+		}
+
+		if err := spawner.Spawn(spawnCfg); err != nil {
+			return terminalSpawnedMsg{
+				success: false,
+				message: fmt.Sprintf("Failed to spawn terminal: %v", err),
+				err:     err,
+			}
+		}
+
 		return terminalSpawnedMsg{
-			success: false,
-			message: "Open in new terminal: not yet implemented\nCommand: cd " + projectPath + " && " + cmd,
-			err:     fmt.Errorf("not implemented"),
+			success: true,
+			message: "Opened session in new terminal window",
 		}
 	}
 }
