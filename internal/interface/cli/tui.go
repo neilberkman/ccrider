@@ -122,12 +122,10 @@ func execClaude(sessionID, projectPath, lastCwd, updatedAt string, fork bool) er
 		cmd = fmt.Sprintf("claude --resume %s \"$(cat %s)\"", sessionID, tmpfile.Name())
 	}
 
-	// Decide which directory to start in
-	// Prefer lastCwd if it's different from projectPath (e.g., git worktrees)
+	// IMPORTANT: Start in projectPath so claude --resume can find the session
+	// The resume prompt already tells Claude where the session last was (lastCwd)
+	// DO NOT CHANGE THIS - see commit db2bc33
 	workDir := projectPath
-	if lastCwd != "" && lastCwd != projectPath {
-		workDir = lastCwd
-	}
 
 	// Debug: print what we're doing
 	fmt.Fprintf(os.Stderr, "[ccrider] cd %s && %s\n", workDir, cmd)
