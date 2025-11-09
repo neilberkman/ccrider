@@ -2,9 +2,7 @@ package tui
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -292,16 +290,6 @@ type terminalSpawnedMsg struct {
 
 func openInNewTerminal(sessionID, projectPath, lastCwd, updatedAt string) tea.Cmd {
 	return func() tea.Msg {
-		// WORKAROUND: Claude Code's --resume only finds sessions in top-level ~/.claude/projects/
-		// but sessions are stored in project subdirectories. Create a symlink to make it accessible.
-		if err := ensureSessionSymlink(sessionID); err != nil {
-			return terminalSpawnedMsg{
-				success: false,
-				message: "Failed to prepare session",
-				err:     fmt.Errorf("ensure session symlink: %w", err),
-			}
-		}
-
 		// Load config to get terminal command and resume prompt template
 		cfg, err := config.Load()
 		if err != nil {
@@ -404,46 +392,3 @@ func (m Model) viewDetail() string {
 	return content
 }
 
-// ensureSessionSymlink creates a symlink to the session file in the top-level projects directory
-// so that `claude --resume` can find it (Claude Code bug: only looks in top level, not subdirs)
-func ensureSessionSymlink(sessionID string) error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("get home dir: %w", err)
-	}
-
-	projectsDir := filepath.Join(home, ".claude", "projects")
-	targetPath := filepath.Join(projectsDir, sessionID+".jsonl")
-
-	// If symlink/file already exists at top level, we're done
-	if _, err := os.Lstat(targetPath); err == nil {
-		return nil
-	}
-
-	// Find the actual session file in subdirectories
-	var sourcePath string
-	err = filepath.Walk(projectsDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil // Skip errors
-		}
-		if !info.IsDir() && filepath.Base(path) == sessionID+".jsonl" {
-			sourcePath = path
-			return filepath.SkipAll // Found it, stop walking
-		}
-		return nil
-	})
-	if err != nil && err != filepath.SkipAll {
-		return fmt.Errorf("walk projects dir: %w", err)
-	}
-
-	if sourcePath == "" {
-		return fmt.Errorf("session file not found: %s", sessionID)
-	}
-
-	// Create symlink from top level to actual file
-	if err := os.Symlink(sourcePath, targetPath); err != nil {
-		return fmt.Errorf("create symlink: %w", err)
-	}
-
-	return nil
-}

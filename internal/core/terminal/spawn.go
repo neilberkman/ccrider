@@ -131,26 +131,27 @@ end tell
 
 func (s *Spawner) spawnTerminalApp(cfg SpawnConfig) error {
 	// Terminal.app: Use AppleScript to open new window
-	// Build command with message if provided
-	var cmdParts []string
-	cmdParts = append(cmdParts, fmt.Sprintf("cd %s", shellEscape(cfg.WorkingDir)))
+	// Build command string
+	cmdStr := fmt.Sprintf("cd %s", cfg.WorkingDir)
 	if cfg.Message != "" {
-		cmdParts = append(cmdParts, fmt.Sprintf("echo %s", shellEscape(cfg.Message)))
+		cmdStr += fmt.Sprintf(" && echo %s", shellEscape(cfg.Message))
 	}
-	cmdParts = append(cmdParts, cfg.Command)
-
-	// Join with && and wrap entire command
-	fullCmd := shellEscape(strings.Join(cmdParts, " && "))
+	cmdStr += fmt.Sprintf(" && %s", cfg.Command)
 
 	script := fmt.Sprintf(`
 tell application "Terminal"
 	do script %s
 	activate
 end tell
-`, fullCmd)
+`, shellEscape(cmdStr))
+
+	// Debug output
+	fmt.Fprintf(os.Stderr, "[terminal.app] Command: %s\n", cmdStr)
 
 	cmd := exec.Command("osascript", "-e", script)
-	return cmd.Start()
+	cmd.Stderr = os.Stderr
+	cmd.Stdout = os.Stdout
+	return cmd.Run()
 }
 
 func (s *Spawner) spawnWezTerm(cfg SpawnConfig) error {
