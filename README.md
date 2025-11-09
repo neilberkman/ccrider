@@ -75,6 +75,27 @@ ccrider tui
 ccrider resume <session-id>
 ```
 
+## MCP Server for Claude Code
+
+ccrider includes a built-in MCP server that gives Claude access to all your session history:
+
+```bash
+# Install for all your projects (recommended)
+claude mcp add --scope user ccrider $(which ccrider) serve-mcp
+
+# Or for current project only
+claude mcp add ccrider $(which ccrider) serve-mcp
+```
+
+Once configured, you can ask Claude to:
+
+- "Find sessions where I worked on authentication"
+- "Show me my most recent Elixir sessions"
+- "What was I working on last week?"
+- "Search my sessions for postgres migration issues"
+
+The MCP server provides read-only access to your session database with full-text search capabilities.
+
 ## Documentation
 
 - [Design Document](docs/plans/2025-11-08-ccrider-design.md)

@@ -19,6 +19,13 @@ type sessionDetailLoadedMsg struct {
 	detail sessionDetail
 }
 
+type sessionLaunchInfoMsg struct {
+	sessionID   string
+	projectPath string
+	lastCwd     string
+	updatedAt   string
+}
+
 type searchResultsMsg struct {
 	results []searchResult
 }
@@ -212,6 +219,45 @@ func firstLine(s string, maxLen int) string {
 		return s[:maxLen] + "..."
 	}
 	return s
+}
+
+// loadSessionForLaunch loads just the info needed to launch a session (no messages)
+func loadSessionForLaunch(database *db.DB, sessionID string) tea.Cmd {
+	return func() tea.Msg {
+		var session sessionItem
+		var lastCwd string
+		err := database.QueryRow(`
+			SELECT
+				s.session_id,
+				COALESCE(s.summary, ''),
+				s.project_path,
+				(SELECT COUNT(*) FROM messages WHERE session_id = s.id) as actual_message_count,
+				s.updated_at,
+				s.created_at,
+				COALESCE(
+					(SELECT cwd FROM messages
+					 WHERE session_id = s.id
+					   AND cwd IS NOT NULL
+					   AND cwd != ''
+					   AND cwd != '/'
+					 ORDER BY sequence DESC LIMIT 1),
+					s.project_path
+				) as last_cwd
+			FROM sessions s
+			WHERE s.session_id = ?
+		`, sessionID).Scan(&session.ID, &session.Summary, &session.Project,
+			&session.MessageCount, &session.UpdatedAt, &session.CreatedAt, &lastCwd)
+		if err != nil {
+			return errMsg{err}
+		}
+
+		return sessionLaunchInfoMsg{
+			sessionID:   session.ID,
+			projectPath: session.Project,
+			lastCwd:     lastCwd,
+			updatedAt:   session.UpdatedAt,
+		}
+	}
 }
 
 func loadSessionDetail(database *db.DB, sessionID string) tea.Cmd {

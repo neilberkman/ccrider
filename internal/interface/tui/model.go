@@ -172,6 +172,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mode = detailView
 		return m, nil
 
+	case sessionLaunchInfoMsg:
+		// Got session info for quick launch (from list view 'o' key)
+		return m, openInNewTerminal(
+			msg.sessionID,
+			msg.projectPath,
+			msg.lastCwd,
+			msg.updatedAt,
+		)
+
 	case searchResultsMsg:
 		m.searchResults = msg.results
 		return m, nil

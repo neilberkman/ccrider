@@ -56,6 +56,15 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case "o":
+		// Open selected session in new terminal
+		if selected, ok := m.list.SelectedItem().(sessionListItem); ok {
+			m.err = nil
+			// Load session info (including lastCwd) then launch
+			return m, loadSessionForLaunch(m.db, selected.session.ID)
+		}
+		return m, nil
+
 	case "/":
 		m.mode = searchView
 		return m, nil
@@ -68,7 +77,7 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) viewList() string {
 	header := titleStyle.Render("Claude Code Sessions")
-	footer := "\n\nPress Enter to view | / to search | ? for help | q to quit"
+	footer := "\n\nEnter: view | o: open in new tab | /: search | ?: help | q: quit"
 
 	if len(m.sessions) == 0 {
 		return header + "\n\nNo sessions found. Run 'ccrider sync' to import sessions." + footer

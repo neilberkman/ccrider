@@ -23,6 +23,7 @@ SESSION LIST VIEW
 ─────────────────
   ↑/↓, j/k     Navigate sessions
   Enter        View session details
+  o            Open session in new terminal tab
   /            Search messages
   ?            Show this help
   q            Quit
