@@ -24,7 +24,7 @@ func loadSessions(database *db.DB) tea.Cmd {
 				s.session_id,
 				COALESCE(s.summary, ''),
 				s.project_path,
-				s.message_count,
+				(SELECT COUNT(*) FROM messages WHERE session_id = s.id) as actual_message_count,
 				s.updated_at,
 				s.created_at,
 				COALESCE(
@@ -38,6 +38,7 @@ func loadSessions(database *db.DB) tea.Cmd {
 					''
 				) as first_message
 			FROM sessions s
+			WHERE (SELECT COUNT(*) FROM messages WHERE session_id = s.id) > 0
 			ORDER BY s.updated_at DESC
 			LIMIT 1000
 		`)
@@ -88,8 +89,13 @@ func loadSessionDetail(database *db.DB, sessionID string) tea.Cmd {
 		// Get session info
 		var session sessionItem
 		err := database.QueryRow(`
-			SELECT session_id, COALESCE(summary, ''), project_path,
-			       message_count, updated_at, created_at
+			SELECT
+				session_id,
+				COALESCE(summary, ''),
+				project_path,
+				(SELECT COUNT(*) FROM messages WHERE session_id = sessions.id) as actual_message_count,
+				updated_at,
+				created_at
 			FROM sessions
 			WHERE session_id = ?
 		`, sessionID).Scan(&session.ID, &session.Summary, &session.Project,
