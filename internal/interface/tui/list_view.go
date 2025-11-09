@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/charmbracelet/bubbles/list"
@@ -19,24 +20,57 @@ func (i sessionListItem) FilterValue() string {
 
 func (i sessionListItem) Title() string {
 	// Priority: Claude summary > first message (truncated) > session ID
-	title := ""
 	if i.session.Summary != "" {
-		title = i.session.Summary
-	} else {
-		title = i.session.ID[:12] + "..."
+		return i.session.Summary
 	}
-
-	// Add subtle marker if this session matches current directory
-	if i.session.MatchesCurrentDir {
-		title = "• " + title
-	}
-
-	return title
+	return i.session.ID[:12] + "..."
 }
 
 func (i sessionListItem) Description() string {
 	return fmt.Sprintf("%s | %d messages | Updated: %s",
 		i.session.Project, i.session.MessageCount, formatTime(i.session.UpdatedAt))
+}
+
+// Custom delegate to handle current directory highlighting
+type sessionDelegate struct {
+	list.DefaultDelegate
+}
+
+func (d sessionDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
+	s, ok := item.(sessionListItem)
+	if !ok {
+		d.DefaultDelegate.Render(w, m, index, item)
+		return
+	}
+
+	// Get title and description
+	title := s.Title()
+	desc := s.Description()
+
+	// Apply current directory styling if needed
+	if s.session.MatchesCurrentDir {
+		if index == m.Index() {
+			// Selected item - use selected style
+			title = selectedItemStyle.Render(title)
+			desc = selectedItemStyle.Faint(true).Render(desc)
+		} else {
+			// Not selected - use current directory style
+			title = currentDirItemStyle.Render(title)
+			desc = itemStyle.Render(desc)
+		}
+	} else {
+		if index == m.Index() {
+			// Selected item
+			title = selectedItemStyle.Render(title)
+			desc = selectedItemStyle.Faint(true).Render(desc)
+		} else {
+			// Normal item
+			title = itemStyle.Render(title)
+			desc = itemStyle.Render(desc)
+		}
+	}
+
+	fmt.Fprintf(w, "%s\n%s", title, desc)
 }
 
 func createSessionList(sessions []sessionItem, width, height int) list.Model {
@@ -45,9 +79,7 @@ func createSessionList(sessions []sessionItem, width, height int) list.Model {
 		items[i] = sessionListItem{session: s}
 	}
 
-	delegate := list.NewDefaultDelegate()
-	delegate.Styles.SelectedTitle = selectedItemStyle
-	delegate.Styles.SelectedDesc = selectedItemStyle.Faint(true)
+	delegate := sessionDelegate{DefaultDelegate: list.NewDefaultDelegate()}
 
 	l := list.New(items, delegate, width, height-4)
 	l.Title = "Claude Code Sessions"
