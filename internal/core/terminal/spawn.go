@@ -110,11 +110,13 @@ end tell
 
 func (s *Spawner) spawnITerm(cfg SpawnConfig) error {
 	// iTerm2: Use AppleScript
-	fullCmd := fmt.Sprintf("cd %s", cfg.WorkingDir)
+	cmdStr := fmt.Sprintf("cd %s", cfg.WorkingDir)
 	if cfg.Message != "" {
-		fullCmd += fmt.Sprintf(" && echo '%s'", cfg.Message)
+		// Escape single quotes in message for shell
+		safeMsg := strings.ReplaceAll(cfg.Message, "'", "'\\''")
+		cmdStr += fmt.Sprintf(" && echo '%s'", safeMsg)
 	}
-	fullCmd += fmt.Sprintf(" && %s", cfg.Command)
+	cmdStr += fmt.Sprintf(" && %s", cfg.Command)
 
 	script := fmt.Sprintf(`
 tell application "iTerm"
@@ -123,7 +125,7 @@ tell application "iTerm"
 		write text %s
 	end tell
 end tell
-`, shellEscape(fullCmd))
+`, appleScriptEscape(cmdStr))
 
 	cmd := exec.Command("osascript", "-e", script)
 	return cmd.Start()
