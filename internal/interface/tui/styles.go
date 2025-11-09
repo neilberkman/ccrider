@@ -17,6 +17,10 @@ var (
 				Foreground(lipgloss.Color("170")).
 				Bold(true)
 
+	currentDirItemStyle = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color("120")) // Light green - contrasts better with purple selection
+
 	// Detail view styles
 	userStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("cyan")).
