@@ -38,15 +38,12 @@ func (m Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "enter":
-		// If we have results and something is selected, open that session
+		// Open selected session
 		if len(m.searchResults) > 0 && m.searchSelectedIdx < len(m.searchResults) {
 			sessionID := m.searchResults[m.searchSelectedIdx].SessionID
 			return m, loadSessionDetail(m.db, sessionID)
 		}
-		// Otherwise, perform search
-		query := m.searchInput.Value()
-		m.searchSelectedIdx = 0
-		return m, performSearch(m.db, query)
+		return m, nil
 
 	case "down", "j":
 		if len(m.searchResults) > 0 {
@@ -70,7 +67,10 @@ func (m Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Update text input
 	m.searchInput, cmd = m.searchInput.Update(msg)
 
-	return m, cmd
+	// Perform live search on every keystroke
+	query := m.searchInput.Value()
+	m.searchSelectedIdx = 0
+	return m, tea.Batch(cmd, performSearch(m.db, query))
 }
 
 func (m Model) viewSearch() string {
@@ -157,7 +157,7 @@ func (m Model) viewSearch() string {
 	if len(m.searchResults) > 0 {
 		b.WriteString("\n\nj/k: navigate | Enter: open session | esc: back | q: quit")
 	} else {
-		b.WriteString("\n\nPress Enter to search | esc to go back | q to quit")
+		b.WriteString("\n\nType to search (live) | esc: back | q: quit")
 	}
 
 	return b.String()
