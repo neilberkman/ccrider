@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -55,17 +54,16 @@ func runTUI(cmd *cobra.Command, args []string) error {
 }
 
 func execClaude(sessionID, projectPath string, fork bool) error {
-	// Find claude binary
-	claudePath, err := exec.LookPath("claude")
-	if err != nil {
-		return fmt.Errorf("claude not found in PATH: %w", err)
+	// Build claude command
+	var cmd string
+	if fork {
+		cmd = fmt.Sprintf("claude --resume %s --fork-session", sessionID)
+	} else {
+		cmd = fmt.Sprintf("claude --resume %s", sessionID)
 	}
 
-	// Build args
-	args := []string{"claude", "--resume", sessionID}
-	if fork {
-		args = append(args, "--fork-session")
-	}
+	// Debug: print what we're doing
+	fmt.Fprintf(os.Stderr, "[ccrider] cd %s && %s\n", projectPath, cmd)
 
 	// Change to project directory
 	if projectPath != "" {
@@ -74,6 +72,13 @@ func execClaude(sessionID, projectPath string, fork bool) error {
 		}
 	}
 
-	// Exec claude (replaces current process)
-	return syscall.Exec(claudePath, args, os.Environ())
+	// Find shell
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/bash"
+	}
+
+	// Exec shell with claude command (replaces current process)
+	// Use -c to run the command, -l to make it a login shell (loads asdf/mise)
+	return syscall.Exec(shell, []string{shell, "-l", "-c", cmd}, os.Environ())
 }
