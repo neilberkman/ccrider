@@ -131,27 +131,24 @@ end tell
 
 func (s *Spawner) spawnTerminalApp(cfg SpawnConfig) error {
 	// Terminal.app: Use AppleScript to open new window
-	// Build command string
+	// Build command string (will be executed by shell in Terminal)
 	cmdStr := fmt.Sprintf("cd %s", cfg.WorkingDir)
 	if cfg.Message != "" {
-		cmdStr += fmt.Sprintf(" && echo %s", shellEscape(cfg.Message))
+		// Don't escape message - it's just text
+		cmdStr += fmt.Sprintf(" && echo '%s'", cfg.Message)
 	}
 	cmdStr += fmt.Sprintf(" && %s", cfg.Command)
 
+	// Use AppleScript escaping (double quotes and backslashes)
 	script := fmt.Sprintf(`
 tell application "Terminal"
 	do script %s
 	activate
 end tell
-`, shellEscape(cmdStr))
-
-	// Debug output
-	fmt.Fprintf(os.Stderr, "[terminal.app] Command: %s\n", cmdStr)
+`, appleScriptEscape(cmdStr))
 
 	cmd := exec.Command("osascript", "-e", script)
-	cmd.Stderr = os.Stderr
-	cmd.Stdout = os.Stdout
-	return cmd.Run()
+	return cmd.Start()
 }
 
 func (s *Spawner) spawnWezTerm(cfg SpawnConfig) error {
@@ -188,4 +185,12 @@ func (s *Spawner) spawnCustom(cfg SpawnConfig) error {
 func shellEscape(s string) string {
 	// Simple escape: wrap in single quotes, escape single quotes
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
+// appleScriptEscape escapes a string for use in AppleScript do script command
+func appleScriptEscape(s string) string {
+	// AppleScript uses backslash for escaping quotes and backslashes
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "\"", "\\\"")
+	return "\"" + s + "\""
 }

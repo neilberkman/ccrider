@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -353,12 +354,19 @@ func openInNewTerminal(sessionID, projectPath, lastCwd, updatedAt string) tea.Cm
 			Message:    "Starting Claude Code (this may take a few seconds)...",
 		}
 
+		fmt.Fprintf(os.Stderr, "[DEBUG openInNewTerminal] About to spawn terminal\n")
+		fmt.Fprintf(os.Stderr, "[DEBUG openInNewTerminal] WorkingDir: %s\n", workDir)
+		fmt.Fprintf(os.Stderr, "[DEBUG openInNewTerminal] Command: %s\n", shellCmd)
+
 		if err := spawner.Spawn(spawnCfg); err != nil {
+			fmt.Fprintf(os.Stderr, "[DEBUG openInNewTerminal] Spawn failed: %v\n", err)
 			return terminalSpawnedMsg{
 				success: false,
 				err:     err,
 			}
 		}
+
+		fmt.Fprintf(os.Stderr, "[DEBUG openInNewTerminal] Spawn succeeded\n")
 
 		return terminalSpawnedMsg{
 			success: true,
