@@ -69,13 +69,42 @@ func (i *Importer) ImportSession(session *ccsessions.ParsedSession) error {
 		updatedAt = session.FileMtime
 	}
 
-	// Insert session
-	result, err := tx.Exec(`
+	// Upsert session - update if this file is newer than existing
+	_, err = tx.Exec(`
 		INSERT INTO sessions (
 			session_id, project_path, summary, leaf_uuid,
 			created_at, updated_at, message_count, file_hash,
 			file_size, file_mtime
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(session_id) DO UPDATE SET
+			summary = CASE
+				WHEN excluded.file_mtime > sessions.file_mtime THEN excluded.summary
+				ELSE sessions.summary
+			END,
+			leaf_uuid = CASE
+				WHEN excluded.file_mtime > sessions.file_mtime THEN excluded.leaf_uuid
+				ELSE sessions.leaf_uuid
+			END,
+			updated_at = CASE
+				WHEN excluded.file_mtime > sessions.file_mtime THEN excluded.updated_at
+				ELSE sessions.updated_at
+			END,
+			message_count = CASE
+				WHEN excluded.file_mtime > sessions.file_mtime THEN excluded.message_count
+				ELSE sessions.message_count
+			END,
+			file_hash = CASE
+				WHEN excluded.file_mtime > sessions.file_mtime THEN excluded.file_hash
+				ELSE sessions.file_hash
+			END,
+			file_size = CASE
+				WHEN excluded.file_mtime > sessions.file_mtime THEN excluded.file_size
+				ELSE sessions.file_size
+			END,
+			file_mtime = CASE
+				WHEN excluded.file_mtime > sessions.file_mtime THEN excluded.file_mtime
+				ELSE sessions.file_mtime
+			END
 	`,
 		session.SessionID,
 		projectPath,
@@ -89,18 +118,21 @@ func (i *Importer) ImportSession(session *ccsessions.ParsedSession) error {
 		session.FileMtime,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to insert session: %w", err)
+		return fmt.Errorf("failed to upsert session: %w", err)
 	}
 
-	sessionDBID, err := result.LastInsertId()
+	// Get the session DB ID (either newly inserted or existing)
+	var sessionDBID int64
+	err = tx.QueryRow("SELECT id FROM sessions WHERE session_id = ?", session.SessionID).Scan(&sessionDBID)
 	if err != nil {
 		return fmt.Errorf("failed to get session ID: %w", err)
 	}
 
-	// Insert messages
+	// Insert messages (use INSERT OR IGNORE to skip duplicates from resumed sessions)
+	messagesInserted := 0
 	for _, msg := range session.Messages {
-		_, err := tx.Exec(`
-			INSERT INTO messages (
+		result, err := tx.Exec(`
+			INSERT OR IGNORE INTO messages (
 				uuid, session_id, parent_uuid, type, sender,
 				content, text_content, timestamp, sequence,
 				is_sidechain, cwd, git_branch, version
@@ -123,13 +155,19 @@ func (i *Importer) ImportSession(session *ccsessions.ParsedSession) error {
 		if err != nil {
 			return fmt.Errorf("failed to insert message %s: %w", msg.UUID, err)
 		}
+
+		// Check if the message was actually inserted
+		rowsAffected, err := result.RowsAffected()
+		if err == nil && rowsAffected > 0 {
+			messagesInserted++
+		}
 	}
 
 	// Record import
 	_, err = tx.Exec(`
 		INSERT INTO import_log (file_path, file_hash, sessions_imported, messages_imported, status)
 		VALUES (?, ?, 1, ?, 'success')
-	`, session.FilePath, hash, len(session.Messages))
+	`, session.FilePath, hash, messagesInserted)
 	if err != nil {
 		return fmt.Errorf("failed to record import: %w", err)
 	}

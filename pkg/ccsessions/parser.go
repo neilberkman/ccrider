@@ -70,7 +70,7 @@ func ParseFile(path string) (session *ParsedSession, err error) {
 		return nil, fmt.Errorf("failed to stat file: %w", err)
 	}
 
-	// Extract session ID from filename
+	// Initialize session with filename-based ID (will be overwritten if sessionId found)
 	sessionID := filepath.Base(path)
 	sessionID = sessionID[:len(sessionID)-len(filepath.Ext(sessionID))]
 
@@ -82,7 +82,10 @@ func ParseFile(path string) (session *ParsedSession, err error) {
 		Messages:  make([]ParsedMessage, 0),
 	}
 
+	// Configure scanner with larger buffer for long lines (10MB max)
 	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 64*1024), 10*1024*1024)
+
 	lineNum := 0
 
 	for scanner.Scan() {
@@ -94,21 +97,27 @@ func ParseFile(path string) (session *ParsedSession, err error) {
 			return nil, fmt.Errorf("line %d: failed to parse JSON: %w", lineNum, err)
 		}
 
-		// First line is always summary
-		if lineNum == 1 {
-			if raw.Type != "summary" {
-				return nil, fmt.Errorf("first line must be summary, got %s", raw.Type)
-			}
+		// Handle summary if present (may not be first line, or may not exist)
+		if raw.Type == "summary" {
 			session.Summary = raw.Summary
 			session.LeafUUID = raw.LeafUUID
+			// Extract sessionId from summary if available
+			if raw.SessionID != "" {
+				session.SessionID = raw.SessionID
+			}
 			continue
+		}
+
+		// Extract sessionId from messages if we haven't found it yet
+		if raw.SessionID != "" && session.SessionID == sessionID {
+			session.SessionID = raw.SessionID
 		}
 
 		// Parse message entries
 		msg, err := parseMessage(&raw, lineNum)
 		if err != nil {
 			// Log warning but don't fail - some message types we may not support yet
-			fmt.Fprintf(os.Stderr, "Warning: line %d: %v\n", lineNum, err)
+			fmt.Fprintf(os.Stderr, "Warning: %s line %d: %v\n", path, lineNum, err)
 			continue
 		}
 
@@ -172,12 +181,15 @@ func parseMessage(raw *rawEntry, sequence int) (*ParsedMessage, error) {
 			msg.Sender = "assistant"
 		}
 
-	case "system", "file-history-snapshot":
+	case "system", "file-history-snapshot", "queue-operation":
 		// These types don't have extractable text content
 		msg.TextContent = ""
 
 	default:
-		return nil, fmt.Errorf("unknown message type: %s", raw.Type)
+		// Unknown message type - warn but don't fail
+		// Just store the type and continue processing
+		msg.TextContent = ""
+		msg.Sender = "unknown"
 	}
 
 	return msg, nil

@@ -32,3 +32,47 @@ func TestParseFile_InvalidPath(t *testing.T) {
 		t.Error("ParseFile() should return error for invalid path")
 	}
 }
+
+func TestParseFile_AgentSession(t *testing.T) {
+	session, err := ParseFile("testdata/agent-session.jsonl")
+	if err != nil {
+		t.Fatalf("ParseFile() error = %v", err)
+	}
+
+	// Agent sessions don't have summary
+	if session.Summary != "" {
+		t.Errorf("Agent session should have empty summary, got %v", session.Summary)
+	}
+
+	// Should extract sessionId from messages
+	if session.SessionID != "test-session-123" {
+		t.Errorf("SessionID = %v, want 'test-session-123'", session.SessionID)
+	}
+
+	// Check message count
+	if len(session.Messages) != 2 {
+		t.Errorf("Message count = %v, want 2", len(session.Messages))
+	}
+
+	// Check first message is sidechain
+	if !session.Messages[0].IsSidechain {
+		t.Error("First message should be sidechain")
+	}
+}
+
+func TestParseFile_NoSummary(t *testing.T) {
+	session, err := ParseFile("testdata/no-summary.jsonl")
+	if err != nil {
+		t.Fatalf("ParseFile() error = %v", err)
+	}
+
+	// Should extract sessionId from messages
+	if session.SessionID != "test-session-456" {
+		t.Errorf("SessionID = %v, want 'test-session-456'", session.SessionID)
+	}
+
+	// Check message count
+	if len(session.Messages) != 2 {
+		t.Errorf("Message count = %v, want 2", len(session.Messages))
+	}
+}
