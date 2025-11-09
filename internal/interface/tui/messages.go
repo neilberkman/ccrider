@@ -181,9 +181,9 @@ func performSearch(database *db.DB, query string) tea.Cmd {
 	}
 }
 
-func loadSessions(database *db.DB) tea.Cmd {
+func loadSessions(database *db.DB, filterByProject bool, projectPath string) tea.Cmd {
 	return func() tea.Msg {
-		rows, err := database.Query(`
+		query := `
 			SELECT
 				s.session_id,
 				COALESCE(s.summary, ''),
@@ -202,10 +202,21 @@ func loadSessions(database *db.DB) tea.Cmd {
 					''
 				) as first_message
 			FROM sessions s
-			WHERE (SELECT COUNT(*) FROM messages WHERE session_id = s.id) > 0
+			WHERE (SELECT COUNT(*) FROM messages WHERE session_id = s.id) > 0`
+
+		// Add project filter if enabled
+		args := []interface{}{}
+		if filterByProject && projectPath != "" {
+			query += " AND s.project_path LIKE ?"
+			args = append(args, "%"+projectPath+"%")
+		}
+
+		query += `
 			ORDER BY s.updated_at DESC
 			LIMIT 1000
-		`)
+		`
+
+		rows, err := database.Query(query, args...)
 		if err != nil {
 			return errMsg{err}
 		}

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -31,6 +32,10 @@ type Model struct {
 	// Current session data
 	sessions       []sessionItem
 	currentSession *sessionDetail
+
+	// Project filter state
+	projectFilterEnabled bool
+	currentDirectory     string
 
 	// Search state
 	searchInput        textinput.Model
@@ -104,17 +109,22 @@ func New(database *db.DB) Model {
 	emptyList := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
 	emptyList.Title = "Claude Code Sessions"
 
+	// Get current working directory for filtering
+	currentDir, _ := os.Getwd()
+
 	return Model{
-		db:              database,
-		mode:            listView,
-		list:            emptyList,
-		searchInput:     ti,
-		inSessionSearch: inSessionTi,
+		db:                   database,
+		mode:                 listView,
+		list:                 emptyList,
+		searchInput:          ti,
+		inSessionSearch:      inSessionTi,
+		projectFilterEnabled: false, // Disabled by default
+		currentDirectory:     currentDir,
 	}
 }
 
 func (m Model) Init() tea.Cmd {
-	return loadSessions(m.db)
+	return loadSessions(m.db, m.projectFilterEnabled, m.currentDirectory)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
