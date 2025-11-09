@@ -130,31 +130,24 @@ end tell
 }
 
 func (s *Spawner) spawnTerminalApp(cfg SpawnConfig) error {
-	// Terminal.app: Use AppleScript to open new tab in frontmost window
-	// If no windows exist, creates a new window
-	fullCmd := fmt.Sprintf("cd %s", cfg.WorkingDir)
+	// Terminal.app: Use AppleScript to open new window
+	// Build command with message if provided
+	var cmdParts []string
+	cmdParts = append(cmdParts, fmt.Sprintf("cd %s", shellEscape(cfg.WorkingDir)))
 	if cfg.Message != "" {
-		fullCmd += fmt.Sprintf(" && echo '%s'", cfg.Message)
+		cmdParts = append(cmdParts, fmt.Sprintf("echo %s", shellEscape(cfg.Message)))
 	}
-	fullCmd += fmt.Sprintf(" && %s", cfg.Command)
-	fullCmd = shellEscape(fullCmd)
+	cmdParts = append(cmdParts, cfg.Command)
+
+	// Join with && and wrap entire command
+	fullCmd := shellEscape(strings.Join(cmdParts, " && "))
 
 	script := fmt.Sprintf(`
 tell application "Terminal"
+	do script %s
 	activate
-	if (count of windows) is 0 then
-		do script %s
-	else
-		tell application "System Events"
-			tell process "Terminal"
-				keystroke "t" using command down
-			end tell
-		end tell
-		delay 0.3
-		do script %s in selected tab of front window
-	end if
 end tell
-`, fullCmd, fullCmd)
+`, fullCmd)
 
 	cmd := exec.Command("osascript", "-e", script)
 	return cmd.Start()
