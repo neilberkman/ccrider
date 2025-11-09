@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"os/exec"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/viewport"
@@ -133,6 +134,13 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = listView
 		return m, nil
 
+	case "o", "O":
+		// Open/resume session in Claude Code
+		if m.currentSession != nil {
+			return m, launchClaudeSession(m.currentSession.Session.ID)
+		}
+		return m, nil
+
 	case "ctrl+f", "/":
 		m.inSessionSearchMode = true
 		m.inSessionSearch.Focus()
@@ -181,6 +189,22 @@ func findMatches(messages []messageItem, query string) []int {
 	return matches
 }
 
+type sessionLaunchedMsg struct {
+	success bool
+	err     error
+}
+
+func launchClaudeSession(sessionID string) tea.Cmd {
+	return func() tea.Msg {
+		cmd := exec.Command("claude", "--resume", sessionID)
+		err := cmd.Start()
+		if err != nil {
+			return sessionLaunchedMsg{success: false, err: err}
+		}
+		return sessionLaunchedMsg{success: true}
+	}
+}
+
 func (m Model) viewDetail() string {
 	if m.currentSession == nil {
 		return "No session loaded"
@@ -200,7 +224,7 @@ func (m Model) viewDetail() string {
 		content += searchBox
 	} else {
 		footer := fmt.Sprintf("\n%3.f%%", m.viewport.ScrollPercent()*100)
-		footer += "\n\n/: search in session | j/k: scroll | d/u: half page | g/G: top/bottom | esc: back | q: quit"
+		footer += "\n\no: open in Claude | /: search | j/k: scroll | d/u: half page | g/G: top/bottom | esc: back | q: quit"
 		content += footer
 	}
 
