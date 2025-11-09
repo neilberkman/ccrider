@@ -134,12 +134,14 @@ func (s *Spawner) spawnTerminalApp(cfg SpawnConfig) error {
 	// Build command string (will be executed by shell in Terminal)
 	cmdStr := fmt.Sprintf("cd %s", cfg.WorkingDir)
 	if cfg.Message != "" {
-		// Don't escape message - it's just text
-		cmdStr += fmt.Sprintf(" && echo '%s'", cfg.Message)
+		// Escape single quotes in message for shell
+		safeMsg := strings.ReplaceAll(cfg.Message, "'", "'\\''")
+		cmdStr += fmt.Sprintf(" && echo '%s'", safeMsg)
 	}
 	cmdStr += fmt.Sprintf(" && %s", cfg.Command)
 
 	// Use AppleScript escaping (double quotes and backslashes)
+	// Just open a new window - tabs would require System Events/Accessibility permissions
 	script := fmt.Sprintf(`
 tell application "Terminal"
 	do script %s
