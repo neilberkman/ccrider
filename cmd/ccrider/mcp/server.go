@@ -27,7 +27,8 @@ type SearchSessionsArgs struct {
 
 // GetSessionDetailArgs defines arguments for the get_session_detail tool
 type GetSessionDetailArgs struct {
-	SessionID string `json:"session_id" jsonschema:"description=Session UUID to retrieve,required"`
+	SessionID   string `json:"session_id" jsonschema:"description=Session UUID to retrieve,required"`
+	SearchQuery string `json:"search_query,omitempty" jsonschema:"description=Optional search term to find matching messages"`
 }
 
 // ListRecentSessionsArgs defines arguments for the list_recent_sessions tool
@@ -53,15 +54,17 @@ type MatchSnippet struct {
 	Sequence    int    `json:"sequence"`
 }
 
-// SessionDetail represents a full session with messages
+// SessionDetail represents a session with key messages (not full conversation)
 type SessionDetail struct {
-	SessionID    string            `json:"session_id"`
-	Summary      string            `json:"summary"`
-	Project      string            `json:"project"`
-	CreatedAt    string            `json:"created_at"`
-	UpdatedAt    string            `json:"updated_at"`
-	MessageCount int               `json:"message_count"`
-	Messages     []MessageDetail   `json:"messages"`
+	SessionID      string          `json:"session_id"`
+	Summary        string          `json:"summary"`
+	Project        string          `json:"project"`
+	CreatedAt      string          `json:"created_at"`
+	UpdatedAt      string          `json:"updated_at"`
+	MessageCount   int             `json:"message_count"`
+	FirstMessage   *MessageDetail  `json:"first_message,omitempty"`
+	LastMessage    *MessageDetail  `json:"last_message,omitempty"`
+	MatchingMessages []MessageDetail `json:"matching_messages,omitempty"`
 }
 
 // MessageDetail represents a single message in a session
@@ -119,10 +122,12 @@ func StartServer(dbPath string) error {
 
 	// Register get_session_detail tool
 	detailTool := mcp.NewTool("get_session_detail",
-		mcp.WithDescription("Retrieve full conversation for a specific Claude Code session"),
+		mcp.WithDescription("Retrieve session info with first message, last message, and optionally matching messages for a specific Claude Code session"),
 		mcp.WithString("session_id",
 			mcp.Required(),
 			mcp.Description("Session UUID to retrieve")),
+		mcp.WithString("search_query",
+			mcp.Description("Optional search term to find matching messages in the session")),
 	)
 	s.AddTool(detailTool, makeGetSessionDetailHandler(database))
 
@@ -159,7 +164,7 @@ func syncDatabase(ctx context.Context, database *db.DB) error {
 
 func makeSearchSessionsHandler(database *db.DB) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		// Sync database before running query
+		// Sync database before running query (fast incremental check)
 		if err := syncDatabase(ctx, database); err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("sync failed: %v", err)), nil
 		}
@@ -310,8 +315,10 @@ func makeGetSessionDetailHandler(database *db.DB) func(context.Context, mcp.Call
 
 		// Get session info
 		var session SessionDetail
+		var sessionInternalID int64
 		err := database.QueryRow(`
 			SELECT
+				id,
 				session_id,
 				COALESCE(summary, ''),
 				project_path,
@@ -320,31 +327,59 @@ func makeGetSessionDetailHandler(database *db.DB) func(context.Context, mcp.Call
 				(SELECT COUNT(*) FROM messages WHERE session_id = sessions.id) as message_count
 			FROM sessions
 			WHERE session_id = ?
-		`, args.SessionID).Scan(&session.SessionID, &session.Summary, &session.Project,
+		`, args.SessionID).Scan(&sessionInternalID, &session.SessionID, &session.Summary, &session.Project,
 			&session.CreatedAt, &session.UpdatedAt, &session.MessageCount)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("session not found: %v", err)), nil
 		}
 
-		// Get messages
-		rows, err := database.Query(`
+		// Get first message
+		var firstMsg MessageDetail
+		err = database.QueryRow(`
 			SELECT type, COALESCE(text_content, ''), timestamp, sequence
 			FROM messages
-			WHERE session_id = (SELECT id FROM sessions WHERE session_id = ?)
+			WHERE session_id = ?
 			ORDER BY sequence ASC
-		`, args.SessionID)
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to get messages: %v", err)), nil
+			LIMIT 1
+		`, sessionInternalID).Scan(&firstMsg.Type, &firstMsg.Content, &firstMsg.Timestamp, &firstMsg.Sequence)
+		if err == nil {
+			session.FirstMessage = &firstMsg
 		}
-		defer rows.Close()
 
-		session.Messages = []MessageDetail{}
-		for rows.Next() {
-			var msg MessageDetail
-			if err := rows.Scan(&msg.Type, &msg.Content, &msg.Timestamp, &msg.Sequence); err != nil {
-				continue
+		// Get last message
+		var lastMsg MessageDetail
+		err = database.QueryRow(`
+			SELECT type, COALESCE(text_content, ''), timestamp, sequence
+			FROM messages
+			WHERE session_id = ?
+			ORDER BY sequence DESC
+			LIMIT 1
+		`, sessionInternalID).Scan(&lastMsg.Type, &lastMsg.Content, &lastMsg.Timestamp, &lastMsg.Sequence)
+		if err == nil {
+			session.LastMessage = &lastMsg
+		}
+
+		// If search query provided, get matching messages
+		if args.SearchQuery != "" {
+			rows, err := database.Query(`
+				SELECT type, COALESCE(text_content, ''), timestamp, sequence
+				FROM messages
+				WHERE session_id = ?
+				AND text_content LIKE '%' || ? || '%'
+				ORDER BY sequence ASC
+				LIMIT 5
+			`, sessionInternalID, args.SearchQuery)
+			if err == nil {
+				defer rows.Close()
+				session.MatchingMessages = []MessageDetail{}
+				for rows.Next() {
+					var msg MessageDetail
+					if err := rows.Scan(&msg.Type, &msg.Content, &msg.Timestamp, &msg.Sequence); err != nil {
+						continue
+					}
+					session.MatchingMessages = append(session.MatchingMessages, msg)
+				}
 			}
-			session.Messages = append(session.Messages, msg)
 		}
 
 		// Return result as JSON

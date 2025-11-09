@@ -2,6 +2,7 @@ package importer
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -24,24 +25,13 @@ func New(database *db.DB) *Importer {
 	return &Importer{db: database}
 }
 
-// ImportSession imports a single parsed session
-func (i *Importer) ImportSession(session *ccsessions.ParsedSession) error {
+// ImportSession imports a single parsed session, optionally skipping already-imported messages
+// existingMessageCount: number of messages we already have for this session (0 for new sessions)
+func (i *Importer) ImportSession(session *ccsessions.ParsedSession, existingMessageCount int) error {
 	// Compute file hash
 	hash, err := computeFileHash(session.FilePath)
 	if err != nil {
 		return fmt.Errorf("failed to hash file: %w", err)
-	}
-
-	// Check if already imported
-	var exists bool
-	err = i.db.QueryRow("SELECT EXISTS(SELECT 1 FROM import_log WHERE file_hash = ?)", hash).Scan(&exists)
-	if err != nil {
-		return fmt.Errorf("failed to check import log: %w", err)
-	}
-
-	if exists {
-		// File already imported - skip for now
-		return nil
 	}
 
 	// Begin transaction
@@ -129,8 +119,10 @@ func (i *Importer) ImportSession(session *ccsessions.ParsedSession) error {
 	}
 
 	// Insert messages (use INSERT OR IGNORE to skip duplicates from resumed sessions)
+	// Skip messages we already have based on existingMessageCount
 	messagesInserted := 0
 	foundSubstantiveUser := false
+	processedCount := 0
 
 	for _, msg := range session.Messages {
 		// Skip messages with no text content (tool_use/tool_result only)
@@ -138,6 +130,23 @@ func (i *Importer) ImportSession(session *ccsessions.ParsedSession) error {
 		if trimmed == "" {
 			continue
 		}
+
+		// Count messages we're processing (after filtering empty ones)
+		processedCount++
+
+		// If we already have this message, skip inserting it
+		if processedCount <= existingMessageCount {
+			// We already have this message in DB - skip INSERT
+			// But we still need to track if we've seen substantive user messages for filtering
+			if !foundSubstantiveUser {
+				if msg.Type == "user" && trimmed != "Warmup" && len(trimmed) > 10 {
+					foundSubstantiveUser = true
+				}
+			}
+			continue
+		}
+
+		// This is a new message we don't have yet - insert it
 
 		// Skip all messages until we find the first substantive user message
 		// (warmups, greetings, etc. are all noise before actual conversation)
@@ -218,14 +227,50 @@ func (i *Importer) ImportDirectory(dirPath string, progress *ProgressReporter) e
 	}
 
 	// Import each file
+	skipped := 0
 	for _, file := range files {
+		// Get file info for mtime check
+		fileInfo, err := os.Stat(file)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to stat %s: %v\n", file, err)
+			continue
+		}
+		fileMtime := fileInfo.ModTime()
+
+		// Extract session ID from filename
+		sessionID := filepath.Base(file)
+		sessionID = strings.TrimSuffix(sessionID, ".jsonl")
+		if strings.HasPrefix(sessionID, "agent-") {
+			sessionID = strings.TrimPrefix(sessionID, "agent-")
+		}
+
+		// Check if we have this session and if our copy is up-to-date
+		var dbMtime sql.NullTime
+		var messageCount int
+		err = i.db.QueryRow(`
+			SELECT file_mtime, COALESCE(message_count, 0)
+			FROM sessions
+			WHERE session_id = ?
+		`, sessionID).Scan(&dbMtime, &messageCount)
+
+		if err == nil && dbMtime.Valid {
+			// We have this session - check if file changed
+			if !fileMtime.After(dbMtime.Time) {
+				// File hasn't been modified since we last imported - skip
+				skipped++
+				continue
+			}
+		}
+		// else: new session or no mtime, need to import
+
+		// Parse and import (passing existing message count for incremental import)
 		session, err := ccsessions.ParseFile(file)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to parse %s: %v\n", file, err)
 			continue
 		}
 
-		if err := i.ImportSession(session); err != nil {
+		if err := i.ImportSession(session, messageCount); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to import %s: %v\n", file, err)
 			continue
 		}
@@ -241,6 +286,10 @@ func (i *Importer) ImportDirectory(dirPath string, progress *ProgressReporter) e
 			}
 			progress.Update(session.Summary, firstMsg)
 		}
+	}
+
+	if progress != nil {
+		fmt.Fprintf(os.Stderr, "\nSkipped %d unchanged files\n", skipped)
 	}
 
 	return nil
