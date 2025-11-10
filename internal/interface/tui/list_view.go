@@ -129,7 +129,7 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) viewList() string {
 	header := titleStyle.Render("Claude Code Sessions")
-	footer := "\n\nEnter: view | o: open in new tab | /: search | p: toggle project filter | s: sync | ?: help | q: quit"
+	footer := "\n\nEnter: view | o: open in new tab | /: search\np: toggle project filter | s: sync | ?: help | q: quit"
 
 	// Show filter status if enabled
 	if m.projectFilterEnabled {

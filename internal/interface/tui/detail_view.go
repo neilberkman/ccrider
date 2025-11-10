@@ -3,10 +3,10 @@ package tui
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 
+	"github.com/atotto/clipboard"
 	"github.com/cbroglie/mustache"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -250,6 +250,10 @@ func launchClaudeSession(sessionID, projectPath, lastCwd, updatedAt string, fork
 }
 
 func copyResumeCommand(sessionID, projectPath, lastCwd string) tea.Cmd {
+	return copyResumeCommandWithContext(sessionID, projectPath, lastCwd, false)
+}
+
+func copyResumeCommandWithContext(sessionID, projectPath, lastCwd string, fromFallbackView bool) tea.Cmd {
 	return func() tea.Msg {
 		// Resolve working directory (always projectPath, see session.ResolveWorkingDir)
 		workDir := session.ResolveWorkingDir(projectPath, lastCwd)
@@ -262,16 +266,19 @@ func copyResumeCommand(sessionID, projectPath, lastCwd string) tea.Cmd {
 			cmd = fmt.Sprintf("claude --resume %s", sessionID)
 		}
 
-		// Try to copy to clipboard using pbcopy (macOS)
-		clipCmd := exec.Command("pbcopy")
-		clipCmd.Stdin = strings.NewReader(cmd)
-		err := clipCmd.Run()
-
+		// Use cross-platform clipboard library
+		err := clipboard.WriteAll(cmd)
 		if err != nil {
-			// Fallback: just show the command
+			// Fallback: show the command with context-appropriate message
+			var message string
+			if fromFallbackView {
+				message = "NoClipboard: " + cmd
+			} else {
+				message = "Command: " + cmd
+			}
 			return sessionLaunchedMsg{
 				success: false,
-				message: "Command: " + cmd,
+				message: message,
 				err:     err,
 			}
 		}
@@ -283,10 +290,46 @@ func copyResumeCommand(sessionID, projectPath, lastCwd string) tea.Cmd {
 	}
 }
 
+func writeCommandToFile(sessionID, projectPath, lastCwd string) tea.Cmd {
+	return func() tea.Msg {
+		// Resolve working directory
+		workDir := session.ResolveWorkingDir(projectPath, lastCwd)
+
+		// Create command
+		var cmd string
+		if workDir != "" {
+			cmd = fmt.Sprintf("cd %s && claude --resume %s", workDir, sessionID)
+		} else {
+			cmd = fmt.Sprintf("claude --resume %s", sessionID)
+		}
+
+		// Write to file
+		filePath := "/tmp/ccrider-cmd.sh"
+		content := fmt.Sprintf("#!/bin/bash\n%s\n", cmd)
+		err := os.WriteFile(filePath, []byte(content), 0755)
+		if err != nil {
+			return sessionLaunchedMsg{
+				success: false,
+				message: fmt.Sprintf("Failed to write file: %v", err),
+				err:     err,
+			}
+		}
+
+		return sessionLaunchedMsg{
+			success: false, // Don't quit
+			message: fmt.Sprintf("Command written to %s", filePath),
+		}
+	}
+}
+
 type terminalSpawnedMsg struct {
-	success bool
-	message string
-	err     error
+	success     bool
+	message     string
+	err         error
+	sessionID   string
+	projectPath string
+	lastCwd     string
+	updatedAt   string
 }
 
 func openInNewTerminal(sessionID, projectPath, lastCwd, updatedAt string) tea.Cmd {
@@ -361,8 +404,12 @@ func openInNewTerminal(sessionID, projectPath, lastCwd, updatedAt string) tea.Cm
 		if err := spawner.Spawn(spawnCfg); err != nil {
 			fmt.Fprintf(os.Stderr, "[DEBUG openInNewTerminal] Spawn failed: %v\n", err)
 			return terminalSpawnedMsg{
-				success: false,
-				err:     err,
+				success:     false,
+				err:         err,
+				sessionID:   sessionID,
+				projectPath: projectPath,
+				lastCwd:     lastCwd,
+				updatedAt:   updatedAt,
 			}
 		}
 

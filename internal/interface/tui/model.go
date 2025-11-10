@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -18,6 +19,7 @@ const (
 	detailView
 	searchView
 	helpView
+	terminalFallbackView
 )
 
 type Model struct {
@@ -55,6 +57,12 @@ type Model struct {
 	LaunchLastCwd     string
 	LaunchUpdatedAt   string
 	LaunchFork        bool
+
+	// Terminal fallback state (when can't spawn terminal)
+	fallbackSessionID   string
+	fallbackProjectPath string
+	fallbackLastCwd     string
+	fallbackUpdatedAt   string
 }
 
 type sessionItem struct {
@@ -146,6 +154,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.KeyMsg:
+		// If showing an error, esc clears it and goes back to previous view
+		if m.err != nil {
+			if msg.String() == "esc" {
+				m.err = nil
+				// Go back to the view we were in before the error
+				// If we're in terminalFallbackView, go back to where we came from
+				if m.mode == terminalFallbackView {
+					if m.currentSession != nil {
+						m.mode = detailView
+					} else {
+						m.mode = listView
+					}
+				}
+				return m, nil
+			}
+			if msg.String() == "q" {
+				return m, tea.Quit
+			}
+		}
+
 		switch msg.String() {
 		case "ctrl+c", "q":
 			if m.mode == listView {
@@ -170,6 +198,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateSearch(msg)
 		case helpView:
 			return m.updateHelp(msg)
+		case terminalFallbackView:
+			return m.updateTerminalFallback(msg)
 		}
 
 	case sessionsLoadedMsg:
@@ -206,8 +236,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.LaunchFork = msg.fork
 			return m, tea.Quit
 		} else {
-			// Failed to launch - show error
-			m.err = msg.err
+			// Show message (could be error or info like "written to file")
+			if msg.message != "" {
+				// Check if this is an info message (starts with "Command written")
+				if strings.HasPrefix(msg.message, "Command written") {
+					m.err = fmt.Errorf("Success: %s", msg.message)
+				} else {
+					m.err = fmt.Errorf("%s", msg.message)
+				}
+			} else {
+				m.err = msg.err
+			}
 			return m, nil
 		}
 
@@ -215,7 +254,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Show feedback only on failure
 		// On success, just clear error and keep TUI usable
 		if !msg.success {
-			m.err = fmt.Errorf("Failed to open session: %v", msg.err)
+			// Check if this is the "can't spawn terminal" error
+			if msg.err != nil && strings.Contains(msg.err.Error(), "could not detect supported terminal") {
+				// Switch to fallback view with options
+				m.mode = terminalFallbackView
+				m.fallbackSessionID = msg.sessionID
+				m.fallbackProjectPath = msg.projectPath
+				m.fallbackLastCwd = msg.lastCwd
+				m.fallbackUpdatedAt = msg.updatedAt
+				m.err = nil
+			} else {
+				m.err = fmt.Errorf("Failed to open session: %v", msg.err)
+			}
 		} else {
 			m.err = nil // Clear any previous errors
 		}
@@ -232,7 +282,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) View() string {
 	if m.err != nil {
-		return "Error: " + m.err.Error() + "\n\nPress q to quit"
+		errMsg := m.err.Error()
+
+		// Handle success messages
+		if strings.HasPrefix(errMsg, "Success: ") {
+			msg := strings.TrimPrefix(errMsg, "Success: ")
+			return msg + "\n\nPress esc to go back"
+		}
+
+		// Handle "NoClipboard:" prefix (from fallback view)
+		if strings.HasPrefix(errMsg, "NoClipboard: ") {
+			cmd := strings.TrimPrefix(errMsg, "NoClipboard: ")
+			return "Cannot copy to clipboard in this environment.\n\nCommand:\n\n" + cmd + "\n\nPress esc to go back"
+		}
+
+		// Handle "Command:" prefix (from direct 'c' key press)
+		if strings.HasPrefix(errMsg, "Command: ") {
+			cmd := strings.TrimPrefix(errMsg, "Command: ")
+			return cmd + "\n\nPress esc to go back"
+		}
+
+		return "Error: " + errMsg + "\n\nPress esc to go back | q to quit"
 	}
 
 	switch m.mode {
@@ -244,6 +314,8 @@ func (m Model) View() string {
 		return m.viewSearch()
 	case helpView:
 		return m.viewHelp()
+	case terminalFallbackView:
+		return m.viewTerminalFallback()
 	}
 
 	return ""

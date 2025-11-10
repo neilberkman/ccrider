@@ -118,11 +118,12 @@ func (m Model) viewSearch() string {
 				summary = searchMatchStyle.Render(summary)
 			}
 
-			// Session header with match count
+			// Session header with match count and updated time
 			matchCount := fmt.Sprintf("(%d %s)", len(result.Matches),
 				map[bool]string{true: "match", false: "matches"}[len(result.Matches) == 1])
-			b.WriteString(fmt.Sprintf("%s%s %s\n", prefix, summary,
-				searchMetaStyle.Render(matchCount)))
+			updatedTime := formatTime(result.UpdatedAt)
+			b.WriteString(fmt.Sprintf("%s%s %s | %s\n", prefix, summary,
+				searchMetaStyle.Render(matchCount), searchMetaStyle.Render(updatedTime)))
 			b.WriteString(fmt.Sprintf("  %s\n", searchMetaStyle.Render(result.Project)))
 
 			// Show each match with clear separation
