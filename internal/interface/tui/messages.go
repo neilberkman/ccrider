@@ -27,6 +27,7 @@ type sessionLaunchInfoMsg struct {
 	projectPath string
 	lastCwd     string
 	updatedAt   string
+	summary     string
 }
 
 type searchResultsMsg struct {
@@ -308,6 +309,7 @@ func loadSessionForLaunch(database *db.DB, sessionID string) tea.Cmd {
 			projectPath: session.Project,
 			lastCwd:     lastCwd,
 			updatedAt:   session.UpdatedAt,
+			summary:     session.Summary,
 		}
 	}
 }

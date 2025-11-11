@@ -13,13 +13,13 @@ const DefaultResumePrompt = `Resuming session from {{last_updated}}.{{#different
 IMPORTANT: This session has been inactive for {{time_since}}. Before proceeding: check git status, look around to understand what changed, and be careful not to overwrite any work in progress.`
 
 type Config struct {
-	ResumePromptTemplate        string
-	TerminalCommand             string // Custom command to spawn terminal (optional)
-	DangerouslySkipPermissions bool   // Skip all permission prompts (use with caution)
+	ResumePromptTemplate string
+	TerminalCommand      string   // Custom command to spawn terminal (optional)
+	ClaudeFlags          []string // Additional flags to pass to claude --resume
 }
 
 type tomlConfig struct {
-	DangerouslySkipPermissions bool `toml:"dangerously_skip_permissions"`
+	ClaudeFlags []string `toml:"claude_flags"`
 }
 
 // Load reads config from ~/.config/ccrider/
@@ -42,7 +42,7 @@ func Load() (*Config, error) {
 	if _, err := os.Stat(tomlPath); err == nil {
 		var tc tomlConfig
 		if _, err := toml.DecodeFile(tomlPath, &tc); err == nil {
-			cfg.DangerouslySkipPermissions = tc.DangerouslySkipPermissions
+			cfg.ClaudeFlags = tc.ClaudeFlags
 		}
 	}
 

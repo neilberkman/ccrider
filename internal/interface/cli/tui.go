@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"strings"
 	"syscall"
 	"time"
 
@@ -56,6 +57,7 @@ func runTUI(cmd *cobra.Command, args []string) error {
 				m.LaunchProjectPath,
 				m.LaunchLastCwd,
 				m.LaunchUpdatedAt,
+				m.LaunchSummary,
 				m.LaunchFork,
 			)
 		}
@@ -64,7 +66,7 @@ func runTUI(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func execClaude(sessionID, projectPath, lastCwd, updatedAt string, fork bool) error {
+func execClaude(sessionID, projectPath, lastCwd, updatedAt, summary string, fork bool) error {
 	// Load config to get resume prompt template
 	cfg, err := config.Load()
 	if err != nil {
@@ -117,10 +119,14 @@ func execClaude(sessionID, projectPath, lastCwd, updatedAt string, fork bool) er
 
 	// Build claude command with prompt from file
 	var cmd string
+	flags := ""
+	if len(cfg.ClaudeFlags) > 0 {
+		flags = " " + strings.Join(cfg.ClaudeFlags, " ")
+	}
 	if fork {
-		cmd = fmt.Sprintf("claude --resume %s --fork-session \"$(cat %s)\"", sessionID, tmpfile.Name())
+		cmd = fmt.Sprintf("claude%s --resume %s --fork-session \"$(cat %s)\"", flags, sessionID, tmpfile.Name())
 	} else {
-		cmd = fmt.Sprintf("claude --resume %s \"$(cat %s)\"", sessionID, tmpfile.Name())
+		cmd = fmt.Sprintf("claude%s --resume %s \"$(cat %s)\"", flags, sessionID, tmpfile.Name())
 	}
 
 	// Resolve working directory (always projectPath, see session.ResolveWorkingDir)
@@ -128,6 +134,15 @@ func execClaude(sessionID, projectPath, lastCwd, updatedAt string, fork bool) er
 
 	// Show what we're doing
 	fmt.Fprintf(os.Stderr, "[ccrider] cd %s && %s\n", workDir, cmd)
+
+	// Set terminal title before launching
+	if !updatedTime.IsZero() && summary != "" {
+		// Format: [resumed MM/DD HH:MM] summary
+		titleTime := updatedTime.Format("01/02 15:04")
+		title := fmt.Sprintf("[resumed %s] %s", titleTime, summary)
+		// Set terminal title using escape sequence
+		fmt.Fprintf(os.Stderr, "\033]0;%s\007", title)
+	}
 
 	// Start spinner (Claude Code can take a few seconds to start)
 	spinner := session.NewSpinner("Starting Claude Code (this may take a few seconds)...")

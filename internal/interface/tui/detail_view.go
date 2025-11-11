@@ -17,6 +17,26 @@ import (
 	"github.com/yourusername/ccrider/internal/core/terminal"
 )
 
+// buildClaudeCommand creates a claude --resume command with configured flags
+func buildClaudeCommand(sessionID, workDir string, withPrompt bool) string {
+	cfg, _ := config.Load()
+
+	claudeCmd := "claude"
+	if cfg != nil && len(cfg.ClaudeFlags) > 0 {
+		claudeCmd += " " + strings.Join(cfg.ClaudeFlags, " ")
+	}
+	claudeCmd += " --resume " + sessionID
+
+	if withPrompt {
+		claudeCmd += " '%s'" // Placeholder for prompt
+	}
+
+	if workDir != "" {
+		return fmt.Sprintf("cd %s && %s", workDir, claudeCmd)
+	}
+	return claudeCmd
+}
+
 func createViewport(detail sessionDetail, width, height int) viewport.Model {
 	vp := viewport.New(width, height-8)
 	vp.SetContent(renderConversation(detail))
@@ -131,6 +151,7 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.currentSession.Session.Project,
 				m.currentSession.LastCwd,
 				m.currentSession.UpdatedAt,
+				m.currentSession.Session.Summary,
 				false,
 			)
 		}
@@ -144,6 +165,7 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.currentSession.Session.Project,
 				m.currentSession.LastCwd,
 				m.currentSession.UpdatedAt,
+				m.currentSession.Session.Summary,
 				true,
 			)
 		}
@@ -169,6 +191,7 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.currentSession.Session.Project,
 				m.currentSession.LastCwd,
 				m.currentSession.UpdatedAt,
+				m.currentSession.Session.Summary,
 			)
 		}
 		return m, nil
@@ -229,10 +252,11 @@ type sessionLaunchedMsg struct {
 	projectPath string
 	lastCwd     string
 	updatedAt   string
+	summary     string
 	fork        bool
 }
 
-func launchClaudeSession(sessionID, projectPath, lastCwd, updatedAt string, fork bool) tea.Cmd {
+func launchClaudeSession(sessionID, projectPath, lastCwd, updatedAt, summary string, fork bool) tea.Cmd {
 	return func() tea.Msg {
 		// We need to exec() to replace the process, but bubbletea makes this tricky
 		// Instead, we'll return a special message telling the TUI to quit,
@@ -244,6 +268,7 @@ func launchClaudeSession(sessionID, projectPath, lastCwd, updatedAt string, fork
 			projectPath: projectPath,
 			lastCwd:     lastCwd,
 			updatedAt:   updatedAt,
+			summary:     summary,
 			fork:        fork,
 		}
 	}
@@ -330,9 +355,10 @@ type terminalSpawnedMsg struct {
 	projectPath string
 	lastCwd     string
 	updatedAt   string
+	summary     string
 }
 
-func openInNewTerminal(sessionID, projectPath, lastCwd, updatedAt string) tea.Cmd {
+func openInNewTerminal(sessionID, projectPath, lastCwd, updatedAt, summary string) tea.Cmd {
 	return func() tea.Msg {
 		// Load config to get terminal command and resume prompt template
 		cfg, err := config.Load()
@@ -410,6 +436,7 @@ func openInNewTerminal(sessionID, projectPath, lastCwd, updatedAt string) tea.Cm
 				projectPath: projectPath,
 				lastCwd:     lastCwd,
 				updatedAt:   updatedAt,
+				summary:     summary,
 			}
 		}
 
