@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/cbroglie/mustache"
-	"github.com/dustin/go-humanize"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/dustin/go-humanize"
 	"github.com/spf13/cobra"
 	"github.com/yourusername/ccrider/internal/core/config"
 	"github.com/yourusername/ccrider/internal/core/db"
@@ -88,11 +88,11 @@ func execClaude(sessionID, projectPath, lastCwd, updatedAt, summary string, fork
 	sameDir := (lastCwd == projectPath)
 
 	templateData := map[string]interface{}{
-		"last_updated":     updatedAt,
-		"last_cwd":         lastCwd,
-		"time_since":       timeSince,
-		"project_path":     projectPath,
-		"same_directory":   sameDir,
+		"last_updated":        updatedAt,
+		"last_cwd":            lastCwd,
+		"time_since":          timeSince,
+		"project_path":        projectPath,
+		"same_directory":      sameDir,
 		"different_directory": !sameDir,
 	}
 

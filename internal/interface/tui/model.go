@@ -40,16 +40,16 @@ type Model struct {
 	currentDirectory     string
 
 	// Search state
-	searchInput        textinput.Model
-	searchResults      []searchResult
-	searchSelectedIdx  int
-	searchViewOffset   int // First visible result index (for scrolling)
+	searchInput       textinput.Model
+	searchResults     []searchResult
+	searchSelectedIdx int
+	searchViewOffset  int // First visible result index (for scrolling)
 
 	// In-session search state
-	inSessionSearch      textinput.Model
-	inSessionSearchMode  bool
-	inSessionMatches     []int // message indices that match
-	inSessionMatchIdx    int   // current match index
+	inSessionSearch     textinput.Model
+	inSessionSearchMode bool
+	inSessionMatches    []int // message indices that match
+	inSessionMatchIdx   int   // current match index
 
 	// Launch state (for exec after quit)
 	LaunchSessionID   string
@@ -91,11 +91,11 @@ type messageItem struct {
 }
 
 type searchResult struct {
-	SessionID    string
-	Summary      string
-	Project      string
-	UpdatedAt    string
-	Matches      []matchInfo
+	SessionID string
+	Summary   string
+	Project   string
+	UpdatedAt string
+	Matches   []matchInfo
 }
 
 type matchInfo struct {

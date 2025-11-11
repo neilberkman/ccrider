@@ -11,12 +11,12 @@ import (
 
 // SearchFilters represents parsed filters from a search query
 type SearchFilters struct {
-	Query       string    // The actual search text
-	Project     string    // Filter by project path
-	AfterDate   time.Time // Only sessions after this date
-	BeforeDate  time.Time // Only sessions before this date
-	HasAfter    bool      // Whether AfterDate was set
-	HasBefore   bool      // Whether BeforeDate was set
+	Query      string    // The actual search text
+	Project    string    // Filter by project path
+	AfterDate  time.Time // Only sessions after this date
+	BeforeDate time.Time // Only sessions before this date
+	HasAfter   bool      // Whether AfterDate was set
+	HasBefore  bool      // Whether BeforeDate was set
 }
 
 // ParseSearchQuery extracts filters from a search query string

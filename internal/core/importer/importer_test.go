@@ -36,7 +36,7 @@ func TestImportSession(t *testing.T) {
 	}
 
 	// Import it
-	err = imp.ImportSession(session)
+	err = imp.ImportSession(session, 0)
 	if err != nil {
 		t.Fatalf("ImportSession() error = %v", err)
 	}
@@ -90,13 +90,13 @@ func TestImportSession_ResumedSession(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = imp.ImportSession(session1)
+	err = imp.ImportSession(session1, 0)
 	if err != nil {
 		t.Fatalf("ImportSession() error = %v", err)
 	}
 
 	// Import the same session again (simulating resumed session)
-	err = imp.ImportSession(session1)
+	err = imp.ImportSession(session1, 0)
 	if err != nil {
 		t.Fatalf("ImportSession() second import error = %v", err)
 	}
@@ -151,7 +151,7 @@ func TestImportSession_AgentSession(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = imp.ImportSession(session)
+	err = imp.ImportSession(session, 0)
 	if err != nil {
 		t.Fatalf("ImportSession() error = %v", err)
 	}
