@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/lipgloss"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/dustin/go-humanize"
 )
@@ -129,11 +130,17 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) viewList() string {
 	header := titleStyle.Render("Claude Code Sessions")
-	footer := "\n\nEnter: view | o: open in new tab | /: search\np: toggle project filter | s: sync | ?: help | q: quit"
+
+	// Build help text with proper width constraint
+	helpText := "Enter: view | o: open in new tab | /: search | p: toggle project filter | s: sync | ?: help | q: quit"
+	wrappedHelp := lipgloss.NewStyle().
+		Width(m.width - 2).
+		Render(helpText)
+	footer := "\n\n" + wrappedHelp
 
 	// Show filter status if enabled
 	if m.projectFilterEnabled {
-		footer = fmt.Sprintf("\n\n[Filter: %s]\n", m.currentDirectory) + footer
+		footer = fmt.Sprintf("\n\n[Filter: %s]\n", m.currentDirectory) + wrappedHelp
 	}
 
 	if len(m.sessions) == 0 {

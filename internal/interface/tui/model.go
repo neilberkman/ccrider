@@ -149,12 +149,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseMsg:
-		// Handle mouse wheel scrolling in search view
-		if m.mode == searchView {
-			if msg.Type == tea.MouseWheelDown {
-				return handleSearchMouseWheel(m, true), nil
-			} else if msg.Type == tea.MouseWheelUp {
-				return handleSearchMouseWheel(m, false), nil
+		// Handle mouse wheel scrolling
+		if msg.Type == tea.MouseWheelDown || msg.Type == tea.MouseWheelUp {
+			switch m.mode {
+			case searchView:
+				return handleSearchMouseWheel(m, msg.Type == tea.MouseWheelDown), nil
+			case listView:
+				// Pass mouse events to the list
+				var cmd tea.Cmd
+				m.list, cmd = m.list.Update(msg)
+				return m, cmd
+			case detailView:
+				// Pass mouse events to the viewport
+				var cmd tea.Cmd
+				m.viewport, cmd = m.viewport.Update(msg)
+				return m, cmd
 			}
 		}
 
