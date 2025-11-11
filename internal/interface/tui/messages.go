@@ -200,6 +200,12 @@ func loadSessions(database *db.DB, filterByProject bool, projectPath string) tea
 					 WHERE session_id = s.id
 					   AND type = 'user'
 					   AND TRIM(text_content) != ''
+					   AND text_content NOT LIKE 'This session is being continued%'
+					   AND text_content NOT LIKE 'Resuming session from%'
+					   AND text_content NOT LIKE '[Image %'
+					   AND text_content NOT LIKE '%Request interrupted by user%'
+					   AND text_content NOT LIKE 'Warmup'
+					   AND text_content NOT LIKE 'Base directory for this skill:%'
 					 ORDER BY sequence ASC
 					 LIMIT 1),
 					''
