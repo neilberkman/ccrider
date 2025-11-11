@@ -56,6 +56,7 @@ type Model struct {
 	LaunchProjectPath string
 	LaunchLastCwd     string
 	LaunchUpdatedAt   string
+	LaunchSummary     string
 	LaunchFork        bool
 
 	// Terminal fallback state (when can't spawn terminal)
@@ -63,6 +64,7 @@ type Model struct {
 	fallbackProjectPath string
 	fallbackLastCwd     string
 	fallbackUpdatedAt   string
+	fallbackSummary     string
 }
 
 type sessionItem struct {
@@ -133,7 +135,10 @@ func New(database *db.DB) Model {
 }
 
 func (m Model) Init() tea.Cmd {
-	return loadSessions(m.db, m.projectFilterEnabled, m.currentDirectory)
+	return tea.Batch(
+		loadSessions(m.db, m.projectFilterEnabled, m.currentDirectory),
+		syncSessions(m.db, m.projectFilterEnabled, m.currentDirectory),
+	)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -220,6 +225,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			msg.projectPath,
 			msg.lastCwd,
 			msg.updatedAt,
+			msg.summary,
 		)
 
 	case searchResultsMsg:
@@ -233,6 +239,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.LaunchProjectPath = msg.projectPath
 			m.LaunchLastCwd = msg.lastCwd
 			m.LaunchUpdatedAt = msg.updatedAt
+			m.LaunchSummary = msg.summary
 			m.LaunchFork = msg.fork
 			return m, tea.Quit
 		} else {
@@ -262,6 +269,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.fallbackProjectPath = msg.projectPath
 				m.fallbackLastCwd = msg.lastCwd
 				m.fallbackUpdatedAt = msg.updatedAt
+				m.fallbackSummary = msg.summary
 				m.err = nil
 			} else {
 				m.err = fmt.Errorf("Failed to open session: %v", msg.err)

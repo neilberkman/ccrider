@@ -28,6 +28,10 @@ var rootCmd = &cobra.Command{
 A fast, reliable tool for managing Claude Code sessions with full-text search,
 incremental sync, and native resume integration.`,
 	Version: "0.1.0",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		// Default to TUI if no subcommand specified
+		return tuiCmd.RunE(cmd, args)
+	},
 }
 
 func init() {

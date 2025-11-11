@@ -35,8 +35,7 @@ var (
 			Bold(true)
 
 	timestampStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240")).
-			Faint(true)
+			Foreground(lipgloss.Color("246")) // Lighter gray that works better in dark terminals
 
 	// Search view styles
 	searchHeaderStyle = lipgloss.NewStyle().
@@ -48,8 +47,7 @@ var (
 				Bold(true)
 
 	searchMetaStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("241")).
-			Faint(true)
+			Foreground(lipgloss.Color("246")) // Lighter gray for dark terminals
 
 	searchSelectedStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("170")).

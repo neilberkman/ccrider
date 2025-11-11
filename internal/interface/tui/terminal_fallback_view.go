@@ -15,6 +15,7 @@ func (m Model) updateTerminalFallback(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.fallbackProjectPath,
 			m.fallbackLastCwd,
 			m.fallbackUpdatedAt,
+			m.fallbackSummary,
 			false,
 		)
 
