@@ -1,0 +1,55 @@
+package tui
+
+import (
+	tea "github.com/charmbracelet/bubbletea"
+)
+
+func (m Model) updateHelp(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "q", "?":
+		m.mode = listView
+		return m, nil
+	}
+
+	return m, nil
+}
+
+func (m Model) viewHelp() string {
+	help := `
+Claude Code Session Manager - Help
+═══════════════════════════════════
+
+SESSION LIST VIEW
+─────────────────
+  ↑/↓, j/k     Navigate sessions
+  Enter        View session details
+  o            Open session in new terminal tab
+  /            Search messages
+  ?            Show this help
+  q            Quit
+
+SESSION DETAIL VIEW
+───────────────────
+  r            Resume session in Claude Code (replaces TUI)
+  f            Fork session (new session ID, replaces TUI)
+  o            Open session in new terminal window
+  c            Copy resume command to clipboard
+  /            Search within session
+  j/k          Scroll line by line
+  d/u          Scroll half page
+  g/G          Jump to top/bottom
+  esc          Back to session list
+  q            Quit
+
+SEARCH VIEW
+───────────
+  Type         Enter search query (all keys work, min 2 chars)
+  Ctrl+j/k     Navigate results (or use arrow keys ↑↓)
+  Enter        Open selected session
+  esc          Back to session list
+
+Press any key to return to session list
+`
+
+	return helpStyle.Render(help)
+}
