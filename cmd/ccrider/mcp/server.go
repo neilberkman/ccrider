@@ -39,11 +39,11 @@ type ListRecentSessionsArgs struct {
 
 // SessionMatch represents a session search result
 type SessionMatch struct {
-	SessionID  string        `json:"session_id"`
-	Summary    string        `json:"summary"`
-	Project    string        `json:"project"`
-	UpdatedAt  string        `json:"updated_at"`
-	MatchCount int           `json:"match_count"`
+	SessionID  string         `json:"session_id"`
+	Summary    string         `json:"summary"`
+	Project    string         `json:"project"`
+	UpdatedAt  string         `json:"updated_at"`
+	MatchCount int            `json:"match_count"`
 	Matches    []MatchSnippet `json:"matches"`
 }
 
@@ -56,14 +56,14 @@ type MatchSnippet struct {
 
 // SessionDetail represents a session with key messages (not full conversation)
 type SessionDetail struct {
-	SessionID      string          `json:"session_id"`
-	Summary        string          `json:"summary"`
-	Project        string          `json:"project"`
-	CreatedAt      string          `json:"created_at"`
-	UpdatedAt      string          `json:"updated_at"`
-	MessageCount   int             `json:"message_count"`
-	FirstMessage   *MessageDetail  `json:"first_message,omitempty"`
-	LastMessage    *MessageDetail  `json:"last_message,omitempty"`
+	SessionID        string          `json:"session_id"`
+	Summary          string          `json:"summary"`
+	Project          string          `json:"project"`
+	CreatedAt        string          `json:"created_at"`
+	UpdatedAt        string          `json:"updated_at"`
+	MessageCount     int             `json:"message_count"`
+	FirstMessage     *MessageDetail  `json:"first_message,omitempty"`
+	LastMessage      *MessageDetail  `json:"last_message,omitempty"`
 	MatchingMessages []MessageDetail `json:"matching_messages,omitempty"`
 }
 

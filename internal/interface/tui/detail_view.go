@@ -385,11 +385,11 @@ func openInNewTerminal(sessionID, projectPath, lastCwd, updatedAt, summary strin
 		sameDir := (lastCwd == projectPath)
 
 		templateData := map[string]interface{}{
-			"last_updated":     updatedAt,
-			"last_cwd":         lastCwd,
-			"time_since":       timeSince,
-			"project_path":     projectPath,
-			"same_directory":   sameDir,
+			"last_updated":        updatedAt,
+			"last_cwd":            lastCwd,
+			"time_since":          timeSince,
+			"project_path":        projectPath,
+			"same_directory":      sameDir,
 			"different_directory": !sameDir,
 		}
 
@@ -473,4 +473,3 @@ func (m Model) viewDetail() string {
 
 	return content
 }
-
