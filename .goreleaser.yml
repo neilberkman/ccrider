@@ -1,0 +1,95 @@
+version: 2
+
+project_name: ccrider
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: ccrider
+    main: ./cmd/ccrider
+    binary: ccrider
+    env:
+      - CGO_ENABLED=1
+    goos:
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.Version={{.Version}} -X main.Commit={{.Commit}} -X main.Date={{.Date}}
+
+archives:
+  - name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+
+checksum:
+  name_template: 'checksums.txt'
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+
+release:
+  github:
+    owner: neilberkman
+    name: ccrider
+  draft: false
+  prerelease: auto
+  make_latest: true
+  mode: replace
+  header: |
+    ## ccrider {{.Tag}}
+
+    Search, browse, and resume your Claude Code sessions.
+
+    **Install:** `brew install neilberkman/ccrider/ccrider`
+
+  footer: |
+    ---
+
+    **Full Changelog**: https://github.com/neilberkman/ccrider/compare/{{.PreviousTag}}...{{.Tag}}
+
+    **Installation:**
+    ```bash
+    # Homebrew
+    brew install neilberkman/ccrider/ccrider
+
+    # Direct download - Apple Silicon
+    curl -L https://github.com/neilberkman/ccrider/releases/download/{{.Tag}}/ccrider_{{.Tag}}_darwin_arm64.tar.gz | tar xz
+
+    # Direct download - Intel
+    curl -L https://github.com/neilberkman/ccrider/releases/download/{{.Tag}}/ccrider_{{.Tag}}_darwin_amd64.tar.gz | tar xz
+    ```
+
+    🐛 **Found a bug?** [Open an issue](https://github.com/neilberkman/ccrider/issues/new)
+
+brews:
+  - repository:
+      owner: neilberkman
+      name: homebrew-ccrider
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    name: ccrider
+    description: "Search, browse, and resume your Claude Code sessions"
+    homepage: "https://github.com/neilberkman/ccrider"
+    license: "MIT"
+    commit_author:
+      name: goreleaserbot
+      email: bot@goreleaser.com
+    commit_msg_template: "Brew formula update for {{ .ProjectName }} version {{ .Tag }}"
+    dependencies:
+      - name: go
+        type: build
+    install: |
+      bin.install "ccrider"
+    test: |
+      system "#{bin}/ccrider", "--version"
