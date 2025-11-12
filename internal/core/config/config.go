@@ -8,7 +8,7 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-const DefaultResumePrompt = `Resuming session from {{last_updated}}.{{#different_directory}} Started in your last working directory: {{last_cwd}}{{/different_directory}}
+const DefaultResumePrompt = `Resuming session from {{last_updated}}.{{#different_directory}} Session launched from {{project_path}}, but you were last working in: {{last_cwd}}{{/different_directory}}
 
 IMPORTANT: This session has been inactive for {{time_since}}. Before proceeding: check git status, look around to understand what changed, and be careful not to overwrite any work in progress.`
 

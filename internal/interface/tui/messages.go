@@ -187,66 +187,36 @@ func performSearch(database *db.DB, query string) tea.Cmd {
 
 func loadSessions(database *db.DB, filterByProject bool, projectPath string) tea.Cmd {
 	return func() tea.Msg {
-		query := `
-			SELECT
-				s.session_id,
-				COALESCE(s.summary, ''),
-				s.project_path,
-				(SELECT COUNT(*) FROM messages WHERE session_id = s.id) as actual_message_count,
-				s.updated_at,
-				s.created_at,
-				COALESCE(
-					(SELECT text_content
-					 FROM messages
-					 WHERE session_id = s.id
-					   AND type = 'user'
-					   AND TRIM(text_content) != ''
-					   AND text_content NOT LIKE 'This session is being continued%'
-					   AND text_content NOT LIKE 'Resuming session from%'
-					   AND text_content NOT LIKE '[Image %'
-					   AND text_content NOT LIKE '%Request interrupted by user%'
-					   AND text_content NOT LIKE 'Warmup'
-					   AND text_content NOT LIKE 'Base directory for this skill:%'
-					 ORDER BY sequence ASC
-					 LIMIT 1),
-					''
-				) as first_message
-			FROM sessions s
-			WHERE (SELECT COUNT(*) FROM messages WHERE session_id = s.id) > 0`
-
-		// Add project filter if enabled
-		args := []interface{}{}
-		if filterByProject && projectPath != "" {
-			query += " AND s.project_path LIKE ?"
-			args = append(args, "%"+projectPath+"%")
+		// Use core function to get sessions
+		filterPath := ""
+		if filterByProject {
+			filterPath = projectPath
 		}
 
-		query += `
-			ORDER BY s.updated_at DESC
-			LIMIT 1000
-		`
-
-		rows, err := database.Query(query, args...)
+		coreSessions, err := database.ListSessions(filterPath)
 		if err != nil {
 			return errMsg{err}
 		}
-		defer rows.Close()
 
+		// Convert core sessions to TUI session items (interface-specific presentation)
 		var sessions []sessionItem
-		for rows.Next() {
-			var s sessionItem
-			var firstMsg string
-			if err := rows.Scan(&s.ID, &s.Summary, &s.Project,
-				&s.MessageCount, &s.UpdatedAt, &s.CreatedAt, &firstMsg); err != nil {
-				return errMsg{err}
+		for _, cs := range coreSessions {
+			// Core already handles summary fallback, just format for display
+			summary := cs.Summary
+			if summary != "" {
+				summary = firstLine(summary, 80)
 			}
 
-			// If no summary, use first line of first user message
-			if s.Summary == "" && firstMsg != "" {
-				s.Summary = firstLine(firstMsg, 80)
+			s := sessionItem{
+				ID:           cs.SessionID,
+				Summary:      summary,
+				Project:      cs.ProjectPath,
+				MessageCount: cs.MessageCount,
+				UpdatedAt:    cs.UpdatedAt.Format("2006-01-02 15:04:05"),
+				CreatedAt:    cs.CreatedAt.Format("2006-01-02 15:04:05"),
 			}
 
-			// Check if session matches current directory (for highlighting)
+			// Check if session matches current directory (for highlighting - interface concern)
 			if projectPath != "" && strings.Contains(s.Project, projectPath) {
 				s.MatchesCurrentDir = true
 			}
