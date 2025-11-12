@@ -10,11 +10,11 @@ import (
 	"github.com/cbroglie/mustache"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/dustin/go-humanize"
-	"github.com/spf13/cobra"
 	"github.com/neilberkman/ccrider/internal/core/config"
 	"github.com/neilberkman/ccrider/internal/core/db"
 	"github.com/neilberkman/ccrider/internal/core/session"
 	"github.com/neilberkman/ccrider/internal/interface/tui"
+	"github.com/spf13/cobra"
 )
 
 var tuiCmd = &cobra.Command{
