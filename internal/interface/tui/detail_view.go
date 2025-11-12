@@ -39,11 +39,11 @@ func buildClaudeCommand(sessionID, workDir string, withPrompt bool) string {
 
 func createViewport(detail sessionDetail, width, height int) viewport.Model {
 	vp := viewport.New(width, height-8)
-	vp.SetContent(renderConversation(detail))
+	vp.SetContent(renderConversation(detail, "", nil, -1))
 	return vp
 }
 
-func renderConversation(detail sessionDetail) string {
+func renderConversation(detail sessionDetail, query string, matches []int, currentMatchIdx int) string {
 	var b strings.Builder
 
 	// Header
@@ -53,7 +53,7 @@ func renderConversation(detail sessionDetail) string {
 	b.WriteString(strings.Repeat("─", 80) + "\n\n")
 
 	// Messages
-	for _, msg := range detail.Messages {
+	for i, msg := range detail.Messages {
 		var style lipgloss.Style
 		var label string
 
@@ -82,6 +82,12 @@ func renderConversation(detail sessionDetail) string {
 		if len(content) > 500 {
 			content = content[:500] + "\n... (truncated)"
 		}
+
+		// Highlight query if this message is a match
+		if query != "" && contains(matches, i) {
+			content = highlightQuery(content, query)
+		}
+
 		b.WriteString(content)
 		b.WriteString("\n\n")
 		b.WriteString(strings.Repeat("─", 80) + "\n\n")
@@ -99,14 +105,20 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.inSessionSearch.SetValue("")
 			m.inSessionMatches = nil
 			m.inSessionMatchIdx = 0
+			// Clear highlighting when exiting search
+			if m.currentSession != nil {
+				m.viewport.SetContent(renderConversation(*m.currentSession, "", nil, -1))
+			}
 			return m, nil
 
 		case "enter":
-			// Perform search
+			// Perform search and scroll to first match
 			query := m.inSessionSearch.Value()
 			if query != "" && m.currentSession != nil {
 				m.inSessionMatches = findMatches(m.currentSession.Messages, query)
 				m.inSessionMatchIdx = 0
+				m.viewport.SetContent(renderConversation(*m.currentSession, query, m.inSessionMatches, m.inSessionMatchIdx))
+				scrollToMatch(&m)
 			}
 			return m, nil
 
@@ -117,6 +129,8 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if m.inSessionMatchIdx >= len(m.inSessionMatches) {
 					m.inSessionMatchIdx = 0
 				}
+				query := m.inSessionSearch.Value()
+				m.viewport.SetContent(renderConversation(*m.currentSession, query, m.inSessionMatches, m.inSessionMatchIdx))
 				scrollToMatch(&m)
 			}
 			return m, nil
@@ -128,6 +142,8 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if m.inSessionMatchIdx < 0 {
 					m.inSessionMatchIdx = len(m.inSessionMatches) - 1
 				}
+				query := m.inSessionSearch.Value()
+				m.viewport.SetContent(renderConversation(*m.currentSession, query, m.inSessionMatches, m.inSessionMatchIdx))
 				scrollToMatch(&m)
 			}
 			return m, nil
@@ -135,6 +151,18 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		default:
 			var cmd tea.Cmd
 			m.inSessionSearch, cmd = m.inSessionSearch.Update(msg)
+
+			// Re-render viewport with live highlighting on every keystroke
+			query := m.inSessionSearch.Value()
+			if query != "" && m.currentSession != nil {
+				m.inSessionMatches = findMatches(m.currentSession.Messages, query)
+				m.viewport.SetContent(renderConversation(*m.currentSession, query, m.inSessionMatches, m.inSessionMatchIdx))
+			} else {
+				// Clear highlighting if search is empty
+				m.inSessionMatches = nil
+				m.viewport.SetContent(renderConversation(*m.currentSession, "", nil, -1))
+			}
+
 			return m, cmd
 		}
 	}
@@ -244,6 +272,16 @@ func findMatches(messages []messageItem, query string) []int {
 	}
 
 	return matches
+}
+
+// contains checks if slice contains value
+func contains(slice []int, val int) bool {
+	for _, v := range slice {
+		if v == val {
+			return true
+		}
+	}
+	return false
 }
 
 // scrollToMatch scrolls the viewport to show the currently selected match
