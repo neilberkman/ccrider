@@ -4,8 +4,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/yourusername/ccrider/internal/core/db"
-	"github.com/yourusername/ccrider/pkg/ccsessions"
+	"github.com/neilberkman/ccrider/internal/core/db"
+	"github.com/neilberkman/ccrider/pkg/ccsessions"
 )
 
 func TestImportSession(t *testing.T) {

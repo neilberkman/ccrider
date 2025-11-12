@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"github.com/yourusername/ccrider/cmd/ccrider/mcp"
+	"github.com/neilberkman/ccrider/cmd/ccrider/mcp"
 )
 
 var mcpCmd = &cobra.Command{

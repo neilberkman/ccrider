@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/yourusername/ccrider/internal/core/db"
+	"github.com/neilberkman/ccrider/internal/core/db"
 )
 
 var statsCmd = &cobra.Command{
