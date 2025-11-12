@@ -11,8 +11,10 @@ builds:
     main: ./cmd/ccrider
     binary: ccrider
     env:
-      - CGO_ENABLED=1
+      - CGO_ENABLED=0
     goos:
+      - linux
+      - windows
       - darwin
     goarch:
       - amd64
@@ -21,7 +23,12 @@ builds:
       - -s -w -X main.Version={{.Version}} -X main.Commit={{.Commit}} -X main.Date={{.Date}}
 
 archives:
-  - name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+  - id: ccrider
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format: tar.gz
+    format_overrides:
+      - goos: windows
+        format: zip
     files:
       - README.md
 
@@ -52,24 +59,31 @@ release:
 
     Search, browse, and resume your Claude Code sessions.
 
-    **Install:** `brew install neilberkman/ccrider/ccrider`
+    ### 📦 Installation
+
+    **macOS (Homebrew):**
+    ```bash
+    brew install neilberkman/ccrider/ccrider
+    ```
+
+    **Windows (Scoop):**
+    ```bash
+    scoop bucket add ccrider https://github.com/neilberkman/scoop-ccrider
+    scoop install ccrider
+    ```
+
+    **Linux (Debian/Ubuntu):**
+    ```bash
+    # Download .deb from assets below
+    sudo dpkg -i ccrider_{{.Version}}_linux_amd64.deb
+    ```
+
+    Or see assets below for direct downloads.
 
   footer: |
     ---
 
     **Full Changelog**: https://github.com/neilberkman/ccrider/compare/{{.PreviousTag}}...{{.Tag}}
-
-    **Installation:**
-    ```bash
-    # Homebrew
-    brew install neilberkman/ccrider/ccrider
-
-    # Direct download - Apple Silicon
-    curl -L https://github.com/neilberkman/ccrider/releases/download/{{.Tag}}/ccrider_{{.Tag}}_darwin_arm64.tar.gz | tar xz
-
-    # Direct download - Intel
-    curl -L https://github.com/neilberkman/ccrider/releases/download/{{.Tag}}/ccrider_{{.Tag}}_darwin_amd64.tar.gz | tar xz
-    ```
 
     🐛 **Found a bug?** [Open an issue](https://github.com/neilberkman/ccrider/issues/new)
 
@@ -93,3 +107,31 @@ brews:
       bin.install "ccrider"
     test: |
       system "#{bin}/ccrider", "--version"
+
+scoops:
+  - name: ccrider
+    repository:
+      owner: neilberkman
+      name: scoop-ccrider
+      token: "{{ .Env.GITHUB_TOKEN }}"
+    homepage: "https://github.com/neilberkman/ccrider"
+    description: "Search, browse, and resume your Claude Code sessions"
+    license: MIT
+
+nfpms:
+  - id: ccrider
+    package_name: ccrider
+    vendor: Neil Berkman
+    homepage: "https://github.com/neilberkman/ccrider"
+    maintainer: "Neil Berkman <neil@xuku.com>"
+    description: "Search, browse, and resume your Claude Code sessions"
+    license: MIT
+    section: utils
+    priority: optional
+    formats:
+      - deb
+      - rpm
+      - apk
+    contents:
+      - src: README.md
+        dst: /usr/share/doc/ccrider/README.md

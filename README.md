@@ -18,13 +18,16 @@ ccrider search --sync "authentication bug"
 **Installation:**
 
 ```bash
-# macOS (Homebrew - recommended)
+# macOS (Homebrew)
 brew install neilberkman/ccrider/ccrider
 
-# Linux/Windows (build from source)
-git clone https://github.com/neilberkman/ccrider.git
-cd ccrider
-go build ./cmd/ccrider
+# Windows (Scoop)
+scoop bucket add ccrider https://github.com/neilberkman/scoop-ccrider
+scoop install ccrider
+
+# Linux (Debian/Ubuntu - download .deb from releases)
+# Or build from source:
+go install github.com/neilberkman/ccrider/cmd/ccrider@latest
 ```
 
 _“Vibe code like ~a king~ The King!”_
