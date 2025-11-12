@@ -92,7 +92,7 @@ brews:
       owner: neilberkman
       name: homebrew-ccrider
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    folder: Formula
+    directory: Formula
     name: ccrider
     description: "Search, browse, and resume your Claude Code sessions"
     homepage: "https://github.com/neilberkman/ccrider"
