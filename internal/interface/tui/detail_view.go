@@ -39,21 +39,35 @@ func buildClaudeCommand(sessionID, workDir string, withPrompt bool) string {
 
 func createViewport(detail sessionDetail, width, height int) viewport.Model {
 	vp := viewport.New(width, height-8)
-	vp.SetContent(renderConversation(detail, "", nil, -1, width))
+	result := renderConversation(detail, "", nil, -1, width)
+	vp.SetContent(result.content)
 	return vp
 }
 
-func renderConversation(detail sessionDetail, query string, matches []int, currentMatchIdx int, width int) string {
+type renderResult struct {
+	content       string
+	messageStarts []int // line number where each message starts
+}
+
+func renderConversation(detail sessionDetail, query string, matches []int, currentMatchIdx int, width int) renderResult {
 	var b strings.Builder
+	var messageStarts []int
+	currentLine := 0
 
 	// Header
 	b.WriteString(titleStyle.Render("Session: "+detail.Session.Summary) + "\n")
+	currentLine++
 	b.WriteString(fmt.Sprintf("Project: %s\n", detail.Session.Project))
+	currentLine++
 	b.WriteString(fmt.Sprintf("Messages: %d\n", detail.Session.MessageCount))
+	currentLine++
 	b.WriteString(strings.Repeat("─", width) + "\n\n")
+	currentLine += 2
 
 	// Messages
 	for i, msg := range detail.Messages {
+		messageStarts = append(messageStarts, currentLine)
+
 		var style lipgloss.Style
 		var label string
 
@@ -76,6 +90,7 @@ func renderConversation(detail sessionDetail, query string, matches []int, curre
 		b.WriteString(" ")
 		b.WriteString(timestampStyle.Render(formatTime(msg.Timestamp)))
 		b.WriteString("\n")
+		currentLine++
 
 		// Content
 		content := msg.Content
@@ -87,14 +102,18 @@ func renderConversation(detail sessionDetail, query string, matches []int, curre
 			content = highlightQueryWithStyle(content, query, isCurrent)
 		}
 
-		// Wrap content to viewport width
-		wrappedContent := lipgloss.NewStyle().Width(width).Render(content)
-		b.WriteString(wrappedContent)
+		b.WriteString(content)
+		currentLine += strings.Count(content, "\n") + 1
 		b.WriteString("\n\n")
+		currentLine += 2
 		b.WriteString(strings.Repeat("─", width) + "\n\n")
+		currentLine += 2
 	}
 
-	return b.String()
+	return renderResult{
+		content:       b.String(),
+		messageStarts: messageStarts,
+	}
 }
 
 func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -108,7 +127,9 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.inSessionMatchIdx = 0
 			// Clear highlighting when exiting search
 			if m.currentSession != nil {
-				m.viewport.SetContent(renderConversation(*m.currentSession, "", nil, -1, m.width))
+				result := renderConversation(*m.currentSession, "", nil, -1, m.width)
+				m.viewport.SetContent(result.content)
+				m.messageStarts = result.messageStarts
 			}
 			return m, nil
 
@@ -118,7 +139,9 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if query != "" && m.currentSession != nil {
 				m.inSessionMatches = findMatches(m.currentSession.Messages, query)
 				m.inSessionMatchIdx = 0
-				m.viewport.SetContent(renderConversation(*m.currentSession, query, m.inSessionMatches, m.inSessionMatchIdx, m.width))
+				result := renderConversation(*m.currentSession, query, m.inSessionMatches, m.inSessionMatchIdx, m.width)
+				m.viewport.SetContent(result.content)
+				m.messageStarts = result.messageStarts
 				scrollToMatch(&m)
 			}
 			return m, nil
@@ -131,7 +154,9 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.inSessionMatchIdx = 0
 				}
 				query := m.inSessionSearch.Value()
-				m.viewport.SetContent(renderConversation(*m.currentSession, query, m.inSessionMatches, m.inSessionMatchIdx, m.width))
+				result := renderConversation(*m.currentSession, query, m.inSessionMatches, m.inSessionMatchIdx, m.width)
+				m.viewport.SetContent(result.content)
+				m.messageStarts = result.messageStarts
 				scrollToMatch(&m)
 			}
 			return m, nil
@@ -144,7 +169,9 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.inSessionMatchIdx = len(m.inSessionMatches) - 1
 				}
 				query := m.inSessionSearch.Value()
-				m.viewport.SetContent(renderConversation(*m.currentSession, query, m.inSessionMatches, m.inSessionMatchIdx, m.width))
+				result := renderConversation(*m.currentSession, query, m.inSessionMatches, m.inSessionMatchIdx, m.width)
+				m.viewport.SetContent(result.content)
+				m.messageStarts = result.messageStarts
 				scrollToMatch(&m)
 			}
 			return m, nil
@@ -157,11 +184,15 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			query := m.inSessionSearch.Value()
 			if query != "" && m.currentSession != nil {
 				m.inSessionMatches = findMatches(m.currentSession.Messages, query)
-				m.viewport.SetContent(renderConversation(*m.currentSession, query, m.inSessionMatches, m.inSessionMatchIdx, m.width))
+				result := renderConversation(*m.currentSession, query, m.inSessionMatches, m.inSessionMatchIdx, m.width)
+				m.viewport.SetContent(result.content)
+				m.messageStarts = result.messageStarts
 			} else {
 				// Clear highlighting if search is empty
 				m.inSessionMatches = nil
-				m.viewport.SetContent(renderConversation(*m.currentSession, "", nil, -1, m.width))
+				result := renderConversation(*m.currentSession, "", nil, -1, m.width)
+				m.viewport.SetContent(result.content)
+				m.messageStarts = result.messageStarts
 			}
 
 			return m, cmd
@@ -330,32 +361,20 @@ func contains(slice []int, val int) bool {
 
 // scrollToMatch scrolls the viewport to show the currently selected match
 func scrollToMatch(m *Model) {
-	if len(m.inSessionMatches) == 0 || m.currentSession == nil {
+	if len(m.inSessionMatches) == 0 || m.currentSession == nil || len(m.messageStarts) == 0 {
 		return
 	}
 
 	// Get the message index of the current match
 	matchedMsgIdx := m.inSessionMatches[m.inSessionMatchIdx]
-	if matchedMsgIdx < 0 || matchedMsgIdx >= len(m.currentSession.Messages) {
+	if matchedMsgIdx < 0 || matchedMsgIdx >= len(m.messageStarts) {
 		return
 	}
 
-	// Calculate approximate line offset
-	// Header is 4 lines (title + project + messages + separator)
-	lineOffset := 4
+	// Use the pre-calculated line offset from rendering
+	lineOffset := m.messageStarts[matchedMsgIdx]
 
-	// Count lines for each message before the matched one
-	for i := 0; i < matchedMsgIdx; i++ {
-		msg := m.currentSession.Messages[i]
-		// Message header: 1 line (▸ TYPE timestamp)
-		lineOffset++
-		// Message content: count newlines + 1
-		lineOffset += strings.Count(msg.Content, "\n") + 1
-		// Blank line separator
-		lineOffset++
-	}
-
-	// Set viewport to show this line (centered if possible)
+	// Set viewport to show this line
 	m.viewport.SetYOffset(lineOffset)
 }
 
