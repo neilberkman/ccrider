@@ -3,8 +3,8 @@ package cli
 import (
 	"fmt"
 
-	"github.com/spf13/cobra"
 	"github.com/neilberkman/ccrider/cmd/ccrider/mcp"
+	"github.com/spf13/cobra"
 )
 
 var mcpCmd = &cobra.Command{

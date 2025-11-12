@@ -77,15 +77,14 @@ func renderConversation(detail sessionDetail, query string, matches []int, curre
 		b.WriteString(timestampStyle.Render(formatTime(msg.Timestamp)))
 		b.WriteString("\n")
 
-		// Content (truncate if too long for preview)
+		// Content
 		content := msg.Content
-		if len(content) > 500 {
-			content = content[:500] + "\n... (truncated)"
-		}
 
 		// Highlight query if this message is a match
 		if query != "" && contains(matches, i) {
-			content = highlightQuery(content, query)
+			// Check if this is the current/focused match
+			isCurrent := currentMatchIdx >= 0 && currentMatchIdx < len(matches) && matches[currentMatchIdx] == i
+			content = highlightQueryWithStyle(content, query, isCurrent)
 		}
 
 		b.WriteString(content)
@@ -259,6 +258,49 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.viewport, cmd = m.viewport.Update(msg)
 	return m, cmd
+}
+
+func highlightQueryWithStyle(text, query string, isCurrent bool) string {
+	if query == "" {
+		return text
+	}
+
+	// Choose style based on whether this is the current/focused match
+	style := searchMatchStyle
+	if isCurrent {
+		style = searchCurrentMatchStyle
+	}
+
+	// Highlight ALL occurrences case-insensitively
+	lower := strings.ToLower(text)
+	lowerQuery := strings.ToLower(query)
+
+	var result strings.Builder
+	lastIdx := 0
+
+	for {
+		idx := strings.Index(lower[lastIdx:], lowerQuery)
+		if idx == -1 {
+			// No more matches, append the rest
+			result.WriteString(text[lastIdx:])
+			break
+		}
+
+		// Adjust idx to be relative to original text
+		idx += lastIdx
+
+		// Append text before match
+		result.WriteString(text[lastIdx:idx])
+
+		// Append highlighted match
+		match := text[idx : idx+len(query)]
+		result.WriteString(style.Render(match))
+
+		// Move past this match
+		lastIdx = idx + len(query)
+	}
+
+	return result.String()
 }
 
 func findMatches(messages []messageItem, query string) []int {
