@@ -94,3 +94,52 @@ func countJSONLFiles(dirPath string) (int, error) {
 	})
 	return count, err
 }
+
+// maybeSyncFirst performs a sync if the --sync flag was provided
+func maybeSyncFirst(shouldSync bool) error {
+	if !shouldSync {
+		return nil
+	}
+
+	sourcePath := getDefaultClaudeDir()
+	fmt.Printf("Syncing sessions from: %s\n", sourcePath)
+
+	// Ensure database directory exists
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+		return fmt.Errorf("failed to create db directory: %w", err)
+	}
+
+	// Open database
+	database, err := db.New(dbPath)
+	if err != nil {
+		return fmt.Errorf("failed to open database: %w", err)
+	}
+	defer func() {
+		_ = database.Close()
+	}()
+
+	// Count total files for progress
+	total, err := countJSONLFiles(sourcePath)
+	if err != nil {
+		return fmt.Errorf("failed to count files: %w", err)
+	}
+
+	if total == 0 {
+		fmt.Println("No session files found")
+		return nil
+	}
+
+	// Create importer with progress
+	imp := importer.New(database)
+	progress := importer.NewProgressReporter(os.Stdout, total)
+
+	// Import
+	if err := imp.ImportDirectory(sourcePath, progress); err != nil {
+		return fmt.Errorf("import failed: %w", err)
+	}
+
+	progress.Finish()
+	fmt.Println() // Extra newline after sync before main command output
+
+	return nil
+}

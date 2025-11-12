@@ -10,6 +10,8 @@ import (
 	"github.com/neilberkman/ccrider/internal/core/db"
 )
 
+var statsSync bool
+
 var statsCmd = &cobra.Command{
 	Use:   "stats",
 	Short: "Show database statistics",
@@ -21,9 +23,15 @@ Shows session counts, message counts, tool usage, date ranges, and storage info.
 
 func init() {
 	rootCmd.AddCommand(statsCmd)
+	statsCmd.Flags().BoolVar(&statsSync, "sync", false, "Sync sessions before showing stats")
 }
 
 func runStats(cmd *cobra.Command, args []string) error {
+	// Sync first if requested
+	if err := maybeSyncFirst(statsSync); err != nil {
+		return err
+	}
+
 	// Open database
 	database, err := db.New(dbPath)
 	if err != nil {

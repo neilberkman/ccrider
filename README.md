@@ -11,19 +11,20 @@ ccrider indexes everything into SQLite with full-text search. Browse sessions in
 # Syncs on startup.
 ccrider
 
-# Or sync & search from command line
-ccrider sync
-ccrider search "authentication bug"
+# Or sync & search in one command
+ccrider search --sync "authentication bug"
 ```
 
 **Installation:**
 
 ```bash
-# From source (releases coming soon)
-git clone https://github.com/you/ccrider.git
+# macOS (Homebrew - recommended)
+brew install neilberkman/ccrider/ccrider
+
+# Linux/Windows (build from source)
+git clone https://github.com/neilberkman/ccrider.git
 cd ccrider
-go build -o ccrider cmd/ccrider/main.go
-sudo mv ccrider /usr/local/bin/
+go build ./cmd/ccrider
 ```
 
 _“Vibe code like ~a king~ The King!”_

@@ -12,6 +12,7 @@ import (
 var (
 	searchLimit int
 	searchCode  bool
+	searchSync  bool
 )
 
 var searchCmd = &cobra.Command{
@@ -26,7 +27,8 @@ Uses FTS5 full-text search with different modes:
 Examples:
   ccrider search "authentication implementation"
   ccrider search "getUserById" --code
-  ccrider search "error handling" --limit 10`,
+  ccrider search "error handling" --limit 10
+  ccrider search --sync "authentication bug"`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: runSearch,
 }
@@ -35,9 +37,15 @@ func init() {
 	rootCmd.AddCommand(searchCmd)
 	searchCmd.Flags().IntVar(&searchLimit, "limit", 50, "Maximum number of results")
 	searchCmd.Flags().BoolVar(&searchCode, "code", false, "Use code search (preserves identifiers)")
+	searchCmd.Flags().BoolVar(&searchSync, "sync", false, "Sync sessions before searching")
 }
 
 func runSearch(cmd *cobra.Command, args []string) error {
+	// Sync first if requested
+	if err := maybeSyncFirst(searchSync); err != nil {
+		return err
+	}
+
 	// Join all args as query
 	query := strings.Join(args, " ")
 

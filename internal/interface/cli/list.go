@@ -13,6 +13,7 @@ import (
 var (
 	listLimit   int
 	listProject string
+	listSync    bool
 )
 
 var listCmd = &cobra.Command{
@@ -25,7 +26,8 @@ Shows session summaries, project paths, message counts, and timestamps.
 Examples:
   ccrider list
   ccrider list --limit 10
-  ccrider list --project /path/to/project`,
+  ccrider list --project /path/to/project
+  ccrider list --sync`,
 	RunE: runList,
 }
 
@@ -33,9 +35,15 @@ func init() {
 	rootCmd.AddCommand(listCmd)
 	listCmd.Flags().IntVar(&listLimit, "limit", 20, "Maximum number of sessions to display")
 	listCmd.Flags().StringVar(&listProject, "project", "", "Filter by project path")
+	listCmd.Flags().BoolVar(&listSync, "sync", false, "Sync sessions before listing")
 }
 
 func runList(cmd *cobra.Command, args []string) error {
+	// Sync first if requested
+	if err := maybeSyncFirst(listSync); err != nil {
+		return err
+	}
+
 	// Open database
 	database, err := db.New(dbPath)
 	if err != nil {
