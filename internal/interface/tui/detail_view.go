@@ -576,7 +576,7 @@ func (m Model) viewDetail() string {
 		} else if m.inSessionSearch.Value() != "" {
 			searchBox += " [no matches]"
 		}
-		searchBox += "\nn/p: next/prev match | Enter: search | esc: exit search"
+		searchBox += "\nctrl+n/ctrl+p: next/prev match | Enter: search | esc: exit search"
 		content += searchBox
 	} else {
 		footer := fmt.Sprintf("\n%3.f%%", m.viewport.ScrollPercent()*100)
