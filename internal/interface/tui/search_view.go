@@ -27,8 +27,9 @@ func (m Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	// Navigation: Use Ctrl+j/k or arrow keys (allow j/k to be typed in search)
-	case "ctrl+j", "down":
+	// Navigation: Use Ctrl+j/n or arrow keys (allow j/k/q to be typed in search)
+	// Note: Ctrl+k is left for textinput to handle (kills rest of line)
+	case "ctrl+j", "ctrl+n", "down":
 		if len(m.searchResults) > 0 {
 			m.searchSelectedIdx++
 			if m.searchSelectedIdx >= len(m.searchResults) {
@@ -38,7 +39,7 @@ func (m Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case "ctrl+k", "up":
+	case "ctrl+p", "up":
 		if len(m.searchResults) > 0 {
 			m.searchSelectedIdx--
 			if m.searchSelectedIdx < 0 {
