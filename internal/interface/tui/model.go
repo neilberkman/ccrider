@@ -50,6 +50,7 @@ type Model struct {
 	inSessionSearchMode bool
 	inSessionMatches    []int // message indices that match
 	inSessionMatchIdx   int   // current match index
+	messageStarts       []int // line numbers where each message starts (for scrolling)
 
 	// Launch state (for exec after quit)
 	LaunchSessionID   string
