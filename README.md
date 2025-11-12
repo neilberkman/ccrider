@@ -1,5 +1,11 @@
 # ccrider
 
+[![Homebrew](https://img.shields.io/homebrew/v/ccrider?color=FBB040)](https://formulae.brew.sh/formula/ccrider)
+[![Release](https://img.shields.io/github/v/release/neilberkman/ccrider)](https://github.com/neilberkman/ccrider/releases)
+[![CI](https://github.com/neilberkman/ccrider/actions/workflows/release.yml/badge.svg)](https://github.com/neilberkman/ccrider/actions/workflows/release.yml)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/neilberkman/ccrider)](https://go.dev/)
+[![License](https://img.shields.io/github/license/neilberkman/ccrider)](https://github.com/neilberkman/ccrider/blob/main/LICENSE)
+
 The companion Claude Code needs. Search, browse, and resume your Claude Code sessions.
 
 You've got months of Claude Code sessions sitting in `~/.claude/projects/`. Finding that conversation where you fixed the authentication bug? Good luck grepping through nested JSON files.
