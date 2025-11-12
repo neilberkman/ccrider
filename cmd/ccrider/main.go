@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/yourusername/ccrider/internal/interface/cli"
+	"github.com/neilberkman/ccrider/internal/interface/cli"
 )
 
 func main() {

@@ -12,9 +12,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/dustin/go-humanize"
-	"github.com/yourusername/ccrider/internal/core/config"
-	"github.com/yourusername/ccrider/internal/core/session"
-	"github.com/yourusername/ccrider/internal/core/terminal"
+	"github.com/neilberkman/ccrider/internal/core/config"
+	"github.com/neilberkman/ccrider/internal/core/session"
+	"github.com/neilberkman/ccrider/internal/core/terminal"
 )
 
 // buildClaudeCommand creates a claude --resume command with configured flags

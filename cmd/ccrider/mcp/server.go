@@ -10,8 +10,8 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
-	"github.com/yourusername/ccrider/internal/core/db"
-	"github.com/yourusername/ccrider/internal/core/importer"
+	"github.com/neilberkman/ccrider/internal/core/db"
+	"github.com/neilberkman/ccrider/internal/core/importer"
 )
 
 // SearchSessionsArgs defines arguments for the search_sessions tool

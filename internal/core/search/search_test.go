@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/yourusername/ccrider/internal/core/db"
+	"github.com/neilberkman/ccrider/internal/core/db"
 )
 
 func TestSearch(t *testing.T) {

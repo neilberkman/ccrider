@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/yourusername/ccrider/internal/core/db"
-	"github.com/yourusername/ccrider/internal/core/importer"
+	"github.com/neilberkman/ccrider/internal/core/db"
+	"github.com/neilberkman/ccrider/internal/core/importer"
 )
 
 type errMsg struct {

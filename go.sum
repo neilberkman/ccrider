@@ -76,6 +76,8 @@ github.com/muesli/termenv v0.16.0 h1:S5AlUN9dENB57rsbnkPyfdGuWIlkmzJjbFf0Tf5FWUc
 github.com/muesli/termenv v0.16.0/go.mod h1:ZRfOIKPFDYQoDFF4Olj7/QJbW60Ol/kL1pU3VfY/Cnk=
 github.com/ncruces/go-strftime v0.1.9 h1:bY0MQC28UADQmHmaF5dgpLmImcShSi2kHU9XLdhx/f4=
 github.com/ncruces/go-strftime v0.1.9/go.mod h1:Fwc5htZGVVkseilnfgOVb9mKy6w1naJmn9CehxcKcls=
+github.com/neilberkman/ccrider v0.1.2 h1:TO4QapbY125pPQGR6Q1gGQPVjeYPdPpSlxoQuZr2u2E=
+github.com/neilberkman/ccrider v0.1.2/go.mod h1:i7N9UR+aYKAT/YIiz0k0GYgNS1gs7Th+4ZNHEYWHNlU=
 github.com/olebedev/when v1.1.0 h1:dlpoRa7huImhNtEx4yl0WYfTHVEWmJmIWd7fEkTHayc=
 github.com/olebedev/when v1.1.0/go.mod h1:T0THb4kP9D3NNqlvCwIG4GyUioTAzEhB4RNVzig/43E=
 github.com/pkg/errors v0.8.1 h1:iURUrRGxPUNPdy5/HRSm+Yj6okJ6UtLINN0Q9M4+h3I=

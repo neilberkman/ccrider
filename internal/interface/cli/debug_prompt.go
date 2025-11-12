@@ -7,8 +7,8 @@ import (
 	"github.com/cbroglie/mustache"
 	"github.com/dustin/go-humanize"
 	"github.com/spf13/cobra"
-	"github.com/yourusername/ccrider/internal/core/config"
-	"github.com/yourusername/ccrider/internal/core/db"
+	"github.com/neilberkman/ccrider/internal/core/config"
+	"github.com/neilberkman/ccrider/internal/core/db"
 )
 
 var debugPromptCmd = &cobra.Command{

@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
-	"github.com/yourusername/ccrider/internal/core/db"
-	"github.com/yourusername/ccrider/internal/core/importer"
+	"github.com/neilberkman/ccrider/internal/core/db"
+	"github.com/neilberkman/ccrider/internal/core/importer"
 )
 
 var syncCmd = &cobra.Command{
