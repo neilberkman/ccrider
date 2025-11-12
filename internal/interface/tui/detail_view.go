@@ -110,7 +110,7 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
-		case "ctrl+n", "n":
+		case "ctrl+n":
 			// Next match
 			if len(m.inSessionMatches) > 0 {
 				m.inSessionMatchIdx++
@@ -120,7 +120,7 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
-		case "ctrl+p", "p":
+		case "ctrl+p":
 			// Previous match
 			if len(m.inSessionMatches) > 0 {
 				m.inSessionMatchIdx--
