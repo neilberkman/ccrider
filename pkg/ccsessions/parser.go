@@ -82,9 +82,9 @@ func ParseFile(path string) (session *ParsedSession, err error) {
 		Messages:  make([]ParsedMessage, 0),
 	}
 
-	// Configure scanner with larger buffer for long lines (10MB max)
+	// Configure scanner with larger buffer for long lines (100MB max)
 	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 64*1024), 10*1024*1024)
+	scanner.Buffer(make([]byte, 64*1024), 100*1024*1024)
 
 	lineNum := 0
 
