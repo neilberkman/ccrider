@@ -117,6 +117,7 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if m.inSessionMatchIdx >= len(m.inSessionMatches) {
 					m.inSessionMatchIdx = 0
 				}
+				scrollToMatch(&m)
 			}
 			return m, nil
 
@@ -127,6 +128,7 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if m.inSessionMatchIdx < 0 {
 					m.inSessionMatchIdx = len(m.inSessionMatches) - 1
 				}
+				scrollToMatch(&m)
 			}
 			return m, nil
 
@@ -242,6 +244,37 @@ func findMatches(messages []messageItem, query string) []int {
 	}
 
 	return matches
+}
+
+// scrollToMatch scrolls the viewport to show the currently selected match
+func scrollToMatch(m *Model) {
+	if len(m.inSessionMatches) == 0 || m.currentSession == nil {
+		return
+	}
+
+	// Get the message index of the current match
+	matchedMsgIdx := m.inSessionMatches[m.inSessionMatchIdx]
+	if matchedMsgIdx < 0 || matchedMsgIdx >= len(m.currentSession.Messages) {
+		return
+	}
+
+	// Calculate approximate line offset
+	// Header is 4 lines (title + project + messages + separator)
+	lineOffset := 4
+
+	// Count lines for each message before the matched one
+	for i := 0; i < matchedMsgIdx; i++ {
+		msg := m.currentSession.Messages[i]
+		// Message header: 1 line (▸ TYPE timestamp)
+		lineOffset++
+		// Message content: count newlines + 1
+		lineOffset += strings.Count(msg.Content, "\n") + 1
+		// Blank line separator
+		lineOffset++
+	}
+
+	// Set viewport to show this line (centered if possible)
+	m.viewport.SetYOffset(lineOffset)
 }
 
 type sessionLaunchedMsg struct {
