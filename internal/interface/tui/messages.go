@@ -36,6 +36,10 @@ type searchResultsMsg struct {
 
 func performSearch(database *db.DB, query string) tea.Cmd {
 	return func() tea.Msg {
+		// Strip any quotes from the query (user shouldn't need to escape)
+		query = strings.Trim(query, "\"")
+		query = strings.ReplaceAll(query, "\\\"", "\"")
+
 		// Minimum 2 characters to search (avoid useless single-char results)
 		if len(query) < 2 {
 			return searchResultsMsg{results: nil}
@@ -49,13 +53,19 @@ func performSearch(database *db.DB, query string) tea.Cmd {
 		}
 
 		// Build SQL query with filters
+		// Search both message content AND session metadata (project, summary, branch)
 		sqlQuery := `
 			SELECT DISTINCT s.session_id
-			FROM messages m
-			JOIN sessions s ON m.session_id = s.id
-			WHERE m.text_content LIKE '%' || ? || '%'
+			FROM sessions s
+			LEFT JOIN messages m ON m.session_id = s.id
+			WHERE (
+				m.text_content LIKE '%' || ? || '%'
+				OR s.project_path LIKE '%' || ? || '%'
+				OR s.summary LIKE '%' || ? || '%'
+				OR m.git_branch LIKE '%' || ? || '%'
+			)
 		`
-		args := []interface{}{searchQuery}
+		args := []interface{}{searchQuery, searchQuery, searchQuery, searchQuery}
 
 		// Add project filter
 		if filters.Project != "" {
