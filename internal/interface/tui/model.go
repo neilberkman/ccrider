@@ -50,7 +50,7 @@ type Model struct {
 	inSessionSearchMode bool
 	inSessionMatches    []int // message indices that match
 	inSessionMatchIdx   int   // current match index
-	messageStarts       []int // line numbers where each message starts (for scrolling)
+	matchLines          []int // line numbers where each match occurs (for scrolling)
 
 	// Launch state (for exec after quit)
 	LaunchSessionID   string
@@ -147,6 +147,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+
+		// Update list dimensions if it's been created
+		if m.list.Paginator.TotalPages > 0 {
+			m.list.SetSize(m.width, m.height-4)
+		}
+
+		// Update viewport dimensions if it's been created
+		if m.viewport.Height > 0 {
+			m.viewport.Width = m.width
+			m.viewport.Height = m.height - 8
+		}
+
 		return m, nil
 
 	case tea.MouseMsg:
