@@ -66,6 +66,14 @@ type Model struct {
 	fallbackLastCwd     string
 	fallbackUpdatedAt   string
 	fallbackSummary     string
+
+	// Sync progress state
+	syncing          bool
+	syncProgress     float64 // 0-100
+	syncCurrentFile  string
+	syncTotal        int
+	syncCurrent      int
+	savedCursorIndex int // Preserve cursor position during sync
 }
 
 type sessionItem struct {
@@ -132,6 +140,7 @@ func New(database *db.DB) Model {
 		inSessionSearch:      inSessionTi,
 		projectFilterEnabled: false, // Disabled by default
 		currentDirectory:     currentDir,
+		syncing:              true, // Start with syncing=true
 	}
 }
 
@@ -245,6 +254,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case sessionsLoadedMsg:
 		m.sessions = msg.sessions
 		m.list = createSessionList(msg.sessions, m.width, m.height)
+
+		// If we were syncing, restore cursor position and clear sync flag
+		if m.syncing {
+			m.syncing = false
+			// Restore cursor position if valid
+			if m.savedCursorIndex >= 0 && m.savedCursorIndex < len(msg.sessions) {
+				m.list.Select(m.savedCursorIndex)
+			}
+		}
 		return m, nil
 
 	case sessionDetailLoadedMsg:

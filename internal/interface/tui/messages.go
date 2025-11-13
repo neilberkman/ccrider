@@ -356,11 +356,6 @@ func loadSessionDetail(database *db.DB, sessionID string) tea.Cmd {
 	}
 }
 
-type syncCompletedMsg struct {
-	success bool
-	err     error
-}
-
 func syncSessions(database *db.DB, filterByProject bool, projectPath string) tea.Cmd {
 	return func() tea.Msg {
 		// Get default Claude directory
@@ -370,13 +365,10 @@ func syncSessions(database *db.DB, filterByProject bool, projectPath string) tea
 		}
 		sourcePath := filepath.Join(home, ".claude", "projects")
 
-		// Run the sync
+		// Run the sync (no progress UI for now - sync is fast enough)
 		imp := importer.New(database)
 		if err := imp.ImportDirectory(sourcePath, nil); err != nil {
-			return syncCompletedMsg{
-				success: false,
-				err:     err,
-			}
+			return errMsg{err}
 		}
 
 		// After sync completes, reload sessions
