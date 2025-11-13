@@ -135,7 +135,18 @@ func (m Model) viewList() string {
 
 	// Build help text / sync status with proper width constraint
 	var helpText string
-	if m.syncing {
+	if m.syncing && m.syncTotal > 0 {
+		// Show full progress bar like CLI
+		progressBar := renderProgressBar(m.syncCurrent, m.syncTotal, m.width)
+		sessionInfo := ""
+		if m.syncCurrentFile != "" {
+			sessionInfo = " | " + m.syncCurrentFile
+			if len(sessionInfo) > 60 {
+				sessionInfo = sessionInfo[:57] + "..."
+			}
+		}
+		helpText = progressBar + sessionInfo
+	} else if m.syncing {
 		helpText = "⏳ Syncing Claude sessions..."
 	} else {
 		helpText = "Enter: view | o: open in new tab | /: search | p: toggle project filter | s: sync | ?: help | q: quit"

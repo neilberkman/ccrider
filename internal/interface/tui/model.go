@@ -251,6 +251,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateTerminalFallback(msg)
 		}
 
+	case syncProgressMsg:
+		// Update sync progress
+		m.syncCurrent = msg.current
+		m.syncTotal = msg.total
+		m.syncCurrentFile = msg.sessionName
+		// Chain another command to keep waiting for progress using the same state
+		return m, waitForSyncProgress(msg.state, msg.db, msg.filterByProject, msg.projectPath)
+
 	case sessionsLoadedMsg:
 		m.sessions = msg.sessions
 		m.list = createSessionList(msg.sessions, m.width, m.height)
