@@ -40,7 +40,7 @@ func buildClaudeCommand(sessionID, workDir string, withPrompt bool) string {
 
 func createViewport(detail sessionDetail, width, height int) viewport.Model {
 	vp := viewport.New(width, height-8)
-	result := renderConversation(detail, "", nil, -1, width)
+	result := renderConversation(detail, "", nil, -1, width, nil)
 	vp.SetContent(result.content)
 	return vp
 }
@@ -49,14 +49,25 @@ type renderResult struct {
 	content string
 }
 
-func renderConversation(detail sessionDetail, query string, matches []int, currentMatchIdx int, width int) renderResult {
+func renderConversation(detail sessionDetail, query string, matches []int, currentMatchIdx int, width int, matchLines []int) renderResult {
 	var b strings.Builder
+	currentLine := 0
+
+	// Determine which line is the "current" match for special highlighting
+	var currentMatchLine int = -1
+	if currentMatchIdx >= 0 && currentMatchIdx < len(matchLines) {
+		currentMatchLine = matchLines[currentMatchIdx]
+	}
 
 	// Header
 	b.WriteString(titleStyle.Render("Session: "+detail.Session.Summary) + "\n")
+	currentLine++
 	b.WriteString(fmt.Sprintf("Project: %s\n", detail.Session.Project))
+	currentLine++
 	b.WriteString(fmt.Sprintf("Messages: %d\n", detail.Session.MessageCount))
+	currentLine++
 	b.WriteString(strings.Repeat("─", width) + "\n\n")
+	currentLine += 2
 
 	// Messages
 	for i, msg := range detail.Messages {
@@ -83,6 +94,7 @@ func renderConversation(detail sessionDetail, query string, matches []int, curre
 		b.WriteString(" ")
 		b.WriteString(timestampStyle.Render(formatTime(msg.Timestamp)))
 		b.WriteString("\n")
+		currentLine++
 
 		// Word wrap content to viewport width (subtract some for safety/padding)
 		content := msg.Content
@@ -92,18 +104,26 @@ func renderConversation(detail sessionDetail, query string, matches []int, curre
 		}
 		wrappedContent := wordwrap.String(content, wrapWidth)
 
-		// Highlight if this is a match
+		// Highlight matches, using currentMatchLine to determine which match is active
 		if query != "" && contains(matches, i) {
-			isCurrent := currentMatchIdx >= 0 && currentMatchIdx < len(matches) && matches[currentMatchIdx] == i
-			wrappedContent = highlightQueryWithStyle(wrappedContent, query, isCurrent)
+			wrappedContent = highlightQueryInContent(wrappedContent, query, currentLine, currentMatchLine)
+		}
+
+		// Count lines in wrapped content
+		linesInContent := strings.Count(wrappedContent, "\n")
+		if len(wrappedContent) > 0 {
+			linesInContent++ // Content takes at least one line
 		}
 
 		// Add content
 		b.WriteString(wrappedContent)
+		currentLine += linesInContent
 
 		// Add separator
 		b.WriteString("\n\n")
+		currentLine += 2
 		b.WriteString(strings.Repeat("─", width) + "\n\n")
+		currentLine += 2
 	}
 
 	return renderResult{
@@ -123,45 +143,37 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.inSessionMatchIdx = 0
 			// Clear highlighting when exiting search
 			if m.currentSession != nil {
-				result := renderConversation(*m.currentSession, "", nil, -1, m.width)
+				result := renderConversation(*m.currentSession, "", nil, -1, m.width, nil)
 				m.viewport.SetContent(result.content)
 			}
 			return m, nil
 
-		case "enter":
-			// Perform search and scroll to first match
-			query := m.inSessionSearch.Value()
-			if query != "" && m.currentSession != nil {
-				// Find which messages contain matches (for highlighting)
-				m.inSessionMatches = findMatches(m.currentSession.Messages, query)
-				m.inSessionMatchIdx = 0
-				// Find exact line numbers in rendered content (for scrolling)
-				m.matchLines = findMatchesInRenderedContent(*m.currentSession, query, m.width)
-				// Render with highlighting
-				result := renderConversation(*m.currentSession, query, m.inSessionMatches, m.inSessionMatchIdx, m.width)
-				m.viewport.SetContent(result.content)
-				scrollToMatch(&m)
-			}
-			return m, nil
-
-		case "ctrl+n":
+		case "n":
 			// Next match
 			if len(m.matchLines) > 0 {
 				m.inSessionMatchIdx++
 				if m.inSessionMatchIdx >= len(m.matchLines) {
 					m.inSessionMatchIdx = 0
 				}
+				// Re-render with updated current match highlighting
+				query := m.inSessionSearch.Value()
+				result := renderConversation(*m.currentSession, query, m.inSessionMatches, m.inSessionMatchIdx, m.width, m.matchLines)
+				m.viewport.SetContent(result.content)
 				scrollToMatch(&m)
 			}
 			return m, nil
 
-		case "ctrl+p":
+		case "p":
 			// Previous match
 			if len(m.matchLines) > 0 {
 				m.inSessionMatchIdx--
 				if m.inSessionMatchIdx < 0 {
 					m.inSessionMatchIdx = len(m.matchLines) - 1
 				}
+				// Re-render with updated current match highlighting
+				query := m.inSessionSearch.Value()
+				result := renderConversation(*m.currentSession, query, m.inSessionMatches, m.inSessionMatchIdx, m.width, m.matchLines)
+				m.viewport.SetContent(result.content)
 				scrollToMatch(&m)
 			}
 			return m, nil
@@ -170,21 +182,35 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			m.inSessionSearch, cmd = m.inSessionSearch.Update(msg)
 
-			// Re-render viewport with live highlighting on every keystroke
+			// Re-render viewport with live highlighting and jump to first match on every keystroke
 			query := m.inSessionSearch.Value()
 			if query != "" && m.currentSession != nil {
 				// Find which messages contain matches (for highlighting)
 				m.inSessionMatches = findMatches(m.currentSession.Messages, query)
 				// Find exact line numbers in rendered content (for scrolling)
 				m.matchLines = findMatchesInRenderedContent(*m.currentSession, query, m.width)
+
+				// Jump to first match automatically
+				if len(m.matchLines) > 0 {
+					m.inSessionMatchIdx = 0
+				} else {
+					m.inSessionMatchIdx = -1
+				}
+
 				// Render with highlighting
-				result := renderConversation(*m.currentSession, query, m.inSessionMatches, m.inSessionMatchIdx, m.width)
+				result := renderConversation(*m.currentSession, query, m.inSessionMatches, m.inSessionMatchIdx, m.width, m.matchLines)
 				m.viewport.SetContent(result.content)
+
+				// Scroll to first match live
+				if len(m.matchLines) > 0 {
+					scrollToMatch(&m)
+				}
 			} else {
 				// Clear highlighting if search is empty
 				m.inSessionMatches = nil
 				m.matchLines = nil
-				result := renderConversation(*m.currentSession, "", nil, -1, m.width)
+				m.inSessionMatchIdx = 0
+				result := renderConversation(*m.currentSession, "", nil, -1, m.width, nil)
 				m.viewport.SetContent(result.content)
 			}
 
@@ -286,12 +312,40 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func highlightQueryWithStyle(text, query string, isCurrent bool) string {
+// highlightQueryInContent highlights query matches in content, line by line
+// Uses currentMatchLine to apply special highlighting to the active match
+func highlightQueryInContent(content, query string, startLine, currentMatchLine int) string {
+	if query == "" {
+		return content
+	}
+
+	lines := strings.Split(content, "\n")
+	var result strings.Builder
+
+	for i, line := range lines {
+		lineNumber := startLine + i
+		// Check if this line is the currently selected match
+		isCurrent := (lineNumber == currentMatchLine)
+
+		// Highlight all matches in this line
+		highlightedLine := highlightLineWithStyle(line, query, isCurrent)
+		result.WriteString(highlightedLine)
+
+		if i < len(lines)-1 {
+			result.WriteString("\n")
+		}
+	}
+
+	return result.String()
+}
+
+// highlightLineWithStyle highlights all occurrences of query in a single line
+func highlightLineWithStyle(text, query string, isCurrent bool) string {
 	if query == "" {
 		return text
 	}
 
-	// Choose style based on whether this is the current/focused match
+	// Choose style based on whether this line contains the current match
 	style := searchMatchStyle
 	if isCurrent {
 		style = searchCurrentMatchStyle
@@ -340,7 +394,7 @@ func findMatchesInRenderedContent(detail sessionDetail, query string, width int)
 	}
 
 	// Render full content WITHOUT search highlighting first
-	result := renderConversation(detail, "", nil, -1, width)
+	result := renderConversation(detail, "", nil, -1, width, nil)
 
 	// Split into lines
 	lines := strings.Split(result.content, "\n")
@@ -383,15 +437,33 @@ func contains(slice []int, val int) bool {
 }
 
 // scrollToMatch scrolls the viewport to show the currently selected match
-// Uses Shannon's approach: matchLines contains exact line indices from rendered content
+// Uses intelligent positioning:
+// - If match is already visible, don't scroll (preserve context)
+// - If match needs scrolling, position it a few lines down from top (not flush)
 func scrollToMatch(m *Model) {
 	if len(m.matchLines) == 0 || m.inSessionMatchIdx < 0 || m.inSessionMatchIdx >= len(m.matchLines) {
 		return
 	}
 
-	// Scroll directly to the line index (no offset calculations needed)
-	lineNumber := m.matchLines[m.inSessionMatchIdx]
-	m.viewport.SetYOffset(lineNumber)
+	matchLine := m.matchLines[m.inSessionMatchIdx]
+	currentOffset := m.viewport.YOffset
+	viewportHeight := m.viewport.Height
+
+	// Check if match is already visible in the current viewport
+	// Visible range is [currentOffset, currentOffset + viewportHeight)
+	if matchLine >= currentOffset && matchLine < currentOffset+viewportHeight {
+		// Match is already visible - don't scroll, preserve context
+		return
+	}
+
+	// Match is not visible, need to scroll
+	// Position it a few lines down from top (3 lines of context above)
+	targetOffset := matchLine - 3
+	if targetOffset < 0 {
+		targetOffset = 0
+	}
+
+	m.viewport.SetYOffset(targetOffset)
 }
 
 type sessionLaunchedMsg struct {

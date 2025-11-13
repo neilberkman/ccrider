@@ -43,7 +43,8 @@ var (
 				Foreground(lipgloss.Color("205"))
 
 	searchMatchStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("170")).
+				Background(lipgloss.Color("240")).
+				Foreground(lipgloss.Color("yellow")).
 				Bold(true)
 
 	searchCurrentMatchStyle = lipgloss.NewStyle().

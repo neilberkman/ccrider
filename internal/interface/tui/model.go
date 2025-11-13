@@ -202,13 +202,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		switch msg.String() {
-		case "ctrl+c", "q":
-			if m.mode == listView {
-				return m, tea.Quit
+		case "ctrl+c":
+			return m, tea.Quit
+
+		case "q":
+			// Only intercept 'q' when NOT in a text input mode
+			if m.mode == searchView {
+				// In search view, let 'q' be typed into search input
+				// Don't intercept it here
+			} else if m.mode == detailView && m.inSessionSearchMode {
+				// In detail view search mode, let 'q' be typed into search input
+				// Don't intercept it here
+			} else {
+				// Normal 'q' handling for non-input modes
+				if m.mode == listView {
+					return m, tea.Quit
+				}
+				// In other views, go back to list
+				m.mode = listView
+				return m, nil
 			}
-			// In other views, go back to list
-			m.mode = listView
-			return m, nil
 
 		case "?":
 			m.mode = helpView
