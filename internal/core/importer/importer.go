@@ -43,8 +43,12 @@ func (i *Importer) ImportSession(session *ccsessions.ParsedSession, existingMess
 		_ = tx.Rollback()
 	}()
 
-	// Extract project path from file path
-	projectPath := extractProjectPath(session.FilePath)
+	// Extract project path from message CWD (most recent non-empty)
+	projectPath := extractProjectPathFromMessages(session.Messages)
+	if projectPath == "" {
+		// Fallback to decoding from directory name (legacy behavior)
+		projectPath = extractProjectPath(session.FilePath)
+	}
 
 	// Compute timestamps from messages
 	var createdAt, updatedAt time.Time
@@ -312,9 +316,21 @@ func computeFileHash(path string) (string, error) {
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
+// extractProjectPathFromMessages finds the most recent non-empty CWD from messages
+// This is the correct way to get the project path, as directory names can be ambiguous
+func extractProjectPathFromMessages(messages []ccsessions.ParsedMessage) string {
+	// Iterate backwards to find most recent CWD
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].CWD != "" {
+			return messages[i].CWD
+		}
+	}
+	return ""
+}
+
 func extractProjectPath(filePath string) string {
-	// Extract from ~/.claude/projects/-Users-neil-xuku-invoice/session.jsonl
-	// Returns /Users/neil/xuku/invoice
+	// LEGACY: Extract from ~/.claude/projects/-Users-neil-xuku-invoice/session.jsonl
+	// This is buggy for paths with dashes/underscores, use extractProjectPathFromMessages instead
 	dir := filepath.Dir(filePath)
 	base := filepath.Base(dir)
 
