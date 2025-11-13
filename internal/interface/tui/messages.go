@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/neilberkman/ccrider/internal/core/db"
@@ -361,96 +360,98 @@ type syncProgressMsg struct {
 	current         int
 	total           int
 	sessionName     string
-	state           *syncState
+	ch              chan syncProgressMsg
 	db              *db.DB
 	filterByProject bool
 	projectPath     string
 }
 
 // StartSyncWithProgress initiates a sync and returns a command that listens for progress
-func startSyncWithProgress(database *db.DB, filterByProject bool, projectPath string) (tea.Cmd, *syncState) {
-	// Get default Claude directory
-	home, _ := os.UserHomeDir()
-	sourcePath := filepath.Join(home, ".claude", "projects")
+func startSyncWithProgress(database *db.DB, filterByProject bool, projectPath string) tea.Cmd {
+	return func() tea.Msg {
+		// Get default Claude directory
+		home, _ := os.UserHomeDir()
+		sourcePath := filepath.Join(home, ".claude", "projects")
 
-	// Count total files first
-	var files []string
-	filepath.Walk(sourcePath, func(path string, info os.FileInfo, err error) error {
-		if err == nil && !info.IsDir() && filepath.Ext(path) == ".jsonl" {
-			files = append(files, path)
+		// Count total files first
+		var files []string
+		filepath.Walk(sourcePath, func(path string, info os.FileInfo, err error) error {
+			if err == nil && !info.IsDir() && filepath.Ext(path) == ".jsonl" {
+				files = append(files, path)
+			}
+			return nil
+		})
+
+		total := len(files)
+
+		// Send initial progress message with total
+		// This will be sent IMMEDIATELY before any import starts
+		// We'll use a subscription pattern - send progress via tea.Program
+		progressCh := make(chan syncProgressMsg, 100)
+
+		// Send initial message with total count immediately
+		// This ensures the progress bar shows up right away
+		progressCh <- syncProgressMsg{
+			current:     0,
+			total:       total,
+			sessionName: "",
 		}
-		return nil
-	})
 
-	// Create shared state for progress tracking
-	state := &syncState{
-		total:   len(files),
-		current: 0,
-		done:    make(chan bool),
+		// Start sync in background goroutine
+		go func() {
+			imp := importer.New(database)
+			progress := &channelProgressReporter{
+				total:   total,
+				current: 0,
+				ch:      progressCh,
+			}
+
+			imp.ImportDirectory(sourcePath, progress)
+			close(progressCh)
+		}()
+
+		// This goroutine will send progress updates to the TUI
+		// But we can't return multiple messages from one Cmd
+		// So we'll use a different pattern: subscribe to the channel
+		return syncSubscribe(progressCh, database, filterByProject, projectPath)()
 	}
-
-	// Start sync in background
-	go func() {
-		imp := importer.New(database)
-		progress := &channelProgressReporter{
-			total:   len(files),
-			current: 0,
-			state:   state,
-		}
-
-		imp.ImportDirectory(sourcePath, progress)
-		close(state.done)
-	}()
-
-	// Return a command that waits for progress updates
-	return waitForSyncProgress(state, database, filterByProject, projectPath), state
-}
-
-type syncState struct {
-	total       int
-	current     int
-	sessionName string
-	done        chan bool
 }
 
 type channelProgressReporter struct {
 	total   int
 	current int
-	state   *syncState
+	ch      chan syncProgressMsg
 }
 
 func (r *channelProgressReporter) Update(sessionSummary string, firstMsg string) {
 	r.current++
-	r.state.current = r.current
-	r.state.sessionName = sessionSummary
+	// Send progress update via channel immediately - no polling!
+	r.ch <- syncProgressMsg{
+		current:     r.current,
+		total:       r.total,
+		sessionName: sessionSummary,
+	}
 }
 
 func (r *channelProgressReporter) Finish() {}
 
-func waitForSyncProgress(state *syncState, database *db.DB, filterByProject bool, projectPath string) tea.Cmd {
+// syncSubscribe listens to the progress channel and returns the next message
+func syncSubscribe(progressCh chan syncProgressMsg, database *db.DB, filterByProject bool, projectPath string) tea.Cmd {
 	return func() tea.Msg {
-		// Check if done first
-		select {
-		case <-state.done:
-			// Sync complete, reload sessions
+		msg, ok := <-progressCh
+		if !ok {
+			// Channel closed, sync is done
 			return loadSessions(database, filterByProject, projectPath)()
-		default:
-			// Not done, wait a bit then send progress update
-			time.Sleep(50 * time.Millisecond)
-			return syncProgressMsg{
-				current:         state.current,
-				total:           state.total,
-				sessionName:     state.sessionName,
-				state:           state,
-				db:              database,
-				filterByProject: filterByProject,
-				projectPath:     projectPath,
-			}
 		}
+		// Add the channel and db info so we can chain the next subscription
+		msg.ch = progressCh
+		msg.db = database
+		msg.filterByProject = filterByProject
+		msg.projectPath = projectPath
+		return msg
 	}
 }
 
 func syncSessions(database *db.DB, filterByProject bool, projectPath string) tea.Cmd {
-	cmd, _ := startSyncWithProgress(database, filterByProject, projectPath)
-	return cmd
+	return startSyncWithProgress(database, filterByProject, projectPath)
 }

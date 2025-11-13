@@ -214,7 +214,7 @@ func (i *Importer) ImportSession(session *ccsessions.ParsedSession, existingMess
 }
 
 // ImportDirectory imports all sessions from a directory tree
-func (i *Importer) ImportDirectory(dirPath string, progress *ProgressReporter) error {
+func (i *Importer) ImportDirectory(dirPath string, progress ProgressCallback) error {
 	// Find all .jsonl files
 	var files []string
 	err := filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {

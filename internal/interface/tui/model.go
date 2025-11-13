@@ -256,8 +256,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncCurrent = msg.current
 		m.syncTotal = msg.total
 		m.syncCurrentFile = msg.sessionName
-		// Chain another command to keep waiting for progress using the same state
-		return m, waitForSyncProgress(msg.state, msg.db, msg.filterByProject, msg.projectPath)
+		// Chain another command to keep waiting for progress via channel
+		return m, syncSubscribe(msg.ch, msg.db, msg.filterByProject, msg.projectPath)
 
 	case sessionsLoadedMsg:
 		m.sessions = msg.sessions
