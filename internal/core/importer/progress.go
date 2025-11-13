@@ -7,6 +7,12 @@ import (
 	"time"
 )
 
+// ProgressCallback defines the interface for progress reporting
+type ProgressCallback interface {
+	Update(sessionSummary string, firstMsg string)
+	Finish()
+}
+
 // ProgressReporter handles progress feedback during import
 type ProgressReporter struct {
 	writer    io.Writer
