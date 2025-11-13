@@ -119,7 +119,9 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, loadSessions(m.db, m.projectFilterEnabled, m.currentDirectory)
 
 	case "s":
-		// Trigger sync
+		// Trigger sync - save cursor position first
+		m.syncing = true
+		m.savedCursorIndex = m.list.Index()
 		return m, syncSessions(m.db, m.projectFilterEnabled, m.currentDirectory)
 	}
 
@@ -131,8 +133,13 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) viewList() string {
 	header := titleStyle.Render("Claude Code Sessions")
 
-	// Build help text with proper width constraint
-	helpText := "Enter: view | o: open in new tab | /: search | p: toggle project filter | s: sync | ?: help | q: quit"
+	// Build help text / sync status with proper width constraint
+	var helpText string
+	if m.syncing {
+		helpText = "⏳ Syncing Claude sessions..."
+	} else {
+		helpText = "Enter: view | o: open in new tab | /: search | p: toggle project filter | s: sync | ?: help | q: quit"
+	}
 	wrappedHelp := lipgloss.NewStyle().
 		Width(m.width - 2).
 		Render(helpText)
