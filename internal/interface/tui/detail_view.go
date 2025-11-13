@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/dustin/go-humanize"
+	"github.com/muesli/reflow/wordwrap"
 	"github.com/neilberkman/ccrider/internal/core/config"
 	"github.com/neilberkman/ccrider/internal/core/session"
 	"github.com/neilberkman/ccrider/internal/core/terminal"
@@ -92,18 +93,21 @@ func renderConversation(detail sessionDetail, query string, matches []int, curre
 		b.WriteString("\n")
 		currentLine++
 
-		// Content
+		// Content - wrap first, then highlight
 		content := msg.Content
 
-		// Highlight query if this message is a match
+		// Word wrap content to viewport width
+		wrappedContent := wordwrap.String(content, width)
+
+		// Highlight query if this message is a match (after wrapping)
 		if query != "" && contains(matches, i) {
 			// Check if this is the current/focused match
 			isCurrent := currentMatchIdx >= 0 && currentMatchIdx < len(matches) && matches[currentMatchIdx] == i
-			content = highlightQueryWithStyle(content, query, isCurrent)
+			wrappedContent = highlightQueryWithStyle(wrappedContent, query, isCurrent)
 		}
 
-		b.WriteString(content)
-		currentLine += strings.Count(content, "\n") + 1
+		b.WriteString(wrappedContent)
+		currentLine += strings.Count(wrappedContent, "\n") + 1
 		b.WriteString("\n\n")
 		currentLine += 2
 		b.WriteString(strings.Repeat("─", width) + "\n\n")
@@ -340,10 +344,28 @@ func findMatches(messages []messageItem, query string) []int {
 	var matches []int
 	lowerQuery := strings.ToLower(query)
 
+	// DEBUG logging
+	f, _ := os.OpenFile("/tmp/ccrider-debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if f != nil {
+		fmt.Fprintf(f, "\nFIND MATCHES for query=%q in %d messages\n", query, len(messages))
+	}
+
 	for i, msg := range messages {
 		if strings.Contains(strings.ToLower(msg.Content), lowerQuery) {
 			matches = append(matches, i)
+			if f != nil {
+				preview := msg.Content
+				if len(preview) > 100 {
+					preview = preview[:100]
+				}
+				fmt.Fprintf(f, "  match at index %d: type=%s preview=%q\n", i, msg.Type, preview)
+			}
 		}
+	}
+
+	if f != nil {
+		fmt.Fprintf(f, "  TOTAL MATCHES: %v\n", matches)
+		f.Close()
 	}
 
 	return matches
@@ -373,6 +395,25 @@ func scrollToMatch(m *Model) {
 
 	// Use the pre-calculated line offset from rendering
 	lineOffset := m.messageStarts[matchedMsgIdx]
+
+	// DEBUG logging
+	f, _ := os.OpenFile("/tmp/ccrider-debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if f != nil {
+		fmt.Fprintf(f, "SCROLL DEBUG: matchIdx=%d/%d msgIdx=%d lineOffset=%d totalMessages=%d totalStarts=%d\n",
+			m.inSessionMatchIdx+1, len(m.inSessionMatches), matchedMsgIdx, lineOffset,
+			len(m.currentSession.Messages), len(m.messageStarts))
+		fmt.Fprintf(f, "  matches=%v\n", m.inSessionMatches)
+		fmt.Fprintf(f, "  messageStarts=%v\n", m.messageStarts)
+		if matchedMsgIdx < len(m.currentSession.Messages) {
+			msg := m.currentSession.Messages[matchedMsgIdx]
+			preview := msg.Content
+			if len(preview) > 100 {
+				preview = preview[:100]
+			}
+			fmt.Fprintf(f, "  message content preview: %q\n", preview)
+		}
+		f.Close()
+	}
 
 	// Set viewport to show this line
 	m.viewport.SetYOffset(lineOffset)
