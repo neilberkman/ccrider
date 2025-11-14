@@ -50,27 +50,17 @@ type renderResult struct {
 }
 
 func renderConversation(detail sessionDetail, query string, matches []int, currentMatchIdx int, width int, matchLines []int) renderResult {
+	// Render everything with yellow highlighting first
 	var b strings.Builder
-	currentLine := 0
-
-	// Determine which line is the "current" match for special highlighting
-	var currentMatchLine int = -1
-	if currentMatchIdx >= 0 && currentMatchIdx < len(matchLines) {
-		currentMatchLine = matchLines[currentMatchIdx]
-	}
 
 	// Header
 	b.WriteString(titleStyle.Render("Session: "+detail.Session.Summary) + "\n")
-	currentLine++
 	b.WriteString(fmt.Sprintf("Project: %s\n", detail.Session.Project))
-	currentLine++
 	b.WriteString(fmt.Sprintf("Messages: %d\n", detail.Session.MessageCount))
-	currentLine++
 	b.WriteString(strings.Repeat("─", width) + "\n\n")
-	currentLine += 2
 
-	// Messages
-	for i, msg := range detail.Messages {
+	// Messages - render WITHOUT highlighting first
+	for _, msg := range detail.Messages {
 		var style lipgloss.Style
 		var label string
 
@@ -94,40 +84,47 @@ func renderConversation(detail sessionDetail, query string, matches []int, curre
 		b.WriteString(" ")
 		b.WriteString(timestampStyle.Render(formatTime(msg.Timestamp)))
 		b.WriteString("\n")
-		currentLine++
 
-		// Word wrap content to viewport width (subtract some for safety/padding)
+		// Word wrap content
 		content := msg.Content
-		wrapWidth := width - 10 // Account for viewport padding and safety margin
+		wrapWidth := width - 10
 		if wrapWidth < 40 {
-			wrapWidth = 40 // Minimum wrap width
+			wrapWidth = 40
 		}
 		wrappedContent := wordwrap.String(content, wrapWidth)
 
-		// Highlight matches, using currentMatchLine to determine which match is active
-		if query != "" && contains(matches, i) {
-			wrappedContent = highlightQueryInContent(wrappedContent, query, currentLine, currentMatchLine)
-		}
-
-		// Count lines in wrapped content
-		linesInContent := strings.Count(wrappedContent, "\n")
-		if len(wrappedContent) > 0 {
-			linesInContent++ // Content takes at least one line
-		}
-
-		// Add content
+		// Add content without highlighting yet
 		b.WriteString(wrappedContent)
-		currentLine += linesInContent
-
-		// Add separator
 		b.WriteString("\n\n")
-		currentLine += 2
 		b.WriteString(strings.Repeat("─", width) + "\n\n")
-		currentLine += 2
+	}
+
+	baseContent := b.String()
+
+	// If no query, return base content
+	if query == "" {
+		return renderResult{content: baseContent}
+	}
+
+	// Split into lines and highlight - current line gets green, others get yellow
+	lines := strings.Split(baseContent, "\n")
+	var currentMatchLine int = -1
+	if currentMatchIdx >= 0 && currentMatchIdx < len(matchLines) {
+		currentMatchLine = matchLines[currentMatchIdx]
+	}
+
+	var result strings.Builder
+	for i, line := range lines {
+		isCurrent := (i == currentMatchLine)
+		highlighted := highlightLineWithStyle(line, query, isCurrent)
+		result.WriteString(highlighted)
+		if i < len(lines)-1 {
+			result.WriteString("\n")
+		}
 	}
 
 	return renderResult{
-		content: b.String(),
+		content: result.String(),
 	}
 }
 
@@ -189,6 +186,10 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.viewport.LineUp(1)
 				}
 				return m, nil
+
+			default:
+				// Unhandled keys in navigation mode - do nothing
+				return m, nil
 			}
 		} else {
 			// NOT in navigation mode - typing in search box
@@ -210,6 +211,10 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				// Enter navigation mode - enables n/p to cycle through matches
 				if len(m.matchLines) > 0 {
 					m.inSessionNavigationMode = true
+					// Re-render to show current match highlighting
+					query := m.inSessionSearch.Value()
+					result := renderConversation(*m.currentSession, query, m.inSessionMatches, m.inSessionMatchIdx, m.width, m.matchLines)
+					m.viewport.SetContent(result.content)
 				}
 				return m, nil
 
@@ -368,10 +373,23 @@ func highlightQueryInContent(content, query string, startLine, currentMatchLine 
 	lines := strings.Split(content, "\n")
 	var result strings.Builder
 
+	// DEBUG: Log every line that contains the query to see line number comparisons
+	f, _ := os.OpenFile("/tmp/ccrider-debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+
 	for i, line := range lines {
 		lineNumber := startLine + i
 		// Check if this line is the currently selected match
 		isCurrent := (lineNumber == currentMatchLine)
+
+		// DEBUG: Log every line with a match to see comparisons
+		if f != nil && strings.Contains(strings.ToLower(line), strings.ToLower(query)) {
+			truncated := line
+			if len(truncated) > 50 {
+				truncated = truncated[:50]
+			}
+			fmt.Fprintf(f, "[LINE %d] isCurrent=%v (comparing %d == %d): %s\n",
+				lineNumber, isCurrent, lineNumber, currentMatchLine, truncated)
+		}
 
 		// Highlight all matches in this line
 		highlightedLine := highlightLineWithStyle(line, query, isCurrent)
@@ -382,7 +400,18 @@ func highlightQueryInContent(content, query string, startLine, currentMatchLine 
 		}
 	}
 
+	if f != nil {
+		f.Close()
+	}
+
 	return result.String()
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // highlightLineWithStyle highlights all occurrences of query in a single line
@@ -433,6 +462,53 @@ func highlightLineWithStyle(text, query string, isCurrent bool) string {
 	return result.String()
 }
 
+// highlightQueryWithStyle highlights ALL occurrences of query in text
+// All matches get yellow, except if this is the current match message we highlight ALL in green
+// TODO: This should be fixed to only highlight the SPECIFIC occurrence, not the whole message
+func highlightQueryWithStyle(text, query string, isCurrent bool) string {
+	if query == "" {
+		return text
+	}
+
+	// For now: if this is the current message, highlight all occurrences in green
+	// Otherwise highlight all in yellow
+	style := searchMatchStyle
+	if isCurrent {
+		style = searchCurrentMatchStyle
+	}
+
+	// Highlight ALL occurrences case-insensitively
+	lower := strings.ToLower(text)
+	lowerQuery := strings.ToLower(query)
+
+	var result strings.Builder
+	lastIdx := 0
+
+	for {
+		idx := strings.Index(lower[lastIdx:], lowerQuery)
+		if idx == -1 {
+			// No more matches, append the rest
+			result.WriteString(text[lastIdx:])
+			break
+		}
+
+		// Adjust idx to be relative to original text
+		idx += lastIdx
+
+		// Append text before match
+		result.WriteString(text[lastIdx:idx])
+
+		// Append highlighted match (all in same style for this message)
+		match := text[idx : idx+len(query)]
+		result.WriteString(style.Render(match))
+
+		// Move past this match
+		lastIdx = idx + len(query)
+	}
+
+	return result.String()
+}
+
 // findMatchesInRenderedContent uses Shannon's approach:
 // 1. Render the full conversation to a string
 // 2. Split by newlines to get exact line array
@@ -453,10 +529,32 @@ func findMatchesInRenderedContent(detail sessionDetail, query string, width int)
 	var matchLines []int
 	queryLower := strings.ToLower(query)
 
+	// Header is lines 0-4 (title, project, messages, separator, blank line)
+	// Skip header lines - only include matches in message content (line 5+)
+	const headerLines = 5
+
+	// DEBUG: Log what we're finding
+	f, _ := os.OpenFile("/tmp/ccrider-debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if f != nil {
+		fmt.Fprintf(f, "[FIND_MATCHES] query=%q total_lines=%d\n", query, len(lines))
+	}
+
 	for i, line := range lines {
-		if strings.Contains(strings.ToLower(line), queryLower) {
+		if i >= headerLines && strings.Contains(strings.ToLower(line), queryLower) {
 			matchLines = append(matchLines, i)
+			if f != nil {
+				truncated := line
+				if len(truncated) > 60 {
+					truncated = truncated[:60]
+				}
+				fmt.Fprintf(f, "[FIND_MATCHES] Line %d matches: %s\n", i, truncated)
+			}
 		}
+	}
+
+	if f != nil {
+		fmt.Fprintf(f, "[FIND_MATCHES] Found %d matches: %v\n", len(matchLines), matchLines)
+		f.Close()
 	}
 
 	return matchLines
