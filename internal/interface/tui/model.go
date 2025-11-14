@@ -253,6 +253,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case syncProgressMsg:
 		// Update sync progress
+		m.syncing = true // Set syncing flag so progress bar shows
 		m.syncCurrent = msg.current
 		m.syncTotal = msg.total
 		m.syncCurrentFile = msg.sessionName
