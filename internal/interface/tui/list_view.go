@@ -7,7 +7,6 @@ import (
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/dustin/go-humanize"
 )
 
@@ -82,10 +81,9 @@ func createSessionList(sessions []sessionItem, width, height int) list.Model {
 
 	delegate := sessionDelegate{DefaultDelegate: list.NewDefaultDelegate()}
 
-	l := list.New(items, delegate, width, height-4)
-	l.Title = "Claude Code Sessions"
-	l.Styles.Title = titleStyle
-	l.SetShowStatusBar(true)
+	l := list.New(items, delegate, width, height-2) // Reserve 2 lines for help text only
+	l.Title = "" // No title - we'll show it custom in viewList
+	l.SetShowStatusBar(false) // Don't show built-in status bar
 	l.SetFilteringEnabled(true)
 
 	return l
@@ -131,9 +129,7 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) viewList() string {
-	header := titleStyle.Render("Claude Code Sessions")
-
-	// Build help text / sync status with proper width constraint
+	// Build help text / sync status
 	var helpText string
 	if m.syncing && m.syncTotal > 0 {
 		// Show full progress bar like CLI
@@ -147,25 +143,16 @@ func (m Model) viewList() string {
 		}
 		helpText = progressBar + sessionInfo
 	} else if m.syncing {
-		helpText = "⏳ Syncing Claude sessions..."
+		helpText = "⏳ Syncing..."
 	} else {
 		helpText = "↑/k up • ↓/j down • / filter • q quit • ? more"
 	}
-	wrappedHelp := lipgloss.NewStyle().
-		Width(m.width - 2).
-		Render(helpText)
-	footer := "\n\n" + wrappedHelp
-
-	// Show filter status if enabled
-	if m.projectFilterEnabled {
-		footer = fmt.Sprintf("\n\n[Filter: %s]\n", m.currentDirectory) + wrappedHelp
-	}
 
 	if len(m.sessions) == 0 {
-		return header + "\n\nNo sessions found. Press 's' to sync or run 'ccrider sync'." + footer
+		return "No sessions found. Press 's' to sync.\n\n" + helpText
 	}
 
-	return m.list.View() + footer
+	return m.list.View() + "\n" + helpText
 }
 
 func formatTime(t string) string {
