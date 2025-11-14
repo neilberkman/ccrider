@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/neilberkman/ccrider/internal/core/db"
@@ -181,38 +182,17 @@ func firstLine(s string, maxLen int) string {
 // loadSessionForLaunch loads just the info needed to launch a session (no messages)
 func loadSessionForLaunch(database *db.DB, sessionID string) tea.Cmd {
 	return func() tea.Msg {
-		var session sessionItem
-		var lastCwd string
-		err := database.QueryRow(`
-			SELECT
-				s.session_id,
-				COALESCE(s.summary, ''),
-				s.project_path,
-				(SELECT COUNT(*) FROM messages WHERE session_id = s.id) as actual_message_count,
-				s.updated_at,
-				s.created_at,
-				COALESCE(
-					(SELECT cwd FROM messages
-					 WHERE session_id = s.id
-					   AND cwd IS NOT NULL
-					   AND cwd != ''
-					   AND cwd != '/'
-					 ORDER BY sequence DESC LIMIT 1),
-					s.project_path
-				) as last_cwd
-			FROM sessions s
-			WHERE s.session_id = ?
-		`, sessionID).Scan(&session.ID, &session.Summary, &session.Project,
-			&session.MessageCount, &session.UpdatedAt, &session.CreatedAt, &lastCwd)
+		// Use core function to get session launch info
+		session, lastCwd, err := database.GetSessionLaunchInfo(sessionID)
 		if err != nil {
 			return errMsg{err}
 		}
 
 		return sessionLaunchInfoMsg{
-			sessionID:   session.ID,
-			projectPath: session.Project,
+			sessionID:   session.SessionID,
+			projectPath: session.ProjectPath,
 			lastCwd:     lastCwd,
-			updatedAt:   session.UpdatedAt,
+			updatedAt:   session.UpdatedAt.Format("2006-01-02 15:04:05"),
 			summary:     session.Summary,
 		}
 	}
@@ -220,60 +200,36 @@ func loadSessionForLaunch(database *db.DB, sessionID string) tea.Cmd {
 
 func loadSessionDetail(database *db.DB, sessionID string) tea.Cmd {
 	return func() tea.Msg {
-		// Get session info + last cwd
-		var session sessionItem
-		var lastCwd string
-		err := database.QueryRow(`
-			SELECT
-				s.session_id,
-				COALESCE(s.summary, ''),
-				s.project_path,
-				(SELECT COUNT(*) FROM messages WHERE session_id = s.id) as actual_message_count,
-				s.updated_at,
-				s.created_at,
-				COALESCE(
-					(SELECT cwd FROM messages
-					 WHERE session_id = s.id
-					   AND cwd IS NOT NULL
-					   AND cwd != ''
-					   AND cwd != '/'
-					 ORDER BY sequence DESC LIMIT 1),
-					s.project_path
-				) as last_cwd
-			FROM sessions s
-			WHERE s.session_id = ?
-		`, sessionID).Scan(&session.ID, &session.Summary, &session.Project,
-			&session.MessageCount, &session.UpdatedAt, &session.CreatedAt, &lastCwd)
+		// Use core function to get full session detail
+		coreDetail, err := database.GetSessionDetail(sessionID)
 		if err != nil {
 			return errMsg{err}
 		}
 
-		// Get messages
-		rows, err := database.Query(`
-			SELECT type, COALESCE(text_content, ''), timestamp
-			FROM messages
-			WHERE session_id = (SELECT id FROM sessions WHERE session_id = ?)
-			ORDER BY sequence ASC
-		`, sessionID)
-		if err != nil {
-			return errMsg{err}
+		// Convert core types to interface types (interface concern - presentation)
+		session := sessionItem{
+			ID:           coreDetail.SessionID,
+			Summary:      coreDetail.Summary,
+			Project:      coreDetail.ProjectPath,
+			MessageCount: coreDetail.MessageCount,
+			UpdatedAt:    coreDetail.UpdatedAt.Format("2006-01-02 15:04:05"),
+			CreatedAt:    coreDetail.UpdatedAt.Format("2006-01-02 15:04:05"), // Use UpdatedAt as fallback
 		}
-		defer rows.Close()
 
 		var messages []messageItem
-		for rows.Next() {
-			var m messageItem
-			if err := rows.Scan(&m.Type, &m.Content, &m.Timestamp); err != nil {
-				return errMsg{err}
-			}
-			messages = append(messages, m)
+		for _, coreMsg := range coreDetail.Messages {
+			messages = append(messages, messageItem{
+				Type:      coreMsg.Type,
+				Content:   coreMsg.Content,
+				Timestamp: coreMsg.Timestamp.Format(time.RFC3339),
+			})
 		}
 
 		return sessionDetailLoadedMsg{
 			detail: sessionDetail{
 				Session:   session,
 				Messages:  messages,
-				LastCwd:   lastCwd,
+				LastCwd:   coreDetail.LastCwd,
 				UpdatedAt: session.UpdatedAt,
 			},
 		}

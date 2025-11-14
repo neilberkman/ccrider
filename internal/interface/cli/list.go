@@ -45,56 +45,28 @@ func runList(cmd *cobra.Command, args []string) error {
 		_ = database.Close()
 	}()
 
-	// Build query
-	query := `SELECT session_id, summary, project_path, message_count, updated_at, created_at
-	          FROM sessions`
-	var queryArgs []interface{}
-
-	if listProject != "" {
-		query += " WHERE project_path = ?"
-		queryArgs = append(queryArgs, listProject)
-	}
-
-	query += " ORDER BY updated_at DESC LIMIT ?"
-	queryArgs = append(queryArgs, listLimit)
-
-	// Execute query
-	rows, err := database.Query(query, queryArgs...)
+	// Use core function to get sessions
+	coreSessions, err := database.ListSessions(listProject)
 	if err != nil {
-		return fmt.Errorf("failed to query sessions: %w", err)
+		return fmt.Errorf("failed to list sessions: %w", err)
 	}
-	defer func() {
-		_ = rows.Close()
-	}()
 
-	// Process results
+	// Apply limit (interface concern - pagination)
+	if len(coreSessions) > listLimit {
+		coreSessions = coreSessions[:listLimit]
+	}
+
+	// Convert core types to interface types (interface concern - presentation)
 	sessions := []sessionInfo{}
-	for rows.Next() {
-		var s sessionInfo
-		var updatedAt, createdAt sql.NullString
-
-		err := rows.Scan(&s.sessionID, &s.summary, &s.projectPath, &s.messageCount, &updatedAt, &createdAt)
-		if err != nil {
-			return fmt.Errorf("failed to scan row: %w", err)
-		}
-
-		// Parse timestamps
-		if updatedAt.Valid {
-			if t, err := time.Parse(time.RFC3339, updatedAt.String); err == nil {
-				s.updatedAt = t
-			}
-		}
-		if createdAt.Valid {
-			if t, err := time.Parse(time.RFC3339, createdAt.String); err == nil {
-				s.createdAt = t
-			}
-		}
-
-		sessions = append(sessions, s)
-	}
-
-	if err = rows.Err(); err != nil {
-		return fmt.Errorf("error iterating rows: %w", err)
+	for _, cs := range coreSessions {
+		sessions = append(sessions, sessionInfo{
+			sessionID:    cs.SessionID,
+			summary:      sql.NullString{String: cs.Summary, Valid: cs.Summary != ""},
+			projectPath:  cs.ProjectPath,
+			messageCount: cs.MessageCount,
+			updatedAt:    cs.UpdatedAt,
+			createdAt:    cs.CreatedAt,
+		})
 	}
 
 	// Display results
