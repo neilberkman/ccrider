@@ -391,18 +391,13 @@ func highlightLineWithStyle(text, query string, isCurrent bool) string {
 		return text
 	}
 
-	// Choose style based on whether this line contains the current match
-	style := searchMatchStyle
-	if isCurrent {
-		style = searchCurrentMatchStyle
-	}
-
 	// Highlight ALL occurrences case-insensitively
 	lower := strings.ToLower(text)
 	lowerQuery := strings.ToLower(query)
 
 	var result strings.Builder
 	lastIdx := 0
+	matchCount := 0
 
 	for {
 		idx := strings.Index(lower[lastIdx:], lowerQuery)
@@ -418,12 +413,21 @@ func highlightLineWithStyle(text, query string, isCurrent bool) string {
 		// Append text before match
 		result.WriteString(text[lastIdx:idx])
 
+		// Choose style: if this line is current, highlight FIRST match as current, rest as regular
+		var style lipgloss.Style
+		if isCurrent && matchCount == 0 {
+			style = searchCurrentMatchStyle
+		} else {
+			style = searchMatchStyle
+		}
+
 		// Append highlighted match
 		match := text[idx : idx+len(query)]
 		result.WriteString(style.Render(match))
 
 		// Move past this match
 		lastIdx = idx + len(query)
+		matchCount++
 	}
 
 	return result.String()
