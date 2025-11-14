@@ -134,87 +134,133 @@ func renderConversation(detail sessionDetail, query string, matches []int, curre
 func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Handle in-session search mode
 	if m.inSessionSearchMode {
-		switch msg.String() {
-		case "esc":
-			m.inSessionSearchMode = false
-			m.inSessionSearch.SetValue("")
-			m.inSessionMatches = nil
-			m.matchLines = nil
-			m.inSessionMatchIdx = 0
-			// Clear highlighting when exiting search
-			if m.currentSession != nil {
-				result := renderConversation(*m.currentSession, "", nil, -1, m.width, nil)
-				m.viewport.SetContent(result.content)
-			}
-			return m, nil
-
-		case "n":
-			// Next match
-			if len(m.matchLines) > 0 {
-				m.inSessionMatchIdx++
-				if m.inSessionMatchIdx >= len(m.matchLines) {
-					m.inSessionMatchIdx = 0
-				}
-				// Re-render with updated current match highlighting
-				query := m.inSessionSearch.Value()
-				result := renderConversation(*m.currentSession, query, m.inSessionMatches, m.inSessionMatchIdx, m.width, m.matchLines)
-				m.viewport.SetContent(result.content)
-				scrollToMatch(&m)
-			}
-			return m, nil
-
-		case "p":
-			// Previous match
-			if len(m.matchLines) > 0 {
-				m.inSessionMatchIdx--
-				if m.inSessionMatchIdx < 0 {
-					m.inSessionMatchIdx = len(m.matchLines) - 1
-				}
-				// Re-render with updated current match highlighting
-				query := m.inSessionSearch.Value()
-				result := renderConversation(*m.currentSession, query, m.inSessionMatches, m.inSessionMatchIdx, m.width, m.matchLines)
-				m.viewport.SetContent(result.content)
-				scrollToMatch(&m)
-			}
-			return m, nil
-
-		default:
-			var cmd tea.Cmd
-			m.inSessionSearch, cmd = m.inSessionSearch.Update(msg)
-
-			// Re-render viewport with live highlighting and jump to first match on every keystroke
-			query := m.inSessionSearch.Value()
-			if query != "" && m.currentSession != nil {
-				// Find which messages contain matches (for highlighting)
-				m.inSessionMatches = findMatches(m.currentSession.Messages, query)
-				// Find exact line numbers in rendered content (for scrolling)
-				m.matchLines = findMatchesInRenderedContent(*m.currentSession, query, m.width)
-
-				// Jump to first match automatically
-				if len(m.matchLines) > 0 {
-					m.inSessionMatchIdx = 0
-				} else {
-					m.inSessionMatchIdx = -1
-				}
-
-				// Render with highlighting
-				result := renderConversation(*m.currentSession, query, m.inSessionMatches, m.inSessionMatchIdx, m.width, m.matchLines)
-				m.viewport.SetContent(result.content)
-
-				// Scroll to first match live
-				if len(m.matchLines) > 0 {
-					scrollToMatch(&m)
-				}
-			} else {
-				// Clear highlighting if search is empty
+		// In navigation mode (after Enter) - handle n/p for cycling
+		if m.inSessionNavigationMode {
+			switch msg.String() {
+			case "esc":
+				m.inSessionSearchMode = false
+				m.inSessionNavigationMode = false
+				m.inSessionSearch.SetValue("")
 				m.inSessionMatches = nil
 				m.matchLines = nil
 				m.inSessionMatchIdx = 0
-				result := renderConversation(*m.currentSession, "", nil, -1, m.width, nil)
-				m.viewport.SetContent(result.content)
-			}
+				// Clear highlighting when exiting search
+				if m.currentSession != nil {
+					result := renderConversation(*m.currentSession, "", nil, -1, m.width, nil)
+					m.viewport.SetContent(result.content)
+				}
+				return m, nil
 
-			return m, cmd
+			case "n":
+				// Next match
+				if len(m.matchLines) > 0 {
+					m.inSessionMatchIdx++
+					if m.inSessionMatchIdx >= len(m.matchLines) {
+						m.inSessionMatchIdx = 0
+					}
+					// Re-render with updated current match highlighting
+					query := m.inSessionSearch.Value()
+					result := renderConversation(*m.currentSession, query, m.inSessionMatches, m.inSessionMatchIdx, m.width, m.matchLines)
+					m.viewport.SetContent(result.content)
+					scrollToMatchSmart(&m)
+				}
+				return m, nil
+
+			case "p":
+				// Previous match
+				if len(m.matchLines) > 0 {
+					m.inSessionMatchIdx--
+					if m.inSessionMatchIdx < 0 {
+						m.inSessionMatchIdx = len(m.matchLines) - 1
+					}
+					// Re-render with updated current match highlighting
+					query := m.inSessionSearch.Value()
+					result := renderConversation(*m.currentSession, query, m.inSessionMatches, m.inSessionMatchIdx, m.width, m.matchLines)
+					m.viewport.SetContent(result.content)
+					scrollToMatchSmart(&m)
+				}
+				return m, nil
+
+			case "j", "down", "k", "up":
+				// Manual scrolling
+				if msg.String() == "j" || msg.String() == "down" {
+					m.viewport.LineDown(1)
+				} else {
+					m.viewport.LineUp(1)
+				}
+				return m, nil
+			}
+		} else {
+			// NOT in navigation mode - typing in search box
+			switch msg.String() {
+			case "esc":
+				m.inSessionSearchMode = false
+				m.inSessionSearch.SetValue("")
+				m.inSessionMatches = nil
+				m.matchLines = nil
+				m.inSessionMatchIdx = 0
+				// Clear highlighting when exiting search
+				if m.currentSession != nil {
+					result := renderConversation(*m.currentSession, "", nil, -1, m.width, nil)
+					m.viewport.SetContent(result.content)
+				}
+				return m, nil
+
+			case "enter":
+				// Enter navigation mode - enables n/p to cycle through matches
+				if len(m.matchLines) > 0 {
+					m.inSessionNavigationMode = true
+				}
+				return m, nil
+
+			case "j", "down", "k", "up":
+				// Manual scrolling
+				if msg.String() == "j" || msg.String() == "down" {
+					m.viewport.LineDown(1)
+				} else {
+					m.viewport.LineUp(1)
+				}
+				return m, nil
+
+			default:
+				// Everything else goes to text input
+				var cmd tea.Cmd
+				m.inSessionSearch, cmd = m.inSessionSearch.Update(msg)
+
+				// Re-render viewport with live highlighting and jump to first match on every keystroke
+				query := m.inSessionSearch.Value()
+				if query != "" && m.currentSession != nil {
+					// Find which messages contain matches (for highlighting)
+					m.inSessionMatches = findMatches(m.currentSession.Messages, query)
+					// Find exact line numbers in rendered content (for scrolling)
+					m.matchLines = findMatchesInRenderedContent(*m.currentSession, query, m.width)
+
+					// Jump to first match automatically
+					if len(m.matchLines) > 0 {
+						m.inSessionMatchIdx = 0
+					} else {
+						m.inSessionMatchIdx = -1
+					}
+
+					// Render with highlighting
+					result := renderConversation(*m.currentSession, query, m.inSessionMatches, m.inSessionMatchIdx, m.width, m.matchLines)
+					m.viewport.SetContent(result.content)
+
+					// Scroll to first match live (always scroll when typing)
+					if len(m.matchLines) > 0 {
+						scrollToMatchAlways(&m)
+					}
+				} else {
+					// Clear highlighting if search is empty
+					m.inSessionMatches = nil
+					m.matchLines = nil
+					m.inSessionMatchIdx = 0
+					result := renderConversation(*m.currentSession, "", nil, -1, m.width, nil)
+					m.viewport.SetContent(result.content)
+				}
+
+				return m, cmd
+			}
 		}
 	}
 
@@ -436,11 +482,10 @@ func contains(slice []int, val int) bool {
 	return false
 }
 
-// scrollToMatch scrolls the viewport to show the currently selected match
-// Uses intelligent positioning:
-// - If match is already visible, don't scroll (preserve context)
-// - If match needs scrolling, position it a few lines down from top (not flush)
-func scrollToMatch(m *Model) {
+// scrollToMatchSmart scrolls viewport intelligently for n/p navigation:
+// - If match already visible, don't scroll (preserve context)
+// - If need to jump to new page, position match 3 lines down for context
+func scrollToMatchSmart(m *Model) {
 	if len(m.matchLines) == 0 || m.inSessionMatchIdx < 0 || m.inSessionMatchIdx >= len(m.matchLines) {
 		return
 	}
@@ -458,6 +503,24 @@ func scrollToMatch(m *Model) {
 
 	// Match is not visible, need to scroll
 	// Position it a few lines down from top (3 lines of context above)
+	targetOffset := matchLine - 3
+	if targetOffset < 0 {
+		targetOffset = 0
+	}
+
+	m.viewport.SetYOffset(targetOffset)
+}
+
+// scrollToMatchAlways always scrolls to match - used for live search while typing
+// Always positions match 3 lines down for context
+func scrollToMatchAlways(m *Model) {
+	if len(m.matchLines) == 0 || m.inSessionMatchIdx < 0 || m.inSessionMatchIdx >= len(m.matchLines) {
+		return
+	}
+
+	matchLine := m.matchLines[m.inSessionMatchIdx]
+
+	// Always scroll - position 3 lines down for context
 	targetOffset := matchLine - 3
 	if targetOffset < 0 {
 		targetOffset = 0
@@ -685,7 +748,11 @@ func (m Model) viewDetail() string {
 		} else if m.inSessionSearch.Value() != "" {
 			searchBox += " [no matches]"
 		}
-		searchBox += "\nctrl+n/ctrl+p: next/prev match | Enter: search | esc: exit search"
+		if m.inSessionNavigationMode {
+			searchBox += "\nn/p: next/prev | ↑↓: scroll | esc: exit"
+		} else {
+			searchBox += "\nEnter: navigate mode | ↑↓: scroll | esc: exit"
+		}
 		content += searchBox
 	} else {
 		footer := fmt.Sprintf("\n%3.f%%", m.viewport.ScrollPercent()*100)

@@ -43,14 +43,13 @@ var (
 				Foreground(lipgloss.Color("205"))
 
 	searchMatchStyle = lipgloss.NewStyle().
-				Background(lipgloss.Color("240")).
-				Foreground(lipgloss.Color("yellow")).
+				Foreground(lipgloss.Color("226")). // Bright yellow text for all matches
 				Bold(true)
 
 	searchCurrentMatchStyle = lipgloss.NewStyle().
-				Background(lipgloss.Color("226")).
-				Foreground(lipgloss.Color("0")).
-				Bold(true)
+				Foreground(lipgloss.Color("46")).  // Bright green text for current match
+				Bold(true).
+				Underline(true)
 
 	searchMetaStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("246")) // Lighter gray for dark terminals
