@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -146,6 +147,16 @@ func New(database *db.DB) Model {
 }
 
 func (m Model) Init() tea.Cmd {
+	// Log startup with version info
+	f, _ := os.OpenFile("/tmp/ccrider-debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if f != nil {
+		fmt.Fprintf(f, "\n========== CCRIDER STARTUP v1.0-DEBUG ==========\n")
+		fmt.Fprintf(f, "Time: %s\n", time.Now().Format(time.RFC3339))
+		fmt.Fprintf(f, "Working directory: %s\n", m.currentDirectory)
+		fmt.Fprintf(f, "==============================================\n\n")
+		f.Close()
+	}
+
 	return tea.Batch(
 		loadSessions(m.db, m.projectFilterEnabled, m.currentDirectory),
 		syncSessions(m.db, m.projectFilterEnabled, m.currentDirectory),
