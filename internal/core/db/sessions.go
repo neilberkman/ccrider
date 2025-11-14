@@ -1,7 +1,6 @@
 package db
 
 import (
-	"database/sql"
 	"time"
 )
 
@@ -168,26 +167,32 @@ func (db *DB) GetSessionDetail(sessionID string) (*SessionDetail, error) {
 			COALESCE(summary, ''),
 			project_path,
 			(SELECT COUNT(*) FROM messages WHERE session_id = s.id) as message_count,
-			cwd,
+			COALESCE(
+				(SELECT cwd FROM messages
+				 WHERE session_id = s.id
+				   AND cwd IS NOT NULL
+				   AND cwd != ''
+				   AND cwd != '/'
+				 ORDER BY sequence DESC LIMIT 1),
+				s.project_path
+			) as last_cwd,
 			updated_at
 		FROM sessions s
 		WHERE session_id = ?
 	`
 
 	var detail SessionDetail
-	var cwd sql.NullString
 	err := db.QueryRow(query, sessionID).Scan(
 		&detail.SessionID,
 		&detail.Summary,
 		&detail.ProjectPath,
 		&detail.MessageCount,
-		&cwd,
+		&detail.LastCwd,
 		&detail.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
 	}
-	detail.CWD = cwd.String
 
 	// Get all messages for this session
 	messagesQuery := `
@@ -225,7 +230,7 @@ type SessionDetail struct {
 	Summary      string
 	ProjectPath  string
 	MessageCount int
-	CWD          string
+	LastCwd      string // Last working directory from messages
 	UpdatedAt    time.Time
 	Messages     []SessionMessage
 }
