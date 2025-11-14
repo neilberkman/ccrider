@@ -292,9 +292,7 @@ func (i *Importer) ImportDirectory(dirPath string, progress ProgressCallback) er
 		}
 	}
 
-	if progress != nil {
-		fmt.Fprintf(os.Stderr, "\nSkipped %d unchanged files\n", skipped)
-	}
+	// Note: Don't print "Skipped X files" - that's an interface concern (core should be silent)
 
 	return nil
 }
