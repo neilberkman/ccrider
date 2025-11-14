@@ -176,83 +176,63 @@ func makeSearchSessionsHandler(database *db.DB) func(context.Context, mcp.CallTo
 			return mcp.NewToolResultError(fmt.Sprintf("invalid arguments: %v", err)), nil
 		}
 
-		// Set defaults
+		// Set defaults (interface concern - pagination)
 		limit := args.Limit
 		if limit == 0 {
 			limit = 10
 		}
 
-		// Use core search function (FTS5)
-		coreResults, err := search.Search(database, args.Query)
+		// Convert MCP args to core filters
+		coreFilters := search.SearchFilters{
+			Query:            args.Query,
+			ProjectPath:      args.Project,
+			CurrentSessionID: args.CurrentSessionID,
+			ExcludeCurrent:   args.ExcludeCurrent,
+			AfterDate:        args.AfterDate,
+			BeforeDate:       args.BeforeDate,
+		}
+
+		// Call core search with filters (business logic in core)
+		coreResults, err := search.SearchWithFilters(database, coreFilters)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil
 		}
 
-		// Apply MCP-specific filters (interface concern)
-		sessionMap := make(map[string]*SessionMatch)
-		var sessionOrder []string
-
-		for _, coreResult := range coreResults {
-			// Filter by current session
-			if args.CurrentSessionID != "" {
-				if args.ExcludeCurrent && coreResult.SessionID == args.CurrentSessionID {
-					continue
-				}
-				if !args.ExcludeCurrent && coreResult.SessionID != args.CurrentSessionID {
-					continue
-				}
+		// Convert core types to MCP types (interface concern - presentation)
+		var results []SessionMatch
+		for _, coreSession := range coreResults {
+			result := SessionMatch{
+				SessionID: coreSession.SessionID,
+				Summary:   coreSession.SessionSummary,
+				Project:   coreSession.ProjectPath,
+				UpdatedAt: coreSession.UpdatedAt,
+				Matches:   []MatchSnippet{},
 			}
 
-			// Filter by project
-			if args.Project != "" && coreResult.ProjectPath != args.Project {
-				continue
+			// Limit to 3 matches per session for display (interface concern)
+			matchLimit := 3
+			if len(coreSession.Matches) > matchLimit {
+				coreSession.Matches = coreSession.Matches[:matchLimit]
 			}
 
-			// Filter by date range
-			if args.AfterDate != "" && coreResult.Timestamp < args.AfterDate {
-				continue
-			}
-			if args.BeforeDate != "" && coreResult.Timestamp > args.BeforeDate {
-				continue
-			}
-
-			// Group by session (interface concern - presentation)
-			sessionID := coreResult.SessionID
-			result, exists := sessionMap[sessionID]
-			if !exists {
-				result = &SessionMatch{
-					SessionID: sessionID,
-					Summary:   coreResult.SessionSummary,
-					Project:   coreResult.ProjectPath,
-					UpdatedAt: coreResult.Timestamp,
-					Matches:   []MatchSnippet{},
-				}
-				sessionMap[sessionID] = result
-				sessionOrder = append(sessionOrder, sessionID)
-			}
-
-			// Add this match (limit to 3 per session)
-			if len(result.Matches) < 3 {
+			for _, match := range coreSession.Matches {
 				result.Matches = append(result.Matches, MatchSnippet{
-					MessageType: "message", // Core doesn't provide type
-					Snippet:     coreResult.MessageText,
-					Sequence:    0, // Core doesn't provide sequence
+					MessageType: "message",
+					Snippet:     match.MessageText,
+					Sequence:    0,
 				})
 			}
-		}
 
-		// Convert map to slice with match counts
-		var results []SessionMatch
-		for _, sessionID := range sessionOrder {
-			match := sessionMap[sessionID]
-			match.MatchCount = len(match.Matches)
-			results = append(results, *match)
+			result.MatchCount = len(result.Matches)
+			results = append(results, result)
+
+			// Apply pagination limit (interface concern)
 			if len(results) >= limit {
 				break
 			}
 		}
 
-		// Return results as JSON
+		// Return results as JSON (interface concern - protocol)
 		resultJSON, err := json.Marshal(map[string]interface{}{
 			"sessions": results,
 		})
