@@ -46,11 +46,12 @@ type Model struct {
 	searchViewOffset  int // First visible result index (for scrolling)
 
 	// In-session search state
-	inSessionSearch     textinput.Model
-	inSessionSearchMode bool
-	inSessionMatches    []int // message indices that match
-	inSessionMatchIdx   int   // current match index
-	matchLines          []int // line numbers where each match occurs (for scrolling)
+	inSessionSearch         textinput.Model
+	inSessionSearchMode     bool
+	inSessionNavigationMode bool  // true after Enter - enables n/p navigation
+	inSessionMatches        []int // message indices that match
+	inSessionMatchIdx       int   // current match index
+	matchLines              []int // line numbers where each match occurs (for scrolling)
 
 	// Launch state (for exec after quit)
 	LaunchSessionID   string
