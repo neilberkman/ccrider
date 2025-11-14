@@ -149,7 +149,7 @@ func (m Model) viewList() string {
 	} else if m.syncing {
 		helpText = "⏳ Syncing Claude sessions..."
 	} else {
-		helpText = "Enter: view | o: open in new tab | /: search | p: toggle project filter | s: sync | ?: help | q: quit"
+		helpText = "↑/k up • ↓/j down • / filter • q quit • ? more"
 	}
 	wrappedHelp := lipgloss.NewStyle().
 		Width(m.width - 2).
