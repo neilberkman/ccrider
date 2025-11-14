@@ -81,11 +81,12 @@ func createSessionList(sessions []sessionItem, width, height int) list.Model {
 
 	delegate := sessionDelegate{DefaultDelegate: list.NewDefaultDelegate()}
 
-	l := list.New(items, delegate, width, height-2) // Reserve 2 lines for help text only
-	l.Title = "" // No title - we'll show it custom in viewList
-	l.SetShowStatusBar(false) // Don't show built-in status bar
-	l.SetShowHelp(false) // Don't show built-in help - we have our own
-	l.SetFilteringEnabled(true)
+	l := list.New(items, delegate, width, height-1) // Reserve 1 line for help text only
+	l.Title = "" // No title
+	l.SetShowStatusBar(false) // No status bar
+	l.SetShowHelp(false) // No built-in help
+	l.SetShowTitle(false) // No title rendering
+	l.SetFilteringEnabled(false) // Disable built-in filter (we have dedicated search with /)
 
 	return l
 }
