@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/list"
@@ -81,12 +82,27 @@ func createSessionList(sessions []sessionItem, width, height int) list.Model {
 
 	delegate := sessionDelegate{DefaultDelegate: list.NewDefaultDelegate()}
 
-	l := list.New(items, delegate, width, height-1) // Reserve 1 line for help text only
+	// Give list full height minus 1 line for help text
+	listHeight := height - 1
+	if listHeight < 10 {
+		listHeight = 10
+	}
+
+	l := list.New(items, delegate, width, listHeight)
 	l.Title = "" // No title
 	l.SetShowStatusBar(false) // No status bar
 	l.SetShowHelp(false) // No built-in help
 	l.SetShowTitle(false) // No title rendering
 	l.SetFilteringEnabled(false) // Disable built-in filter (we have dedicated search with /)
+
+	// Disable paginator entirely to remove bottom spacing
+	l.SetShowPagination(false)
+
+	// Remove ALL internal margins and padding to eliminate wasted space
+	l.Styles.PaginationStyle = l.Styles.PaginationStyle.Margin(0).Padding(0)
+	l.Styles.HelpStyle = l.Styles.HelpStyle.Margin(0).Padding(0)
+	l.Styles.StatusBar = l.Styles.StatusBar.Margin(0).Padding(0)
+	l.Styles.Title = l.Styles.Title.Margin(0).Padding(0)
 
 	return l
 }
@@ -139,8 +155,17 @@ func (m Model) viewList() string {
 		sessionInfo := ""
 		if m.syncCurrentFile != "" {
 			sessionInfo = " | " + m.syncCurrentFile
-			if len(sessionInfo) > 60 {
-				sessionInfo = sessionInfo[:57] + "..."
+
+			// Truncate session info to fit within terminal width
+			// Account for progress bar length (already uses most of m.width)
+			// Progress bar format: "[====>    ] 5/10" is roughly 20 chars + bar width
+			// Leave room for the separator and ensure no overflow
+			maxSessionLen := m.width - len(progressBar) - 3 // -3 for safety margin
+			if maxSessionLen < 10 {
+				maxSessionLen = 10 // Minimum useful length
+			}
+			if len(sessionInfo) > maxSessionLen {
+				sessionInfo = sessionInfo[:maxSessionLen-3] + "..."
 			}
 		}
 		helpText = progressBar + sessionInfo
@@ -154,7 +179,11 @@ func (m Model) viewList() string {
 		return "No sessions found. Press 's' to sync.\n\n" + helpText
 	}
 
-	return m.list.View() + "\n" + helpText
+	// Render list and help on same line with no gap
+	listView := m.list.View()
+	// Strip trailing newlines from list view to eliminate gap
+	listView = strings.TrimRight(listView, "\n")
+	return listView + "\n" + helpText
 }
 
 func formatTime(t string) string {
