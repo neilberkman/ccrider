@@ -84,6 +84,7 @@ func createSessionList(sessions []sessionItem, width, height int) list.Model {
 	l := list.New(items, delegate, width, height-2) // Reserve 2 lines for help text only
 	l.Title = "" // No title - we'll show it custom in viewList
 	l.SetShowStatusBar(false) // Don't show built-in status bar
+	l.SetShowHelp(false) // Don't show built-in help - we have our own
 	l.SetFilteringEnabled(true)
 
 	return l
