@@ -42,76 +42,60 @@ func performSearch(database *db.DB, query string) tea.Cmd {
 		query = strings.Trim(query, "\"")
 		query = strings.ReplaceAll(query, "\\\"", "\"")
 
-		// Minimum 2 characters to search (avoid useless single-char results)
-		if len(query) < 2 {
-			return searchResultsMsg{results: nil}
-		}
-
 		// Parse filters from query (interface concern - normalizing user input)
-		filters := ParseSearchQuery(query)
-		searchQuery := filters.Query
+		tuiFilters := ParseSearchQuery(query)
+		searchQuery := tuiFilters.Query
 		if searchQuery == "" {
 			searchQuery = query // Fallback if only filters
 		}
 
-		// Call core search function (uses FTS5)
-		coreResults, err := search.Search(database, searchQuery)
+		// Convert TUI filters to core filters
+		coreFilters := search.SearchFilters{
+			Query:       searchQuery,
+			ProjectPath: tuiFilters.Project,
+		}
+		if tuiFilters.HasAfter {
+			coreFilters.AfterDate = tuiFilters.AfterDate.Format(time.RFC3339)
+		}
+		if tuiFilters.HasBefore {
+			coreFilters.BeforeDate = tuiFilters.BeforeDate.Format(time.RFC3339)
+		}
+
+		// Call core search with filters (business logic in core)
+		coreResults, err := search.SearchWithFilters(database, coreFilters)
 		if err != nil {
 			return errMsg{err}
 		}
 
-		// Interface concern: Apply date/project filters and group by session
-		sessionMap := make(map[string]*searchResult)
-		var sessionOrder []string
-
-		for _, coreResult := range coreResults {
-			// Apply project filter if specified
-			if filters.Project != "" && !strings.Contains(coreResult.ProjectPath, filters.Project) {
-				continue
+		// Convert core types to interface types (interface concern - presentation)
+		var results []searchResult
+		for _, coreSession := range coreResults {
+			result := searchResult{
+				SessionID: coreSession.SessionID,
+				Summary:   coreSession.SessionSummary,
+				Project:   coreSession.ProjectPath,
+				UpdatedAt: coreSession.UpdatedAt,
+				Matches:   []matchInfo{},
 			}
 
-			// Apply date filters if specified
-			if filters.HasAfter || filters.HasBefore {
-				// Parse timestamp from core result
-				// For now, skip date filtering on individual messages
-				// TODO: Apply date filters properly
+			// Limit to 3 matches per session for display (interface concern)
+			matchLimit := 3
+			if len(coreSession.Matches) > matchLimit {
+				coreSession.Matches = coreSession.Matches[:matchLimit]
 			}
 
-			// Group by session (interface concern - presentation)
-			sessionID := coreResult.SessionID
-			result, exists := sessionMap[sessionID]
-			if !exists {
-				result = &searchResult{
-					SessionID: sessionID,
-					Summary:   coreResult.SessionSummary,
-					Project:   coreResult.ProjectPath,
-					UpdatedAt: coreResult.Timestamp,
-					Matches:   []matchInfo{},
-				}
-				sessionMap[sessionID] = result
-				sessionOrder = append(sessionOrder, sessionID)
-			}
-
-			// Add this match (limit to 3 per session)
-			if len(result.Matches) < 3 {
-				// Extract message type from UUID or default to "message"
-				msgType := "message"
-
+			for _, match := range coreSession.Matches {
 				result.Matches = append(result.Matches, matchInfo{
-					MessageType: msgType,
-					Snippet:     coreResult.MessageText,
-					Sequence:    0, // Core doesn't provide sequence
+					MessageType: "message",
+					Snippet:     match.MessageText,
+					Sequence:    0,
 				})
 			}
+
+			results = append(results, result)
 		}
 
-		// Convert map to slice in order
-		var results []searchResult
-		for _, sessionID := range sessionOrder {
-			results = append(results, *sessionMap[sessionID])
-		}
-
-		// Limit to 50 sessions (interface concern - pagination)
+		// Limit to 50 sessions for display (interface concern - pagination)
 		if len(results) > 50 {
 			results = results[:50]
 		}
