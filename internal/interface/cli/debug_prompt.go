@@ -31,27 +31,14 @@ func runDebugPrompt(cmd *cobra.Command, args []string) error {
 	}
 	defer database.Close()
 
-	// Get session info + last cwd
-	var projectPath, lastCwd, updatedAt string
-	err = database.QueryRow(`
-		SELECT
-			s.project_path,
-			s.updated_at,
-			COALESCE(
-				(SELECT cwd FROM messages
-				 WHERE session_id = s.id
-				   AND cwd IS NOT NULL
-				   AND cwd != ''
-				   AND cwd != '/'
-				 ORDER BY sequence DESC LIMIT 1),
-				s.project_path
-			) as last_cwd
-		FROM sessions s
-		WHERE s.session_id = ?
-	`, sessionID).Scan(&projectPath, &updatedAt, &lastCwd)
+	// Use core function to get session launch info
+	session, lastCwd, err := database.GetSessionLaunchInfo(sessionID)
 	if err != nil {
 		return fmt.Errorf("session not found: %w", err)
 	}
+
+	projectPath := session.ProjectPath
+	updatedAt := session.UpdatedAt.Format("2006-01-02 15:04:05")
 
 	// Load config
 	cfg, err := config.Load()

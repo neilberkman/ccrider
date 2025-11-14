@@ -2,16 +2,17 @@ package mcp
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/neilberkman/ccrider/internal/core/db"
 	"github.com/neilberkman/ccrider/internal/core/importer"
+	"github.com/neilberkman/ccrider/internal/core/search"
 )
 
 // SearchSessionsArgs defines arguments for the search_sessions tool
@@ -181,99 +182,62 @@ func makeSearchSessionsHandler(database *db.DB) func(context.Context, mcp.CallTo
 			limit = 10
 		}
 
-		// Build query with filters
-		query := `
-			SELECT
-				s.session_id,
-				COALESCE(s.summary, '') as summary,
-				s.project_path,
-				s.updated_at,
-				m.type as message_type,
-				SUBSTR(m.text_content, 1, 200) as snippet,
-				m.sequence
-			FROM messages m
-			JOIN sessions s ON m.session_id = s.id
-			WHERE m.text_content LIKE '%' || ? || '%'
-		`
-
-		queryArgs := []interface{}{args.Query}
-
-		// Filter by current session only (compact cycles use case)
-		if args.CurrentSessionID != "" {
-			if args.ExcludeCurrent {
-				query += " AND s.session_id != ?"
-			} else {
-				query += " AND s.session_id = ?"
-			}
-			queryArgs = append(queryArgs, args.CurrentSessionID)
-		}
-
-		// Filter by project
-		if args.Project != "" {
-			query += " AND s.project_path = ?"
-			queryArgs = append(queryArgs, args.Project)
-		}
-
-		// Filter by date range
-		if args.AfterDate != "" {
-			query += " AND s.updated_at > ?"
-			queryArgs = append(queryArgs, args.AfterDate)
-		}
-		if args.BeforeDate != "" {
-			query += " AND s.updated_at < ?"
-			queryArgs = append(queryArgs, args.BeforeDate)
-		}
-
-		query += " ORDER BY s.updated_at DESC, m.sequence ASC LIMIT 200"
-
-		// Execute query
-		rows, err := database.Query(query, queryArgs...)
+		// Use core search function (FTS5)
+		coreResults, err := search.Search(database, args.Query)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil
 		}
-		defer rows.Close()
 
-		// Group matches by session
+		// Apply MCP-specific filters (interface concern)
 		sessionMap := make(map[string]*SessionMatch)
-		seenMessages := make(map[string]map[int]bool)
 		var sessionOrder []string
 
-		for rows.Next() {
-			var sessionID, summary, project, updatedAt, msgType, snippet string
-			var sequence int
-			if err := rows.Scan(&sessionID, &summary, &project, &updatedAt,
-				&msgType, &snippet, &sequence); err != nil {
+		for _, coreResult := range coreResults {
+			// Filter by current session
+			if args.CurrentSessionID != "" {
+				if args.ExcludeCurrent && coreResult.SessionID == args.CurrentSessionID {
+					continue
+				}
+				if !args.ExcludeCurrent && coreResult.SessionID != args.CurrentSessionID {
+					continue
+				}
+			}
+
+			// Filter by project
+			if args.Project != "" && coreResult.ProjectPath != args.Project {
 				continue
 			}
 
-			// Create or get existing session result
+			// Filter by date range
+			if args.AfterDate != "" && coreResult.Timestamp < args.AfterDate {
+				continue
+			}
+			if args.BeforeDate != "" && coreResult.Timestamp > args.BeforeDate {
+				continue
+			}
+
+			// Group by session (interface concern - presentation)
+			sessionID := coreResult.SessionID
 			result, exists := sessionMap[sessionID]
 			if !exists {
 				result = &SessionMatch{
 					SessionID: sessionID,
-					Summary:   summary,
-					Project:   project,
-					UpdatedAt: updatedAt,
+					Summary:   coreResult.SessionSummary,
+					Project:   coreResult.ProjectPath,
+					UpdatedAt: coreResult.Timestamp,
 					Matches:   []MatchSnippet{},
 				}
 				sessionMap[sessionID] = result
 				sessionOrder = append(sessionOrder, sessionID)
-				seenMessages[sessionID] = make(map[int]bool)
 			}
 
-			// Skip if we've already seen this message
-			if seenMessages[sessionID][sequence] {
-				continue
-			}
-
-			// Add this match (limit to 3 distinct messages per session)
+			// Add this match (limit to 3 per session)
 			if len(result.Matches) < 3 {
 				result.Matches = append(result.Matches, MatchSnippet{
-					MessageType: msgType,
-					Snippet:     snippet,
-					Sequence:    sequence,
+					MessageType: "message", // Core doesn't provide type
+					Snippet:     coreResult.MessageText,
+					Sequence:    0, // Core doesn't provide sequence
 				})
-				seenMessages[sessionID][sequence] = true
 			}
 		}
 
@@ -313,71 +277,56 @@ func makeGetSessionDetailHandler(database *db.DB) func(context.Context, mcp.Call
 			return mcp.NewToolResultError(fmt.Sprintf("invalid arguments: %v", err)), nil
 		}
 
-		// Get session info
-		var session SessionDetail
-		var sessionInternalID int64
-		err := database.QueryRow(`
-			SELECT
-				id,
-				session_id,
-				COALESCE(summary, ''),
-				project_path,
-				created_at,
-				updated_at,
-				(SELECT COUNT(*) FROM messages WHERE session_id = sessions.id) as message_count
-			FROM sessions
-			WHERE session_id = ?
-		`, args.SessionID).Scan(&sessionInternalID, &session.SessionID, &session.Summary, &session.Project,
-			&session.CreatedAt, &session.UpdatedAt, &session.MessageCount)
+		// Use core function to get full session detail
+		coreDetail, err := database.GetSessionDetail(args.SessionID)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("session not found: %v", err)), nil
 		}
 
-		// Get first message
-		var firstMsg MessageDetail
-		err = database.QueryRow(`
-			SELECT type, COALESCE(text_content, ''), timestamp, sequence
-			FROM messages
-			WHERE session_id = ?
-			ORDER BY sequence ASC
-			LIMIT 1
-		`, sessionInternalID).Scan(&firstMsg.Type, &firstMsg.Content, &firstMsg.Timestamp, &firstMsg.Sequence)
-		if err == nil {
-			session.FirstMessage = &firstMsg
+		// Convert to MCP format (interface concern - presentation)
+		session := SessionDetail{
+			SessionID:    coreDetail.SessionID,
+			Summary:      coreDetail.Summary,
+			Project:      coreDetail.ProjectPath,
+			UpdatedAt:    coreDetail.UpdatedAt.Format("2006-01-02 15:04:05"),
+			CreatedAt:    coreDetail.UpdatedAt.Format("2006-01-02 15:04:05"), // Use UpdatedAt as fallback
+			MessageCount: coreDetail.MessageCount,
 		}
 
-		// Get last message
-		var lastMsg MessageDetail
-		err = database.QueryRow(`
-			SELECT type, COALESCE(text_content, ''), timestamp, sequence
-			FROM messages
-			WHERE session_id = ?
-			ORDER BY sequence DESC
-			LIMIT 1
-		`, sessionInternalID).Scan(&lastMsg.Type, &lastMsg.Content, &lastMsg.Timestamp, &lastMsg.Sequence)
-		if err == nil {
-			session.LastMessage = &lastMsg
+		// Extract first and last messages (interface concern - presentation)
+		if len(coreDetail.Messages) > 0 {
+			first := coreDetail.Messages[0]
+			session.FirstMessage = &MessageDetail{
+				Type:      first.Type,
+				Content:   first.Content,
+				Timestamp: first.Timestamp.Format("2006-01-02 15:04:05"),
+				Sequence:  0,
+			}
+
+			last := coreDetail.Messages[len(coreDetail.Messages)-1]
+			session.LastMessage = &MessageDetail{
+				Type:      last.Type,
+				Content:   last.Content,
+				Timestamp: last.Timestamp.Format("2006-01-02 15:04:05"),
+				Sequence:  len(coreDetail.Messages) - 1,
+			}
 		}
 
-		// If search query provided, get matching messages
+		// If search query provided, filter matching messages (interface concern)
 		if args.SearchQuery != "" {
-			rows, err := database.Query(`
-				SELECT type, COALESCE(text_content, ''), timestamp, sequence
-				FROM messages
-				WHERE session_id = ?
-				AND text_content LIKE '%' || ? || '%'
-				ORDER BY sequence ASC
-				LIMIT 5
-			`, sessionInternalID, args.SearchQuery)
-			if err == nil {
-				defer rows.Close()
-				session.MatchingMessages = []MessageDetail{}
-				for rows.Next() {
-					var msg MessageDetail
-					if err := rows.Scan(&msg.Type, &msg.Content, &msg.Timestamp, &msg.Sequence); err != nil {
-						continue
+			session.MatchingMessages = []MessageDetail{}
+			queryLower := strings.ToLower(args.SearchQuery)
+			for i, msg := range coreDetail.Messages {
+				if strings.Contains(strings.ToLower(msg.Content), queryLower) {
+					session.MatchingMessages = append(session.MatchingMessages, MessageDetail{
+						Type:      msg.Type,
+						Content:   msg.Content,
+						Timestamp: msg.Timestamp.Format("2006-01-02 15:04:05"),
+						Sequence:  i,
+					})
+					if len(session.MatchingMessages) >= 5 {
+						break
 					}
-					session.MatchingMessages = append(session.MatchingMessages, msg)
 				}
 			}
 		}
@@ -411,45 +360,27 @@ func makeListRecentSessionsHandler(database *db.DB) func(context.Context, mcp.Ca
 			limit = 20
 		}
 
-		// Build query
-		query := `
-			SELECT
-				s.session_id,
-				COALESCE(s.summary, '') as summary,
-				s.project_path,
-				s.updated_at,
-				(SELECT COUNT(*) FROM messages WHERE session_id = s.id) as message_count
-			FROM sessions s
-			WHERE (SELECT COUNT(*) FROM messages WHERE session_id = s.id) > 0
-		`
-
-		if args.Project != "" {
-			query += " AND s.project_path = ?"
-		}
-
-		query += " ORDER BY s.updated_at DESC LIMIT ?"
-
-		// Execute query
-		var rows *sql.Rows
-		var err error
-		if args.Project != "" {
-			rows, err = database.Query(query, args.Project, limit)
-		} else {
-			rows, err = database.Query(query, limit)
-		}
+		// Use core function to get sessions
+		coreSessions, err := database.ListSessions(args.Project)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("query failed: %v", err)), nil
 		}
-		defer rows.Close()
 
+		// Apply limit (interface concern - pagination)
+		if len(coreSessions) > limit {
+			coreSessions = coreSessions[:limit]
+		}
+
+		// Convert core types to MCP types (interface concern - presentation)
 		var sessions []SessionSummary
-		for rows.Next() {
-			var s SessionSummary
-			if err := rows.Scan(&s.SessionID, &s.Summary, &s.Project,
-				&s.UpdatedAt, &s.MessageCount); err != nil {
-				continue
-			}
-			sessions = append(sessions, s)
+		for _, cs := range coreSessions {
+			sessions = append(sessions, SessionSummary{
+				SessionID:    cs.SessionID,
+				Summary:      cs.Summary,
+				Project:      cs.ProjectPath,
+				UpdatedAt:    cs.UpdatedAt.Format("2006-01-02 15:04:05"),
+				MessageCount: cs.MessageCount,
+			})
 		}
 
 		// Return results as JSON
