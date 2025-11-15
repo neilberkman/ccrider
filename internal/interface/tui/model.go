@@ -8,7 +8,6 @@ import (
 
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/textinput"
-	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/neilberkman/ccrider/internal/core/db"
 )
@@ -27,7 +26,7 @@ type Model struct {
 	db       *db.DB
 	mode     viewMode
 	list     list.Model
-	viewport viewport.Model
+	pager    pagerModel // Gum pager for session detail view
 	width    int
 	height   int
 	err      error
@@ -45,14 +44,6 @@ type Model struct {
 	searchResults     []searchResult
 	searchSelectedIdx int
 	searchViewOffset  int // First visible result index (for scrolling)
-
-	// In-session search state
-	inSessionSearch         textinput.Model
-	inSessionSearchMode     bool
-	inSessionNavigationMode bool                  // true after Enter - enables n/p navigation
-	inSessionMatches        []int                 // message indices that match
-	inSessionMatchIdx       int                   // current match index
-	matchOccurrences        []matchOccurrenceInfo // line number + occurrence index for each match (for scrolling and highlighting)
 
 	// Launch state (for exec after quit)
 	LaunchSessionID   string
@@ -127,11 +118,6 @@ func New(database *db.DB) Model {
 	ti.CharLimit = 200
 	ti.Width = 50
 
-	inSessionTi := textinput.New()
-	inSessionTi.Placeholder = "Search in session..."
-	inSessionTi.CharLimit = 200
-	inSessionTi.Width = 50
-
 	// Create empty list initially (will be populated when sessions load)
 	emptyList := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
 	emptyList.Title = "Claude Code Sessions"
@@ -144,7 +130,6 @@ func New(database *db.DB) Model {
 		mode:                 listView,
 		list:                 emptyList,
 		searchInput:          ti,
-		inSessionSearch:      inSessionTi,
 		projectFilterEnabled: false, // Disabled by default
 		currentDirectory:     currentDir,
 		syncing:              true, // Start with syncing=true
@@ -179,10 +164,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.list.SetSize(m.width, m.height-4)
 		}
 
-		// Update viewport dimensions if it's been created
-		if m.viewport.Height > 0 {
-			m.viewport.Width = m.width
-			m.viewport.Height = m.height - 8
+		// Update pager dimensions if in detail view
+		if m.mode == detailView {
+			var cmd tea.Cmd
+			_, cmd = m.pager.Update(msg)
+			return m, cmd
 		}
 
 		return m, nil
@@ -199,9 +185,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.list, cmd = m.list.Update(msg)
 				return m, cmd
 			case detailView:
-				// Pass mouse events to the viewport
+				// Pass mouse events to the pager
 				var cmd tea.Cmd
-				m.viewport, cmd = m.viewport.Update(msg)
+				_, cmd = m.pager.Update(msg)
 				return m, cmd
 			}
 		}
@@ -236,9 +222,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.mode == searchView {
 				// In search view, let 'q' be typed into search input
 				// Don't intercept it here
-			} else if m.mode == detailView && m.inSessionSearchMode {
+			} else if m.mode == detailView && m.pager.search.active {
 				// In detail view search mode, let 'q' be typed into search input
-				// Don't intercept it here
+				// Don't intercept it here - pager will handle it
 			} else {
 				// Normal 'q' handling for non-input modes
 				if m.mode == listView {
@@ -293,7 +279,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case sessionDetailLoadedMsg:
 		m.currentSession = &msg.detail
-		m.viewport = createViewport(msg.detail, m.width, m.height)
+		m.pager = newPagerFromSession(msg.detail, m.width, m.height-4)
 		m.mode = detailView
 		return m, nil
 
