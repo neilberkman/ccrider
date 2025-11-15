@@ -23,6 +23,8 @@ SESSION LIST VIEW
 ─────────────────
   ↑/↓, j/k     Navigate sessions
   Enter        View session details
+  e            Export session to markdown (current directory)
+  E            Export session with custom filename (save as)
   o            Open session in new terminal tab
   /            Search messages
   ?            Show this help
@@ -30,6 +32,8 @@ SESSION LIST VIEW
 
 SESSION DETAIL VIEW
 ───────────────────
+  e            Export session to markdown (current directory)
+  E            Export session with custom filename (save as)
   r            Resume session in Claude Code (replaces TUI)
   f            Fork session (new session ID, replaces TUI)
   o            Open session in new terminal window

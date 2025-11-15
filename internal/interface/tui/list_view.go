@@ -139,6 +139,22 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.syncing = true
 		m.savedCursorIndex = m.list.Index()
 		return m, syncSessions(m.db, m.projectFilterEnabled, m.currentDirectory)
+
+	case "e":
+		// Quick export to current directory
+		if selected, ok := m.list.SelectedItem().(sessionListItem); ok {
+			return m, exportSession(m.db, selected.session.ID)
+		}
+		return m, nil
+
+	case "E":
+		// Export with custom filename (save as)
+		// TODO: Add text input prompt for custom filename
+		if selected, ok := m.list.SelectedItem().(sessionListItem); ok {
+			// For now, just do quick export
+			return m, exportSession(m.db, selected.session.ID)
+		}
+		return m, nil
 	}
 
 	var cmd tea.Cmd
@@ -172,7 +188,7 @@ func (m Model) viewList() string {
 	} else if m.syncing {
 		helpText = "⏳ Syncing..."
 	} else {
-		helpText = "↑/k up • ↓/j down • / filter • q quit • ? more"
+		helpText = "↑/k up • ↓/j down • / filter • e export • q quit • ? more"
 	}
 
 	if len(m.sessions) == 0 {

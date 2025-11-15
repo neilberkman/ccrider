@@ -49,7 +49,7 @@ type renderResult struct {
 	content string
 }
 
-func renderConversation(detail sessionDetail, query string, matches []int, currentMatchIdx int, width int, matchLines []int) renderResult {
+func renderConversation(detail sessionDetail, query string, matches []int, currentMatchIdx int, width int, matchOccurrences []matchOccurrenceInfo) renderResult {
 	// Render everything with yellow highlighting first
 	var b strings.Builder
 
@@ -106,19 +106,25 @@ func renderConversation(detail sessionDetail, query string, matches []int, curre
 		return renderResult{content: baseContent}
 	}
 
-	// Split into lines and highlight - current line gets green, others get yellow
+	// Split into lines and highlight
 	lines := strings.Split(baseContent, "\n")
-	var currentMatchLine int = -1
-	if currentMatchIdx >= 0 && currentMatchIdx < len(matchLines) {
-		currentMatchLine = matchLines[currentMatchIdx]
+
+	// Get current match info
+	var currentLineNum int = -1
+	var currentOccurrenceIdx int = -1
+	if currentMatchIdx >= 0 && currentMatchIdx < len(matchOccurrences) {
+		currentLineNum = matchOccurrences[currentMatchIdx].LineNumber
+		currentOccurrenceIdx = matchOccurrences[currentMatchIdx].OccurrenceOnLine
 	}
 
 	var result strings.Builder
-	for i, line := range lines {
-		isCurrent := (i == currentMatchLine)
-		highlighted := highlightLineWithStyle(line, query, isCurrent)
+	for lineNum, line := range lines {
+		// Check if this line has the current match
+		isCurrent := (lineNum == currentLineNum)
+		// Highlight line, passing which occurrence should be current
+		highlighted := highlightLineWithOccurrence(line, query, isCurrent, currentOccurrenceIdx)
 		result.WriteString(highlighted)
-		if i < len(lines)-1 {
+		if lineNum < len(lines)-1 {
 			result.WriteString("\n")
 		}
 	}
@@ -139,7 +145,7 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.inSessionNavigationMode = false
 				m.inSessionSearch.SetValue("")
 				m.inSessionMatches = nil
-				m.matchLines = nil
+				m.matchOccurrences = nil
 				m.inSessionMatchIdx = 0
 				// Clear highlighting when exiting search
 				if m.currentSession != nil {
@@ -150,14 +156,14 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 			case "n":
 				// Next match
-				if len(m.matchLines) > 0 {
+				if len(m.matchOccurrences) > 0 {
 					m.inSessionMatchIdx++
-					if m.inSessionMatchIdx >= len(m.matchLines) {
+					if m.inSessionMatchIdx >= len(m.matchOccurrences) {
 						m.inSessionMatchIdx = 0
 					}
 					// Re-render with updated current match highlighting
 					query := m.inSessionSearch.Value()
-					result := renderConversation(*m.currentSession, query, m.inSessionMatches, m.inSessionMatchIdx, m.width, m.matchLines)
+					result := renderConversation(*m.currentSession, query, m.inSessionMatches, m.inSessionMatchIdx, m.width, m.matchOccurrences)
 					m.viewport.SetContent(result.content)
 					scrollToMatchSmart(&m)
 				}
@@ -165,14 +171,14 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 			case "p":
 				// Previous match
-				if len(m.matchLines) > 0 {
+				if len(m.matchOccurrences) > 0 {
 					m.inSessionMatchIdx--
 					if m.inSessionMatchIdx < 0 {
-						m.inSessionMatchIdx = len(m.matchLines) - 1
+						m.inSessionMatchIdx = len(m.matchOccurrences) - 1
 					}
 					// Re-render with updated current match highlighting
 					query := m.inSessionSearch.Value()
-					result := renderConversation(*m.currentSession, query, m.inSessionMatches, m.inSessionMatchIdx, m.width, m.matchLines)
+					result := renderConversation(*m.currentSession, query, m.inSessionMatches, m.inSessionMatchIdx, m.width, m.matchOccurrences)
 					m.viewport.SetContent(result.content)
 					scrollToMatchSmart(&m)
 				}
@@ -198,7 +204,7 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.inSessionSearchMode = false
 				m.inSessionSearch.SetValue("")
 				m.inSessionMatches = nil
-				m.matchLines = nil
+				m.matchOccurrences = nil
 				m.inSessionMatchIdx = 0
 				// Clear highlighting when exiting search
 				if m.currentSession != nil {
@@ -209,11 +215,11 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 			case "enter":
 				// Enter navigation mode - enables n/p to cycle through matches
-				if len(m.matchLines) > 0 {
+				if len(m.matchOccurrences) > 0 {
 					m.inSessionNavigationMode = true
 					// Re-render to show current match highlighting
 					query := m.inSessionSearch.Value()
-					result := renderConversation(*m.currentSession, query, m.inSessionMatches, m.inSessionMatchIdx, m.width, m.matchLines)
+					result := renderConversation(*m.currentSession, query, m.inSessionMatches, m.inSessionMatchIdx, m.width, m.matchOccurrences)
 					m.viewport.SetContent(result.content)
 				}
 				return m, nil
@@ -238,27 +244,27 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					// Find which messages contain matches (for highlighting)
 					m.inSessionMatches = findMatches(m.currentSession.Messages, query)
 					// Find exact line numbers in rendered content (for scrolling)
-					m.matchLines = findMatchesInRenderedContent(*m.currentSession, query, m.width)
+					m.matchOccurrences = findMatchesInRenderedContent(*m.currentSession, query, m.width)
 
 					// Jump to first match automatically
-					if len(m.matchLines) > 0 {
+					if len(m.matchOccurrences) > 0 {
 						m.inSessionMatchIdx = 0
 					} else {
 						m.inSessionMatchIdx = -1
 					}
 
 					// Render with highlighting
-					result := renderConversation(*m.currentSession, query, m.inSessionMatches, m.inSessionMatchIdx, m.width, m.matchLines)
+					result := renderConversation(*m.currentSession, query, m.inSessionMatches, m.inSessionMatchIdx, m.width, m.matchOccurrences)
 					m.viewport.SetContent(result.content)
 
 					// Scroll to first match live (always scroll when typing)
-					if len(m.matchLines) > 0 {
+					if len(m.matchOccurrences) > 0 {
 						scrollToMatchAlways(&m)
 					}
 				} else {
 					// Clear highlighting if search is empty
 					m.inSessionMatches = nil
-					m.matchLines = nil
+					m.matchOccurrences = nil
 					m.inSessionMatchIdx = 0
 					result := renderConversation(*m.currentSession, "", nil, -1, m.width, nil)
 					m.viewport.SetContent(result.content)
@@ -325,6 +331,22 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.currentSession.UpdatedAt,
 				m.currentSession.Session.Summary,
 			)
+		}
+		return m, nil
+
+	case "e":
+		// Quick export to current directory
+		if m.currentSession != nil {
+			return m, exportSession(m.db, m.currentSession.Session.ID)
+		}
+		return m, nil
+
+	case "E":
+		// Export with custom filename (save as)
+		// TODO: Add text input prompt for custom filename
+		if m.currentSession != nil {
+			// For now, just do quick export
+			return m, exportSession(m.db, m.currentSession.Session.ID)
 		}
 		return m, nil
 
@@ -414,8 +436,9 @@ func min(a, b int) int {
 	return b
 }
 
-// highlightLineWithStyle highlights all occurrences of query in a single line
-func highlightLineWithStyle(text, query string, isCurrent bool) string {
+// highlightLineWithOccurrence highlights all occurrences of query in a single line
+// If isCurrent is true, the occurrence at currentOccurrenceIdx gets green+underline, rest get yellow
+func highlightLineWithOccurrence(text, query string, isCurrent bool, currentOccurrenceIdx int) string {
 	if query == "" {
 		return text
 	}
@@ -442,9 +465,9 @@ func highlightLineWithStyle(text, query string, isCurrent bool) string {
 		// Append text before match
 		result.WriteString(text[lastIdx:idx])
 
-		// Choose style: if this line is current, highlight FIRST match as current, rest as regular
+		// Choose style: if this is the current line AND this is the current occurrence, use green
 		var style lipgloss.Style
-		if isCurrent && matchCount == 0 {
+		if isCurrent && matchCount == currentOccurrenceIdx {
 			style = searchCurrentMatchStyle
 		} else {
 			style = searchMatchStyle
@@ -460,6 +483,12 @@ func highlightLineWithStyle(text, query string, isCurrent bool) string {
 	}
 
 	return result.String()
+}
+
+// highlightLineWithStyle highlights all occurrences of query in a single line
+// Kept for compatibility - uses first occurrence as current
+func highlightLineWithStyle(text, query string, isCurrent bool) string {
+	return highlightLineWithOccurrence(text, query, isCurrent, 0)
 }
 
 // highlightQueryWithStyle highlights ALL occurrences of query in text
@@ -513,8 +542,8 @@ func highlightQueryWithStyle(text, query string, isCurrent bool) string {
 // 1. Render the full conversation to a string
 // 2. Split by newlines to get exact line array
 // 3. Search through rendered lines for query
-// 4. Return exact line indices (no offset calculations)
-func findMatchesInRenderedContent(detail sessionDetail, query string, width int) []int {
+// 4. Return info for each occurrence (line + occurrence index on that line)
+func findMatchesInRenderedContent(detail sessionDetail, query string, width int) []matchOccurrenceInfo {
 	if query == "" {
 		return nil
 	}
@@ -525,39 +554,43 @@ func findMatchesInRenderedContent(detail sessionDetail, query string, width int)
 	// Split into lines
 	lines := strings.Split(result.content, "\n")
 
-	// Find lines containing query (case-insensitive)
-	var matchLines []int
+	// Find all occurrences (line + occurrence index)
+	var matchOccurrences []matchOccurrenceInfo
 	queryLower := strings.ToLower(query)
 
 	// Header is lines 0-4 (title, project, messages, separator, blank line)
 	// Skip header lines - only include matches in message content (line 5+)
 	const headerLines = 5
 
-	// DEBUG: Log what we're finding
-	f, _ := os.OpenFile("/tmp/ccrider-debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if f != nil {
-		fmt.Fprintf(f, "[FIND_MATCHES] query=%q total_lines=%d\n", query, len(lines))
-	}
+	for lineNum, line := range lines {
+		if lineNum < headerLines {
+			continue
+		}
 
-	for i, line := range lines {
-		if i >= headerLines && strings.Contains(strings.ToLower(line), queryLower) {
-			matchLines = append(matchLines, i)
-			if f != nil {
-				truncated := line
-				if len(truncated) > 60 {
-					truncated = truncated[:60]
-				}
-				fmt.Fprintf(f, "[FIND_MATCHES] Line %d matches: %s\n", i, truncated)
+		// Find all occurrences of query on this line
+		lineLower := strings.ToLower(line)
+		occurrenceIdx := 0
+		searchStart := 0
+
+		for {
+			idx := strings.Index(lineLower[searchStart:], queryLower)
+			if idx == -1 {
+				break
 			}
+
+			// Found an occurrence
+			matchOccurrences = append(matchOccurrences, matchOccurrenceInfo{
+				LineNumber:       lineNum,
+				OccurrenceOnLine: occurrenceIdx,
+			})
+
+			// Move past this occurrence
+			searchStart += idx + len(queryLower)
+			occurrenceIdx++
 		}
 	}
 
-	if f != nil {
-		fmt.Fprintf(f, "[FIND_MATCHES] Found %d matches: %v\n", len(matchLines), matchLines)
-		f.Close()
-	}
-
-	return matchLines
+	return matchOccurrences
 }
 
 // findMatches finds which messages contain the query (for highlighting)
@@ -588,11 +621,11 @@ func contains(slice []int, val int) bool {
 // - If match already visible, don't scroll (preserve context)
 // - If need to jump to new page, position match 3 lines down for context
 func scrollToMatchSmart(m *Model) {
-	if len(m.matchLines) == 0 || m.inSessionMatchIdx < 0 || m.inSessionMatchIdx >= len(m.matchLines) {
+	if len(m.matchOccurrences) == 0 || m.inSessionMatchIdx < 0 || m.inSessionMatchIdx >= len(m.matchOccurrences) {
 		return
 	}
 
-	matchLine := m.matchLines[m.inSessionMatchIdx]
+	matchLine := m.matchOccurrences[m.inSessionMatchIdx].LineNumber
 	currentOffset := m.viewport.YOffset
 	viewportHeight := m.viewport.Height
 
@@ -616,11 +649,11 @@ func scrollToMatchSmart(m *Model) {
 // scrollToMatchAlways always scrolls to match - used for live search while typing
 // Always positions match 3 lines down for context
 func scrollToMatchAlways(m *Model) {
-	if len(m.matchLines) == 0 || m.inSessionMatchIdx < 0 || m.inSessionMatchIdx >= len(m.matchLines) {
+	if len(m.matchOccurrences) == 0 || m.inSessionMatchIdx < 0 || m.inSessionMatchIdx >= len(m.matchOccurrences) {
 		return
 	}
 
-	matchLine := m.matchLines[m.inSessionMatchIdx]
+	matchLine := m.matchOccurrences[m.inSessionMatchIdx].LineNumber
 
 	// Always scroll - position 3 lines down for context
 	targetOffset := matchLine - 3
@@ -845,8 +878,8 @@ func (m Model) viewDetail() string {
 	// Add search box if in search mode
 	if m.inSessionSearchMode {
 		searchBox := "\n" + m.inSessionSearch.View()
-		if len(m.matchLines) > 0 {
-			searchBox += fmt.Sprintf(" [%d/%d matches]", m.inSessionMatchIdx+1, len(m.matchLines))
+		if len(m.matchOccurrences) > 0 {
+			searchBox += fmt.Sprintf(" [%d/%d matches]", m.inSessionMatchIdx+1, len(m.matchOccurrences))
 		} else if m.inSessionSearch.Value() != "" {
 			searchBox += " [no matches]"
 		}
@@ -858,7 +891,7 @@ func (m Model) viewDetail() string {
 		content += searchBox
 	} else {
 		footer := fmt.Sprintf("\n%3.f%%", m.viewport.ScrollPercent()*100)
-		footer += "\n\nr: resume | f: fork | o: open in new terminal | c: copy | /: search | j/k: scroll | esc: back | q: quit"
+		footer += "\n\ne: export | r: resume | f: fork | o: open in new terminal | c: copy | /: search | j/k: scroll | esc: back | q: quit"
 		content += footer
 	}
 
