@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,6 +35,16 @@ type sessionLaunchInfoMsg struct {
 
 type searchResultsMsg struct {
 	results []searchResult
+}
+
+type exportCompletedMsg struct {
+	success  bool
+	filePath string
+	err      error
+}
+
+type exportPromptMsg struct {
+	sessionID string
 }
 
 func performSearch(database *db.DB, query string) tea.Cmd {
@@ -318,4 +329,174 @@ func syncSubscribe(progressCh chan syncProgressMsg, database *db.DB, filterByPro
 
 func syncSessions(database *db.DB, filterByProject bool, projectPath string) tea.Cmd {
 	return startSyncWithProgress(database, filterByProject, projectPath)
+}
+
+// exportSession performs a quick export to current directory
+func exportSession(database *db.DB, sessionID string) tea.Cmd {
+	return func() tea.Msg {
+		return exportSessionToPath(database, sessionID, "")()
+	}
+}
+
+// exportSessionToPath exports a session to a specific path (or auto-generates filename if empty)
+func exportSessionToPath(database *db.DB, sessionID string, filePath string) tea.Cmd {
+	return func() tea.Msg {
+		// Get current working directory
+		cwd, err := os.Getwd()
+		if err != nil {
+			return exportCompletedMsg{
+				success: false,
+				err:     err,
+			}
+		}
+
+		// If no file path specified, generate default filename in current directory
+		if filePath == "" {
+			// Generate default filename
+			now := filepath.Join(cwd, generateDefaultFilename(sessionID))
+			filePath = now
+		} else if !filepath.IsAbs(filePath) {
+			// Make relative paths absolute to current directory
+			filePath = filepath.Join(cwd, filePath)
+		}
+
+		// Query session data
+		var sessionInternalID int64
+		var summary, project, createdAt, updatedAt string
+		var messageCount int
+		err = database.QueryRow(`
+			SELECT
+				id,
+				COALESCE(summary, ''),
+				project_path,
+				created_at,
+				updated_at,
+				(SELECT COUNT(*) FROM messages WHERE session_id = sessions.id) as message_count
+			FROM sessions
+			WHERE session_id = ?
+		`, sessionID).Scan(&sessionInternalID, &summary, &project, &createdAt, &updatedAt, &messageCount)
+		if err != nil {
+			return exportCompletedMsg{
+				success: false,
+				err:     err,
+			}
+		}
+
+		// Get all messages
+		rows, err := database.Query(`
+			SELECT type, COALESCE(sender, ''), COALESCE(text_content, ''), timestamp, sequence
+			FROM messages
+			WHERE session_id = ?
+			ORDER BY sequence ASC
+		`, sessionInternalID)
+		if err != nil {
+			return exportCompletedMsg{
+				success: false,
+				err:     err,
+			}
+		}
+		defer rows.Close()
+
+		// Build markdown content
+		var b strings.Builder
+
+		// Header
+		b.WriteString("# ")
+		b.WriteString(summary)
+		b.WriteString("\n\n")
+
+		// Metadata
+		b.WriteString("**Session ID:** `")
+		b.WriteString(sessionID)
+		b.WriteString("`  \n")
+		b.WriteString("**Project:** `")
+		b.WriteString(project)
+		b.WriteString("`  \n")
+		b.WriteString("**Created:** ")
+		b.WriteString(formatTimestampForExport(createdAt))
+		b.WriteString("  \n")
+		b.WriteString("**Updated:** ")
+		b.WriteString(formatTimestampForExport(updatedAt))
+		b.WriteString("  \n")
+		b.WriteString("**Messages:** ")
+		b.WriteString(fmt.Sprintf("%d", messageCount))
+		b.WriteString("\n\n")
+		b.WriteString("---\n\n")
+
+		// Messages
+		for rows.Next() {
+			var msgType, sender, content, timestamp string
+			var sequence int
+			if err := rows.Scan(&msgType, &sender, &content, &timestamp, &sequence); err != nil {
+				continue
+			}
+
+			// Skip summary entries
+			if msgType == "summary" {
+				continue
+			}
+
+			// Determine label
+			label := strings.ToUpper(msgType)
+			if sender != "" {
+				label = strings.ToUpper(sender)
+			}
+
+			// Message header
+			b.WriteString("**")
+			b.WriteString(label)
+			b.WriteString("**")
+			b.WriteString(" _")
+			b.WriteString(formatTimestampForExport(timestamp))
+			b.WriteString("_\n\n")
+
+			// Content (no truncation)
+			if content != "" {
+				b.WriteString(content)
+				b.WriteString("\n\n")
+			}
+
+			b.WriteString("---\n\n")
+		}
+
+		// Write to file
+		if err := os.WriteFile(filePath, []byte(b.String()), 0644); err != nil {
+			return exportCompletedMsg{
+				success: false,
+				err:     err,
+			}
+		}
+
+		return exportCompletedMsg{
+			success:  true,
+			filePath: filePath,
+		}
+	}
+}
+
+func generateDefaultFilename(sessionID string) string {
+	// Use first 8 chars of session ID for uniqueness
+	shortID := sessionID
+	if len(shortID) > 8 {
+		shortID = shortID[:8]
+	}
+	return fmt.Sprintf("session-%s.md", shortID)
+}
+
+func formatTimestampForExport(ts string) string {
+	// Try parsing various formats
+	formats := []string{
+		"2006-01-02T15:04:05.999Z07:00",
+		"2006-01-02 15:04:05",
+		"2006-01-02T15:04:05",
+	}
+
+	for _, format := range formats {
+		if t, err := time.Parse(format, ts); err == nil {
+			return t.Format("Jan 02, 2006 15:04:05")
+		}
+	}
+
+	// If parsing fails, return as-is
+	return ts
 }

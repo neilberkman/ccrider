@@ -49,10 +49,10 @@ type Model struct {
 	// In-session search state
 	inSessionSearch         textinput.Model
 	inSessionSearchMode     bool
-	inSessionNavigationMode bool  // true after Enter - enables n/p navigation
-	inSessionMatches        []int // message indices that match
-	inSessionMatchIdx       int   // current match index
-	matchLines              []int // line numbers where each match occurs (for scrolling)
+	inSessionNavigationMode bool                  // true after Enter - enables n/p navigation
+	inSessionMatches        []int                 // message indices that match
+	inSessionMatchIdx       int                   // current match index
+	matchOccurrences        []matchOccurrenceInfo // line number + occurrence index for each match (for scrolling and highlighting)
 
 	// Launch state (for exec after quit)
 	LaunchSessionID   string
@@ -113,6 +113,11 @@ type matchInfo struct {
 	MessageType string
 	Snippet     string
 	Sequence    int
+}
+
+type matchOccurrenceInfo struct {
+	LineNumber       int // Line number in rendered content
+	OccurrenceOnLine int // Which occurrence on this line (0-indexed)
 }
 
 func New(database *db.DB) Model {
@@ -352,6 +357,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = nil // Clear any previous errors
 		}
 		// TUI stays open - user can continue browsing and launching more sessions
+		return m, nil
+
+	case exportCompletedMsg:
+		if msg.success {
+			// Show success message with file path
+			m.err = fmt.Errorf("Success: Exported to %s", msg.filePath)
+		} else {
+			// Show error
+			m.err = fmt.Errorf("Export failed: %v", msg.err)
+		}
 		return m, nil
 
 	case errMsg:
