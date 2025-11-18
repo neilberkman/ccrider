@@ -8,9 +8,24 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-const DefaultResumePrompt = `Resuming session from {{last_updated}}.{{#different_directory}} Session launched from {{project_path}}, but you were last working in: {{last_cwd}}{{/different_directory}}
+const DefaultResumePrompt = `CRITICAL: You are resuming a session that was last active {{time_since}}.
 
-IMPORTANT: This session has been inactive for {{time_since}}. Before proceeding: check git status, look around to understand what changed, and be careful not to overwrite any work in progress.`
+{{#different_directory}}
+IMMEDIATELY change to the working directory where this session was last active:
+  cd {{last_cwd}}
+
+DO NOT PROCEED until you have changed to {{last_cwd}}. The session was launched from {{project_path}} but you were actively working in {{last_cwd}}.
+{{/different_directory}}
+{{#same_directory}}
+You are in the correct directory: {{project_path}}
+{{/same_directory}}
+
+Before making ANY changes:
+1. Run 'git status' to see what's uncommitted
+2. Run 'git log --oneline -5' to see recent commits
+3. Check if there's work in progress that could be overwritten
+
+Session resumed from {{last_updated}}. Proceed with extreme caution.`
 
 type Config struct {
 	ResumePromptTemplate string

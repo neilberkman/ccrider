@@ -36,7 +36,14 @@ func buildClaudeCommand(sessionID, workDir string, withPrompt bool) string {
 }
 
 func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Intercept keys that we want to handle ourselves (not pass to pager)
+	// If search is active, pass ALL keys to pager (so typing works)
+	if m.pager.search.active {
+		updatedPager, cmd := m.pager.Update(msg)
+		m.pager = updatedPager.(pagerModel)
+		return m, cmd
+	}
+
+	// Handle custom keys (that pager doesn't use) when NOT in search mode
 	switch msg.String() {
 	case "r":
 		// Resume session in Claude Code
@@ -106,19 +113,12 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Pass everything else (including /, n, p, navigation, search) to the pager
+	// Pass everything else (including /, q, esc, n, p, navigation) to the pager
 	updatedPager, cmd := m.pager.Update(msg)
 	m.pager = updatedPager.(pagerModel)
 
-	// If pager wants to quit (esc or q), go back to list view instead
-	if cmd != nil {
-		// Check if cmd is tea.Quit
-		if _, ok := cmd().(tea.QuitMsg); ok {
-			m.mode = listView
-			return m, nil
-		}
-	}
-
+	// If pager wants to quit (q or esc when not searching), go back to list instead of quitting app
+	// We can't easily check the cmd type, so just let it through and handle q/esc in model.go
 	return m, cmd
 }
 
