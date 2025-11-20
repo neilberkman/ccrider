@@ -37,7 +37,7 @@ func init() {
 	summarizeCmd.Flags().BoolVar(&summarizeAll, "all", false, "Summarize all unsummarized sessions")
 	summarizeCmd.Flags().StringVar(&summarizeSessionID, "session", "", "Summarize specific session by UUID")
 	summarizeCmd.Flags().IntVar(&summarizeLimit, "limit", 10, "Maximum number of sessions to summarize")
-	summarizeCmd.Flags().StringVar(&summarizeModel, "model", "qwen-1.5b", "Model to use (qwen-1.5b or llama-8b)")
+	summarizeCmd.Flags().StringVar(&summarizeModel, "model", "llama-8b", "Model to use (llama-8b or qwen-1.5b)")
 }
 
 func runSummarize(cmd *cobra.Command, args []string) error {

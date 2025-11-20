@@ -41,7 +41,7 @@ func init() {
 	rootCmd.AddCommand(resumeCmd)
 
 	resumeCmd.Flags().BoolVar(&resumeAuto, "auto", false, "Auto-select best match without prompt")
-	resumeCmd.Flags().StringVar(&resumeModel, "model", "qwen-1.5b", "Model to use for AI search")
+	resumeCmd.Flags().StringVar(&resumeModel, "model", "llama-8b", "Model to use for AI search")
 }
 
 func runResume(cmd *cobra.Command, args []string) error {

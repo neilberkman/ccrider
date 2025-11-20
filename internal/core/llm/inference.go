@@ -51,7 +51,7 @@ func (l *LLM) Generate(ctx context.Context, prompt string, maxTokens int) (strin
 		"--no-display-prompt",        // Don't echo prompt
 		"--log-disable",              // Disable logging to stderr
 		"--simple-io",                // Simplified I/O
-		"--flash-attn",               // Enable flash attention for speed
+		"--flash-attn", "auto",       // Enable flash attention for speed
 	)
 
 	var stdout, stderr bytes.Buffer
@@ -60,7 +60,7 @@ func (l *LLM) Generate(ctx context.Context, prompt string, maxTokens int) (strin
 
 	// Run inference
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("llama-cli failed: %w\nstderr: %s", err, stderr.String())
+		return "", fmt.Errorf("llama-cli failed: %w\nstdout: %s\nstderr: %s", err, stdout.String(), stderr.String())
 	}
 
 	// Parse output

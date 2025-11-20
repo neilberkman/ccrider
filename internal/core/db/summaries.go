@@ -198,6 +198,8 @@ func (db *DB) GetSummarizationStats() (total, summarized, pending int, err error
 func (db *DB) LoadSessionForSummarization(sessionID int64) (*models.Session, []models.Message, error) {
 	// Load session
 	var session models.Session
+	var cwd, gitBranch, version sql.NullString
+	var createdAt, updatedAt, importedAt, lastSyncedAt, fileMtime sql.NullTime
 	err := db.QueryRow(`
 		SELECT id, session_id, project_path, summary, leaf_uuid, cwd, git_branch,
 		       created_at, updated_at, message_count, version, imported_at, last_synced_at,
@@ -206,13 +208,35 @@ func (db *DB) LoadSessionForSummarization(sessionID int64) (*models.Session, []m
 		WHERE id = ?
 	`, sessionID).Scan(
 		&session.ID, &session.SessionID, &session.ProjectPath, &session.Summary,
-		&session.LeafUUID, &session.CWD, &session.GitBranch,
-		&session.CreatedAt, &session.UpdatedAt, &session.MessageCount,
-		&session.Version, &session.ImportedAt, &session.LastSyncedAt,
-		&session.FileHash, &session.FileSize, &session.FileMtime,
+		&session.LeafUUID, &cwd, &gitBranch,
+		&createdAt, &updatedAt, &session.MessageCount,
+		&version, &importedAt, &lastSyncedAt,
+		&session.FileHash, &session.FileSize, &fileMtime,
 	)
 	if err != nil {
 		return nil, nil, fmt.Errorf("load session: %w", err)
+	}
+
+	// Convert NULL to empty strings
+	session.CWD = cwd.String
+	session.GitBranch = gitBranch.String
+	session.Version = version.String
+
+	// Convert NULL to zero time
+	if createdAt.Valid {
+		session.CreatedAt = createdAt.Time
+	}
+	if updatedAt.Valid {
+		session.UpdatedAt = updatedAt.Time
+	}
+	if importedAt.Valid {
+		session.ImportedAt = importedAt.Time
+	}
+	if lastSyncedAt.Valid {
+		session.LastSyncedAt = lastSyncedAt.Time
+	}
+	if fileMtime.Valid {
+		session.FileMtime = fileMtime.Time
 	}
 
 	// Load messages
@@ -231,14 +255,27 @@ func (db *DB) LoadSessionForSummarization(sessionID int64) (*models.Session, []m
 	var messages []models.Message
 	for rows.Next() {
 		var msg models.Message
+		var msgCwd, msgGitBranch, msgVersion sql.NullString
+		var msgTimestamp sql.NullTime
+		var contentBytes []byte
 		err := rows.Scan(
 			&msg.ID, &msg.UUID, &msg.SessionID, &msg.ParentUUID, &msg.Type,
-			&msg.Sender, &msg.Content, &msg.TextContent, &msg.Timestamp,
-			&msg.Sequence, &msg.IsSidechain, &msg.CWD, &msg.GitBranch, &msg.Version,
+			&msg.Sender, &contentBytes, &msg.TextContent, &msgTimestamp,
+			&msg.Sequence, &msg.IsSidechain, &msgCwd, &msgGitBranch, &msgVersion,
 		)
 		if err != nil {
 			return nil, nil, fmt.Errorf("scan message: %w", err)
 		}
+		// Convert NULL to empty strings
+		msg.CWD = msgCwd.String
+		msg.GitBranch = msgGitBranch.String
+		msg.Version = msgVersion.String
+		// Convert NULL to zero time
+		if msgTimestamp.Valid {
+			msg.Timestamp = msgTimestamp.Time
+		}
+		// Convert []byte to json.RawMessage
+		msg.Content = contentBytes
 		messages = append(messages, msg)
 	}
 
