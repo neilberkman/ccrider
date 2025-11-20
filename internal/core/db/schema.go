@@ -112,6 +112,66 @@ func (db *DB) initSchema() error {
 		UPDATE messages_fts SET text_content = new.text_content WHERE rowid = new.id;
 		UPDATE messages_fts_code SET text_content = new.text_content WHERE rowid = new.id;
 	END;
+
+	-- LLM-powered features: summaries and metadata
+	-- Session summaries (progressive summarization)
+	CREATE TABLE IF NOT EXISTS session_summaries (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		session_id INTEGER NOT NULL UNIQUE,
+		full_summary TEXT,
+		summary_version INTEGER DEFAULT 1,
+		last_message_count INTEGER DEFAULT 0,
+		tokens_approx INTEGER,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_summaries_session ON session_summaries(session_id);
+
+	-- Summary chunks (for long sessions)
+	CREATE TABLE IF NOT EXISTS summary_chunks (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		session_id INTEGER NOT NULL,
+		chunk_index INTEGER NOT NULL,
+		message_range TEXT,
+		summary TEXT,
+		tokens_approx INTEGER,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+		UNIQUE(session_id, chunk_index)
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_chunks_session ON summary_chunks(session_id, chunk_index);
+
+	-- Extracted metadata for instant lookups
+	CREATE TABLE IF NOT EXISTS session_issues (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		session_id INTEGER NOT NULL,
+		issue_id TEXT NOT NULL,
+		first_mention_msg_index INTEGER,
+		last_mention_msg_index INTEGER,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+		UNIQUE(session_id, issue_id)
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_issue_lookup ON session_issues(issue_id);
+	CREATE INDEX IF NOT EXISTS idx_issue_session ON session_issues(session_id);
+
+	CREATE TABLE IF NOT EXISTS session_files (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		session_id INTEGER NOT NULL,
+		file_path TEXT NOT NULL,
+		mention_count INTEGER DEFAULT 1,
+		last_modified_msg_index INTEGER,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
+		UNIQUE(session_id, file_path)
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_file_lookup ON session_files(file_path);
+	CREATE INDEX IF NOT EXISTS idx_file_session ON session_files(session_id);
 	`
 
 	_, err := db.conn.Exec(schema)

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/neilberkman/ccrider/internal/core/db"
+	"github.com/neilberkman/ccrider/internal/core/metadata"
 	"github.com/neilberkman/ccrider/pkg/ccsessions"
 )
 
@@ -210,6 +211,17 @@ func (i *Importer) ImportSession(session *ccsessions.ParsedSession, existingMess
 		return fmt.Errorf("failed to commit: %w", err)
 	}
 
+	// Extract metadata (after commit, as a separate operation)
+	// This is done outside transaction to avoid blocking imports
+	if messagesInserted > 0 {
+		// Only extract metadata if we actually inserted new messages
+		if err := i.ExtractMetadata(sessionDBID); err != nil {
+			// Don't fail the import if metadata extraction fails
+			// Just log and continue
+			fmt.Fprintf(os.Stderr, "Warning: failed to extract metadata for %s: %v\n", session.SessionID, err)
+		}
+	}
+
 	return nil
 }
 
@@ -342,4 +354,61 @@ func extractProjectPath(filePath string) string {
 	}
 
 	return dir
+}
+
+// ExtractMetadata extracts and saves metadata for a session
+func (i *Importer) ExtractMetadata(sessionDBID int64) error {
+	// Load all messages for this session
+	rows, err := i.db.Query(`
+		SELECT sequence, text_content
+		FROM messages
+		WHERE session_id = ?
+		ORDER BY sequence ASC
+	`, sessionDBID)
+	if err != nil {
+		return fmt.Errorf("failed to load messages: %w", err)
+	}
+	defer rows.Close()
+
+	var messages []metadata.MessageText
+	for rows.Next() {
+		var msg metadata.MessageText
+		err := rows.Scan(&msg.Index, &msg.Text)
+		if err != nil {
+			return fmt.Errorf("failed to scan message: %w", err)
+		}
+		messages = append(messages, msg)
+	}
+
+	if err = rows.Err(); err != nil {
+		return fmt.Errorf("failed to iterate messages: %w", err)
+	}
+
+	// Extract metadata
+	extractor := metadata.NewExtractor()
+	sessionMetadata := extractor.Extract(messages)
+
+	// Convert to db types
+	var issues []db.SessionIssue
+	for _, issue := range sessionMetadata.IssueIDs {
+		issues = append(issues, db.SessionIssue{
+			SessionID:         sessionDBID,
+			IssueID:           issue.IssueID,
+			FirstMentionIndex: issue.FirstMentionIndex,
+			LastMentionIndex:  issue.LastMentionIndex,
+		})
+	}
+
+	var files []db.SessionFile
+	for _, file := range sessionMetadata.FilePaths {
+		files = append(files, db.SessionFile{
+			SessionID:         sessionDBID,
+			FilePath:          file.FilePath,
+			MentionCount:      file.MentionCount,
+			LastModifiedIndex: file.LastModifiedIndex,
+		})
+	}
+
+	// Save metadata
+	return i.db.SaveSessionMetadata(sessionDBID, issues, files)
 }
