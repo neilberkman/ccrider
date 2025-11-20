@@ -38,3 +38,7 @@ bin/
 # Test coverage
 *.coverprofile
 coverage.html
+
+# Claude Code sessions (never commit these!)
+session-*.md
+session-*.jsonl
