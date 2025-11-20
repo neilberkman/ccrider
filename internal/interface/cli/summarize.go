@@ -3,9 +3,14 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/neilberkman/ccrider/internal/core/db"
 	"github.com/neilberkman/ccrider/internal/core/llm"
+	"github.com/neilberkman/ccrider/internal/core/summarization"
 	"github.com/spf13/cobra"
 )
 
@@ -25,6 +30,8 @@ Examples:
 var (
 	summarizeStatus    bool
 	summarizeAll       bool
+	summarizeDaemon    bool
+	summarizeInterval  string
 	summarizeSessionID string
 	summarizeLimit     int
 	summarizeModel     string
@@ -35,6 +42,8 @@ func init() {
 
 	summarizeCmd.Flags().BoolVar(&summarizeStatus, "status", false, "Show summarization statistics")
 	summarizeCmd.Flags().BoolVar(&summarizeAll, "all", false, "Summarize all unsummarized sessions")
+	summarizeCmd.Flags().BoolVar(&summarizeDaemon, "daemon", false, "Run as background daemon")
+	summarizeCmd.Flags().StringVar(&summarizeInterval, "interval", "5m", "Interval between daemon runs")
 	summarizeCmd.Flags().StringVar(&summarizeSessionID, "session", "", "Summarize specific session by UUID")
 	summarizeCmd.Flags().IntVar(&summarizeLimit, "limit", 10, "Maximum number of sessions to summarize")
 	summarizeCmd.Flags().StringVar(&summarizeModel, "model", "llama-8b", "Model to use (llama-8b or qwen-1.5b)")
@@ -51,6 +60,11 @@ func runSummarize(cmd *cobra.Command, args []string) error {
 	// Handle --status flag
 	if summarizeStatus {
 		return showSummarizationStatus(database)
+	}
+
+	// Handle --daemon flag
+	if summarizeDaemon {
+		return runSummarizeDaemon(database)
 	}
 
 	// Initialize LLM infrastructure
@@ -192,4 +206,54 @@ func showSummarizationStatus(database *db.DB) error {
 	}
 
 	return nil
+}
+
+func runSummarizeDaemon(database *db.DB) error {
+	// Parse interval
+	interval, err := time.ParseDuration(summarizeInterval)
+	if err != nil {
+		return fmt.Errorf("invalid interval: %w", err)
+	}
+
+	// Initialize LLM
+	fmt.Printf("Initializing LLM (%s) for daemon mode...\n", summarizeModel)
+
+	modelManager, err := llm.NewModelManager()
+	if err != nil {
+		return fmt.Errorf("failed to create model manager: %w", err)
+	}
+
+	modelPath, err := modelManager.EnsureModel(summarizeModel)
+	if err != nil {
+		return fmt.Errorf("failed to ensure model: %w", err)
+	}
+
+	inference, err := llm.NewLLM(modelPath, summarizeModel)
+	if err != nil {
+		return fmt.Errorf("failed to initialize LLM: %w", err)
+	}
+	defer inference.Close()
+
+	summarizer := llm.NewSummarizer(inference)
+	worker := summarization.NewWorker(database, summarizer, interval)
+
+	// Setup signal handling for graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	go func() {
+		<-sigChan
+		fmt.Println("\nReceived shutdown signal...")
+		cancel()
+	}()
+
+	// Start worker
+	fmt.Printf("Daemon started (interval: %s, model: %s)\n", interval, summarizeModel)
+	fmt.Println("Press Ctrl+C to stop")
+	fmt.Println()
+
+	return worker.Start(ctx)
 }
