@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	llama "github.com/tcpipuk/llama-go"
 )
@@ -58,18 +59,46 @@ func NewLLM(modelPath string, modelName string) (*LLM, error) {
 	}, nil
 }
 
-// Generate produces text based on a prompt using llama-go
+// Generate produces text based on a prompt using llama-go with timeout
 func (l *LLM) Generate(ctx context.Context, prompt string, maxTokens int) (string, error) {
-	// Generate text using the context with options
-	result, err := l.ctx.Generate(prompt,
-		llama.WithMaxTokens(maxTokens),
-		llama.WithTemperature(0.7),    // Higher temp to reduce repetition
-		llama.WithTopP(0.95),
-		llama.WithRepeatPenalty(1.1),  // Penalize repetition
-		llama.WithStopWords("</s>", "<|endoftext|>", "<|eot_id|>"),
-	)
-	if err != nil {
-		return "", fmt.Errorf("llama-go inference failed: %w", err)
+	fmt.Printf("[LLM] Starting generation (max %d tokens)...\n", maxTokens)
+
+	// Use context with timeout if provided, otherwise create one
+	if ctx == nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), 120*time.Second)
+		defer cancel()
+	}
+
+	// Run generation in goroutine to allow timeout
+	type genResult struct {
+		text string
+		err  error
+	}
+	resultChan := make(chan genResult, 1)
+
+	go func() {
+		text, err := l.ctx.Generate(prompt,
+			llama.WithMaxTokens(maxTokens),
+			llama.WithTemperature(0.7),
+			llama.WithTopP(0.95),
+			llama.WithRepeatPenalty(1.1),
+			llama.WithStopWords("</s>", "<|endoftext|>", "<|eot_id|>"),
+		)
+		resultChan <- genResult{text: text, err: err}
+	}()
+
+	// Wait for either completion or timeout
+	var result string
+	select {
+	case <-ctx.Done():
+		return "", fmt.Errorf("generation timed out after context deadline")
+	case res := <-resultChan:
+		if res.err != nil {
+			return "", fmt.Errorf("llama-go inference failed: %w", res.err)
+		}
+		fmt.Printf("[LLM] Generation complete (%d chars)\n", len(res.text))
+		result = res.text
 	}
 
 	// Clean up the response

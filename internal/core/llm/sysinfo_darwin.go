@@ -43,24 +43,20 @@ func GetOptimalContextSize() int {
 	// 64K  = ~9GB (estimated)
 	// 128K = ~13GB (estimated)
 
+	// Reduced from 128K - very large contexts can hang during initialization
+	// 32K is a good balance between capacity and performance
 	switch {
 	case memGB >= 64:
-		// Absolute units get the full 128K
-		return 131072 // 128K - model's maximum!
+		return 32768 // 32K - fast and efficient even on absolute units
 	case memGB >= 32:
-		// Beefy machines get 64K
-		return 65536
-	case memGB >= 24:
-		// Decent machines get 32K
 		return 32768
-	case memGB >= 16:
-		// Standard machines get 16K
+	case memGB >= 24:
 		return 16384
+	case memGB >= 16:
+		return 8192
 	case memGB >= 8:
-		// Budget machines get 8K
 		return 8192
 	default:
-		// Really constrained machines get 4K
 		return 4096
 	}
 }

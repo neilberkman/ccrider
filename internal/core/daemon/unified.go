@@ -323,6 +323,7 @@ func (d *UnifiedDaemon) isPaused() bool {
 
 // processSingleSession processes one unsummarized session
 func (d *UnifiedDaemon) processSingleSession(ctx context.Context) {
+	log.Printf("[BACKFILL] Checking for unsummarized sessions...")
 	sessionIDs, err := d.database.ListUnsummarizedSessions(1)
 	if err != nil {
 		log.Printf("Error listing unsummarized sessions: %v", err)
@@ -330,8 +331,10 @@ func (d *UnifiedDaemon) processSingleSession(ctx context.Context) {
 	}
 
 	if len(sessionIDs) == 0 {
+		log.Printf("[BACKFILL] No unsummarized sessions found")
 		return // No work to do
 	}
+	log.Printf("[BACKFILL] Found session to summarize: %d", sessionIDs[0])
 
 	sessionID := sessionIDs[0]
 

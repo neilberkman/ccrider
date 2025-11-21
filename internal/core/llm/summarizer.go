@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/neilberkman/ccrider/internal/core/models"
@@ -86,6 +87,7 @@ func (s *Summarizer) SummarizeSession(ctx context.Context, session *models.Sessi
 	}
 
 	// Progressive summarization for long sessions (token-based chunking)
+	log.Printf("[SUMMARIZE] Session has %d messages, starting chunked summarization", len(messages))
 	var chunks []ChunkSummary
 	chunkIndex := 0
 	i := 0
@@ -128,10 +130,12 @@ func (s *Summarizer) SummarizeSession(ctx context.Context, session *models.Sessi
 
 		// Summarize this chunk
 		chunkMessages := messages[overlapStart:chunkEnd]
+		log.Printf("[SUMMARIZE] Processing chunk %d (messages %d-%d, %d tokens)", chunkIndex, chunkStart, chunkEnd-1, currentTokens)
 		summary, err := s.summarizeChunk(ctx, chunkMessages, chunkIndex, "detailed")
 		if err != nil {
 			return nil, fmt.Errorf("chunk %d: %w", chunkIndex, err)
 		}
+		log.Printf("[SUMMARIZE] Chunk %d complete", chunkIndex)
 
 		chunks = append(chunks, ChunkSummary{
 			Index:        chunkIndex,
@@ -145,10 +149,12 @@ func (s *Summarizer) SummarizeSession(ctx context.Context, session *models.Sessi
 	}
 
 	// Combine chunks into final summary (returns both one-liner and full summary)
+	log.Printf("[SUMMARIZE] Combining %d chunks into final summary", len(chunks))
 	oneLiner, fullSummary, err := s.combineChunks(ctx, chunks, session)
 	if err != nil {
 		return nil, fmt.Errorf("final summary: %w", err)
 	}
+	log.Printf("[SUMMARIZE] Final summary complete. One-liner: %q", oneLiner)
 
 	return &SessionSummary{
 		SessionID:      session.ID,
@@ -238,7 +244,7 @@ func (s *Summarizer) combineChunks(ctx context.Context, chunks []ChunkSummary, s
 // generateOneLiner generates a one-line summary from a full summary
 // Uses iterative refinement if initial attempt is too long
 func (s *Summarizer) generateOneLiner(ctx context.Context, fullSummary string) (string, error) {
-	const maxLength = 120 // Max characters for one-liner
+	const maxLength = 80 // Max characters for one-liner (matches TUI display)
 	const maxAttempts = 3
 
 	var shortest string
