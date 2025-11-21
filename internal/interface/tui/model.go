@@ -72,6 +72,7 @@ type Model struct {
 type sessionItem struct {
 	ID                string
 	Summary           string
+	IsAISummary       bool   // True if summary came from LLM
 	Project           string
 	MessageCount      int
 	UpdatedAt         string

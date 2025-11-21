@@ -22,6 +22,9 @@ func (i sessionListItem) FilterValue() string {
 func (i sessionListItem) Title() string {
 	// Priority: Claude summary > first message (truncated) > session ID
 	if i.session.Summary != "" {
+		if i.session.IsAISummary {
+			return "✨ " + i.session.Summary
+		}
 		return i.session.Summary
 	}
 	return i.session.ID[:12] + "..."

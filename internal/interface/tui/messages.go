@@ -140,6 +140,7 @@ func loadSessions(database *db.DB, filterByProject bool, projectPath string) tea
 			s := sessionItem{
 				ID:           cs.SessionID,
 				Summary:      summary,
+				IsAISummary:  cs.IsAISummary,
 				Project:      cs.ProjectPath,
 				MessageCount: cs.MessageCount,
 				UpdatedAt:    cs.UpdatedAt.Format("2006-01-02 15:04:05"),

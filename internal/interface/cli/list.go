@@ -94,7 +94,7 @@ func runList(cmd *cobra.Command, args []string) error {
 			if s.isAISummary {
 				fmt.Printf("    ✨ %s\n", summary)
 			} else {
-				fmt.Printf("    Summary: %s\n", summary)
+				fmt.Printf("    %s\n", summary)
 			}
 		}
 		fmt.Printf("    Project: %s\n", s.projectPath)
