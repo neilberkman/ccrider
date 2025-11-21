@@ -115,6 +115,7 @@ func (db *DB) initSchema() error {
 
 	-- LLM-powered features: summaries and metadata
 	-- Session summaries (progressive summarization)
+	-- Note: llm_models table and new columns are added via migrations
 	CREATE TABLE IF NOT EXISTS session_summaries (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		session_id INTEGER NOT NULL UNIQUE,
@@ -130,6 +131,7 @@ func (db *DB) initSchema() error {
 	CREATE INDEX IF NOT EXISTS idx_summaries_session ON session_summaries(session_id);
 
 	-- Summary chunks (for long sessions)
+	-- Note: model_id column added via migrations
 	CREATE TABLE IF NOT EXISTS summary_chunks (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		session_id INTEGER NOT NULL,

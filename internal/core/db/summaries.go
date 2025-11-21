@@ -31,25 +31,34 @@ type ChunkSummary struct {
 }
 
 // SaveSummary saves a session summary and its chunks
-func (db *DB) SaveSummary(sessionID int64, fullSummary string, version, messageCount, tokensApprox int, chunks []ChunkSummary) error {
+func (db *DB) SaveSummary(sessionID int64, oneLiner, fullSummary string, version, messageCount, tokensApprox int, chunks []ChunkSummary, modelName string) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
 	defer tx.Rollback()
 
+	// Get model ID from model name
+	var modelID int64
+	err = tx.QueryRow(`SELECT id FROM llm_models WHERE model_name = ?`, modelName).Scan(&modelID)
+	if err != nil {
+		return fmt.Errorf("get model ID for %s: %w", modelName, err)
+	}
+
 	// Insert or update main summary
 	_, err = tx.Exec(`
 		INSERT INTO session_summaries
-		(session_id, full_summary, summary_version, last_message_count, tokens_approx, updated_at)
-		VALUES (?, ?, ?, ?, ?, datetime('now'))
+		(session_id, model_id, one_line_summary, full_summary, summary_version, last_message_count, tokens_approx, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
 		ON CONFLICT(session_id) DO UPDATE SET
+			model_id = excluded.model_id,
+			one_line_summary = excluded.one_line_summary,
 			full_summary = excluded.full_summary,
 			summary_version = excluded.summary_version,
 			last_message_count = excluded.last_message_count,
 			tokens_approx = excluded.tokens_approx,
 			updated_at = datetime('now')
-	`, sessionID, fullSummary, version, messageCount, tokensApprox)
+	`, sessionID, modelID, oneLiner, fullSummary, version, messageCount, tokensApprox)
 
 	if err != nil {
 		return fmt.Errorf("save summary: %w", err)
@@ -65,9 +74,9 @@ func (db *DB) SaveSummary(sessionID int64, fullSummary string, version, messageC
 	for _, chunk := range chunks {
 		_, err = tx.Exec(`
 			INSERT INTO summary_chunks
-			(session_id, chunk_index, message_range, summary, tokens_approx)
-			VALUES (?, ?, ?, ?, ?)
-		`, sessionID, chunk.ChunkIndex, chunk.MessageRange, chunk.Summary, chunk.TokensApprox)
+			(session_id, model_id, chunk_index, message_range, summary, tokens_approx)
+			VALUES (?, ?, ?, ?, ?, ?)
+		`, sessionID, modelID, chunk.ChunkIndex, chunk.MessageRange, chunk.Summary, chunk.TokensApprox)
 
 		if err != nil {
 			return fmt.Errorf("save chunk %d: %w", chunk.ChunkIndex, err)
@@ -132,6 +141,7 @@ func (db *DB) GetChunks(sessionID int64) ([]ChunkSummary, error) {
 }
 
 // ListUnsummarizedSessions returns sessions that need summarization
+// Sessions are returned in chronological order (oldest first) for backfill
 func (db *DB) ListUnsummarizedSessions(limit int) ([]int64, error) {
 	query := `
 		SELECT s.id
@@ -139,7 +149,7 @@ func (db *DB) ListUnsummarizedSessions(limit int) ([]int64, error) {
 		LEFT JOIN session_summaries ss ON s.id = ss.session_id
 		WHERE ss.session_id IS NULL
 		   OR s.message_count > ss.last_message_count
-		ORDER BY s.updated_at DESC
+		ORDER BY s.updated_at ASC  -- Oldest sessions first for backfill
 		LIMIT ?
 	`
 

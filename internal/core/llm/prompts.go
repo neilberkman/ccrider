@@ -5,53 +5,85 @@ import "fmt"
 // BuildSummaryPrompt creates a prompt for summarizing a session
 func BuildSummaryPrompt(messageText string, mode string, chunkIndex int) string {
 	if mode == "quick" {
-		return fmt.Sprintf(`You are summarizing a Claude Code session. Be specific about:
-- What was being worked on
-- What problems were encountered
-- What solutions were found
-- Key files, functions, or technical details mentioned
-- Any issue IDs mentioned (e.g., ena-6530, ENA-1234, #123)
+		return fmt.Sprintf(`Summarize this Claude Code session.
 
 Session:
 %s
 
-Provide a concise technical summary (2-4 sentences):`, messageText)
+Write a concise technical summary (2-4 sentences) covering:
+- What was worked on
+- Problems encountered and solutions
+- Key files, functions, or issue IDs (e.g., ENA-1234)
+
+Write only factual technical content. No pleasantries, greetings, or sign-offs.`, messageText)
 	}
 
-	return fmt.Sprintf(`This is part %d of a longer Claude Code session. Summarize this segment:
+	return fmt.Sprintf(`Summarize part %d of a Claude Code session.
 
 %s
 
-Focus on:
+Write a technical summary covering:
 - Main activities and goals in this part
 - Problems encountered and solutions
-- Specific files, functions, errors mentioned
-- Issue IDs (e.g., ena-6530, ENA-1234, #123)
+- Specific files, functions, errors, issue IDs
 - How this part connects to the overall work
 
-Provide a clear technical summary:`, chunkIndex+1, messageText)
+Write only factual technical content. No pleasantries or sign-offs.`, chunkIndex+1, messageText)
 }
 
 // BuildCombinedSummaryPrompt creates a prompt for combining chunk summaries
 func BuildCombinedSummaryPrompt(chunksText, projectPath string, messageCount, chunkCount int) string {
-	return fmt.Sprintf(`You are summarizing a Claude Code session. Below are summaries of different parts.
+	return fmt.Sprintf(`Summarize this Claude Code session based on the chunk summaries below.
 
-Session Info:
-- Project: %s
-- Duration: %d messages across %d chunks
+Project: %s
+Messages: %d across %d chunks
 
-Chunk Summaries:
 %s
 
-Create a concise overall summary that captures:
-1. What was the main goal/task?
-2. What problems were solved?
-3. What was the final outcome?
-4. Key technical details (file names, functions, technologies, issue IDs)
+Generate EXACTLY this format:
 
-Be specific and technical. Include actual names of files, functions, and errors.
+1. ONE-LINER:
+<write one sentence of 10-15 words describing what was accomplished>
 
-Summary:`, projectPath, messageCount, chunkCount, chunksText)
+2. FULL SUMMARY:
+<write 2-4 paragraphs describing: the main goal, problems solved, outcome, and key technical details>
+
+Examples of good one-liners:
+- "Fixed authentication bug in login.js by updating token validation"
+- "Added real-time sync feature using WebSockets and Redis"
+- "Refactored database schema to support multi-tenancy"
+
+DO NOT include:
+- Bullet points in the one-liner
+- Headers, labels, or formatting markers
+- Pleasantries like "Best regards" or "Let me know"
+- Redundant text or repetition
+
+Write the one-liner as a single plain sentence. Write the full summary as plain paragraphs.`, projectPath, messageCount, chunkCount, chunksText)
+}
+
+// BuildOneLinerPrompt creates a prompt for generating just a one-line summary
+func BuildOneLinerPrompt(fullSummary string) string {
+	return fmt.Sprintf(`Create a one-line summary (10-15 words max) of this session:
+
+%s
+
+Write ONLY the one-line summary as a single plain sentence. No labels, no bullet points, no formatting.`, fullSummary)
+}
+
+// BuildRefinementPrompt creates a prompt to shorten a too-long summary
+func BuildRefinementPrompt(tooLong, truncated string, maxChars int) string {
+	return fmt.Sprintf(`Your summary is too long. Here's what you wrote:
+
+%s
+
+Here's what it looks like truncated to %d characters (the max space available):
+
+%s
+
+Rewrite your summary to fit in %d characters or less. Keep the same meaning, just make it more concise.
+
+Write ONLY the shortened summary:`, tooLong, maxChars, truncated, maxChars)
 }
 
 // BuildSearchPrompt creates a prompt for LLM-powered search

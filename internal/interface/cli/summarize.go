@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
-	"time"
 
+	"github.com/neilberkman/ccrider/internal/core/daemon"
 	"github.com/neilberkman/ccrider/internal/core/db"
 	"github.com/neilberkman/ccrider/internal/core/llm"
-	"github.com/neilberkman/ccrider/internal/core/summarization"
 	"github.com/spf13/cobra"
 )
 
@@ -31,6 +31,7 @@ var (
 	summarizeStatus    bool
 	summarizeAll       bool
 	summarizeDaemon    bool
+	summarizeAggressive bool
 	summarizeInterval  string
 	summarizeSessionID string
 	summarizeLimit     int
@@ -43,6 +44,7 @@ func init() {
 	summarizeCmd.Flags().BoolVar(&summarizeStatus, "status", false, "Show summarization statistics")
 	summarizeCmd.Flags().BoolVar(&summarizeAll, "all", false, "Summarize all unsummarized sessions")
 	summarizeCmd.Flags().BoolVar(&summarizeDaemon, "daemon", false, "Run as background daemon")
+	summarizeCmd.Flags().BoolVar(&summarizeAggressive, "aggressive", false, "Aggressive backfill mode (~30 sessions/min)")
 	summarizeCmd.Flags().StringVar(&summarizeInterval, "interval", "5m", "Interval between daemon runs")
 	summarizeCmd.Flags().StringVar(&summarizeSessionID, "session", "", "Summarize specific session by UUID")
 	summarizeCmd.Flags().IntVar(&summarizeLimit, "limit", 10, "Maximum number of sessions to summarize")
@@ -161,11 +163,13 @@ func runSummarize(cmd *cobra.Command, args []string) error {
 		tokensApprox := len(summary.FullSummary) / 4
 		err = database.SaveSummary(
 			summary.SessionID,
+			summary.OneLiner,
 			summary.FullSummary,
 			summary.Version,
 			summary.MessageCount,
 			tokensApprox,
 			dbChunks,
+			summarizeModel,
 		)
 		if err != nil {
 			fmt.Printf("❌ Failed to save: %v\n", err)
@@ -209,12 +213,6 @@ func showSummarizationStatus(database *db.DB) error {
 }
 
 func runSummarizeDaemon(database *db.DB) error {
-	// Parse interval
-	interval, err := time.ParseDuration(summarizeInterval)
-	if err != nil {
-		return fmt.Errorf("invalid interval: %w", err)
-	}
-
 	// Initialize LLM
 	fmt.Printf("Initializing LLM (%s) for daemon mode...\n", summarizeModel)
 
@@ -234,8 +232,18 @@ func runSummarizeDaemon(database *db.DB) error {
 	}
 	defer inference.Close()
 
-	summarizer := llm.NewSummarizer(inference)
-	worker := summarization.NewWorker(database, summarizer, interval)
+	// Get watch path
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("failed to get home dir: %w", err)
+	}
+	watchPath := filepath.Join(home, ".claude", "projects")
+
+	// Create unified daemon
+	daemon, err := daemon.NewUnifiedDaemon(database, inference, watchPath, summarizeModel, summarizeAggressive)
+	if err != nil {
+		return fmt.Errorf("failed to create daemon: %w", err)
+	}
 
 	// Setup signal handling for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
@@ -250,10 +258,12 @@ func runSummarizeDaemon(database *db.DB) error {
 		cancel()
 	}()
 
-	// Start worker
-	fmt.Printf("Daemon started (interval: %s, model: %s)\n", interval, summarizeModel)
+	// Start unified daemon
+	fmt.Printf("Daemon started\n")
+	fmt.Printf("  Model: %s\n", summarizeModel)
+	fmt.Printf("  Watching: %s\n", watchPath)
 	fmt.Println("Press Ctrl+C to stop")
 	fmt.Println()
 
-	return worker.Start(ctx)
+	return daemon.Start(ctx)
 }

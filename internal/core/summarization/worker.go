@@ -14,13 +14,15 @@ type Worker struct {
 	db         *db.DB
 	summarizer *llm.Summarizer
 	interval   time.Duration
+	modelName  string
 }
 
 // NewWorker creates a new background summarization worker
-func NewWorker(database *db.DB, summarizer *llm.Summarizer, interval time.Duration) *Worker {
+func NewWorker(database *db.DB, summarizer *llm.Summarizer, interval time.Duration, modelName string) *Worker {
 	return &Worker{
 		db:         database,
 		summarizer: summarizer,
+		modelName:  modelName,
 		interval:   interval,
 	}
 }
@@ -106,11 +108,13 @@ func (w *Worker) ProcessStale(ctx context.Context) error {
 		tokensApprox := len(summary.FullSummary) / 4
 		err = w.db.SaveSummary(
 			summary.SessionID,
+			summary.OneLiner,
 			summary.FullSummary,
 			summary.Version,
 			summary.MessageCount,
 			tokensApprox,
 			dbChunks,
+			w.modelName,
 		)
 		if err != nil {
 			fmt.Printf("❌ Failed to save: %v\n", err)

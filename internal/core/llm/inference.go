@@ -1,83 +1,93 @@
 package llm
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
+
+	llama "github.com/tcpipuk/llama-go"
 )
 
-// LLM wraps llama.cpp CLI for inference
+// LLM wraps llama-go (tcpipuk) bindings for inference
 type LLM struct {
-	modelPath string
-	modelName string
-	llamaCLI  string // Path to llama-cli binary
+	model       *llama.Model
+	ctx         *llama.Context
+	modelPath   string
+	modelName   string
+	contextSize int
 }
 
-// NewLLM creates a new LLM instance
+// NewLLM creates a new LLM instance using llama-go CGO bindings
 func NewLLM(modelPath string, modelName string) (*LLM, error) {
-	// Find llama-cli binary
-	llamaCLI, err := exec.LookPath("llama-cli")
-	if err != nil {
-		return nil, fmt.Errorf("llama-cli not found (install with: brew install llama.cpp): %w", err)
-	}
-
 	// Verify model file exists
 	if _, err := os.Stat(modelPath); err != nil {
 		return nil, fmt.Errorf("model file not found: %s", modelPath)
 	}
 
+	// Load model with GPU acceleration enabled by default
+	// The library automatically uses all available GPU layers
+	model, err := llama.LoadModel(modelPath,
+		// GPU layers are enabled by default, no need to specify
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load model: %w", err)
+	}
+
+	// Create execution context from the model
+	// Auto-detect optimal context size based on system memory
+	contextSize := GetOptimalContextSize()
+
+	memGB, _ := GetSystemMemoryGB()
+	fmt.Printf("System Memory: %d GB → Context Size: %dK tokens\n", memGB, contextSize/1024)
+
+	ctx, err := model.NewContext(
+		llama.WithContext(contextSize),
+	)
+	if err != nil {
+		model.Close()
+		return nil, fmt.Errorf("failed to create context: %w", err)
+	}
+
 	return &LLM{
-		modelPath: modelPath,
-		modelName: modelName,
-		llamaCLI:  llamaCLI,
+		model:       model,
+		ctx:         ctx,
+		modelPath:   modelPath,
+		modelName:   modelName,
+		contextSize: contextSize,
 	}, nil
 }
 
-// Generate produces text based on a prompt
+// Generate produces text based on a prompt using llama-go
 func (l *LLM) Generate(ctx context.Context, prompt string, maxTokens int) (string, error) {
-	// Build llama-cli command
-	// Using --no-display-prompt to avoid echoing the prompt in output
-	cmd := exec.CommandContext(ctx, l.llamaCLI,
-		"--model", l.modelPath,
-		"--prompt", prompt,
-		"--n-predict", fmt.Sprintf("%d", maxTokens),
-		"--temp", "0.1",              // Low temperature for deterministic output
-		"--top-p", "0.9",
-		"--ctx-size", "4096",         // Context window
-		"--threads", "4",             // CPU threads
-		"--no-display-prompt",        // Don't echo prompt
-		"--log-disable",              // Disable logging to stderr
-		"--simple-io",                // Simplified I/O
-		"--flash-attn", "auto",       // Enable flash attention for speed
+	// Generate text using the context with options
+	result, err := l.ctx.Generate(prompt,
+		llama.WithMaxTokens(maxTokens),
+		llama.WithTemperature(0.7),    // Higher temp to reduce repetition
+		llama.WithTopP(0.95),
+		llama.WithRepeatPenalty(1.1),  // Penalize repetition
+		llama.WithStopWords("</s>", "<|endoftext|>", "<|eot_id|>"),
 	)
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	// Run inference
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("llama-cli failed: %w\nstdout: %s\nstderr: %s", err, stdout.String(), stderr.String())
+	if err != nil {
+		return "", fmt.Errorf("llama-go inference failed: %w", err)
 	}
 
-	// Parse output
-	output := stdout.String()
+	// Clean up the response
+	result = strings.TrimSpace(result)
+	result = strings.TrimSuffix(result, "[end of text]")
+	result = strings.TrimSpace(result)
 
-	// Clean up output (remove any trailing whitespace or special tokens)
-	output = strings.TrimSpace(output)
-	output = strings.TrimSuffix(output, "</s>")
-	output = strings.TrimSuffix(output, "<|endoftext|>")
-	output = strings.TrimSpace(output)
-
-	return output, nil
+	return result, nil
 }
 
-// Close releases model resources (no-op for CLI-based inference)
+// Close releases model resources
 func (l *LLM) Close() {
-	// Nothing to clean up for CLI-based inference
+	if l.ctx != nil {
+		l.ctx.Close()
+	}
+	if l.model != nil {
+		l.model.Close()
+	}
 }
 
 // GenerateOptions provides options for generation
