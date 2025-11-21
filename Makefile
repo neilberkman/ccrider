@@ -1,7 +1,7 @@
 .PHONY: build test lint clean
 
 build:
-	go build -o ccrider cmd/ccrider/main.go
+	CGO_LDFLAGS="-Wl,-rpath,$(PWD)/llama-go" go build -o ccrider ./cmd/ccrider
 
 test:
 	go test ./... -v -race -coverprofile=coverage.out
