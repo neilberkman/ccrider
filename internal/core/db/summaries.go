@@ -141,7 +141,7 @@ func (db *DB) GetChunks(sessionID int64) ([]ChunkSummary, error) {
 }
 
 // ListUnsummarizedSessions returns sessions that need summarization
-// Sessions are returned in chronological order (oldest first) for backfill
+// Sessions are returned by most recent activity (newest first) so active sessions get priority
 func (db *DB) ListUnsummarizedSessions(limit int) ([]int64, error) {
 	query := `
 		SELECT s.id
@@ -149,7 +149,7 @@ func (db *DB) ListUnsummarizedSessions(limit int) ([]int64, error) {
 		LEFT JOIN session_summaries ss ON s.id = ss.session_id
 		WHERE ss.session_id IS NULL
 		   OR s.message_count > ss.last_message_count
-		ORDER BY s.updated_at ASC  -- Oldest sessions first for backfill
+		ORDER BY s.updated_at DESC  -- Prioritize recently active sessions
 		LIMIT ?
 	`
 
