@@ -7,7 +7,8 @@ import (
 // Session represents a session returned from ListSessions
 type Session struct {
 	SessionID    string
-	Summary      string
+	Summary      string // Best available summary (LLM > manual > first message)
+	IsAISummary  bool   // True if summary came from LLM
 	ProjectPath  string
 	MessageCount int
 	UpdatedAt    time.Time
@@ -21,8 +22,14 @@ func (db *DB) ListSessions(projectPath string) ([]Session, error) {
 		SELECT
 			s.session_id,
 			CASE
-				WHEN s.summary LIKE '<user%prompt%>' OR s.summary = '<user_prompt>' OR TRIM(COALESCE(s.summary, '')) = ''
-				THEN COALESCE(
+				-- Prefer LLM summary if available
+				WHEN ss.one_line_summary IS NOT NULL AND ss.one_line_summary != '' AND ss.one_line_summary != '[Empty session]'
+				THEN ss.one_line_summary
+				-- Fall back to manual summary if valid
+				WHEN s.summary NOT LIKE '<user%prompt%>' AND s.summary != '<user_prompt>' AND TRIM(COALESCE(s.summary, '')) != ''
+				THEN s.summary
+				-- Fall back to first meaningful user message
+				ELSE COALESCE(
 					(SELECT
 						CASE
 							WHEN text_content LIKE '<%'
@@ -50,14 +57,18 @@ func (db *DB) ListSessions(projectPath string) ([]Session, error) {
 					 LIMIT 1),
 					''
 				)
-				ELSE s.summary
 			END as summary,
+			CASE
+				WHEN ss.one_line_summary IS NOT NULL AND ss.one_line_summary != '' AND ss.one_line_summary != '[Empty session]'
+				THEN 1
+				ELSE 0
+			END as is_ai_summary,
 			s.project_path,
 			(SELECT COUNT(*) FROM messages WHERE session_id = s.id) as actual_message_count,
 			s.updated_at,
-			s.created_at,
-			'' as first_message
+			s.created_at
 		FROM sessions s
+		LEFT JOIN session_summaries ss ON s.id = ss.session_id
 		WHERE (SELECT COUNT(*) FROM messages WHERE session_id = s.id) > 0
 		  -- Exclude sessions with no meaningful content
 		  AND NOT (
@@ -98,19 +109,20 @@ func (db *DB) ListSessions(projectPath string) ([]Session, error) {
 	var sessions []Session
 	for rows.Next() {
 		var s Session
-		var unusedFirstMessage string // from SELECT but not used
+		var isAI int // SQLite doesn't have boolean, use int (0/1)
 		err := rows.Scan(
 			&s.SessionID,
 			&s.Summary,
+			&isAI,
 			&s.ProjectPath,
 			&s.MessageCount,
 			&s.UpdatedAt,
 			&s.CreatedAt,
-			&unusedFirstMessage,
 		)
 		if err != nil {
 			return nil, err
 		}
+		s.IsAISummary = isAI == 1
 		sessions = append(sessions, s)
 	}
 

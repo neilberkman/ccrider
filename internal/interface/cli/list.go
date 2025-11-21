@@ -62,6 +62,7 @@ func runList(cmd *cobra.Command, args []string) error {
 		sessions = append(sessions, sessionInfo{
 			sessionID:    cs.SessionID,
 			summary:      sql.NullString{String: cs.Summary, Valid: cs.Summary != ""},
+			isAISummary:  cs.IsAISummary,
 			projectPath:  cs.ProjectPath,
 			messageCount: cs.MessageCount,
 			updatedAt:    cs.UpdatedAt,
@@ -90,7 +91,11 @@ func runList(cmd *cobra.Command, args []string) error {
 		fmt.Printf("[%d] %s\n", i+1, s.sessionID)
 		if s.summary.Valid && s.summary.String != "" {
 			summary := truncateSummary(s.summary.String, 80)
-			fmt.Printf("    Summary: %s\n", summary)
+			if s.isAISummary {
+				fmt.Printf("    ✨ %s\n", summary)
+			} else {
+				fmt.Printf("    Summary: %s\n", summary)
+			}
 		}
 		fmt.Printf("    Project: %s\n", s.projectPath)
 		fmt.Printf("    Messages: %d\n", s.messageCount)
@@ -109,6 +114,7 @@ func runList(cmd *cobra.Command, args []string) error {
 type sessionInfo struct {
 	sessionID    string
 	summary      sql.NullString
+	isAISummary  bool
 	projectPath  string
 	messageCount int
 	updatedAt    time.Time
