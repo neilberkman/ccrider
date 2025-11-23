@@ -218,24 +218,21 @@ func (s *Summarizer) combineChunks(ctx context.Context, chunks []ChunkSummary, s
 		len(chunks),
 	)
 
-	response, err := s.llm.Generate(ctx, prompt, 1024)
+	response, err := s.llm.Generate(ctx, prompt, 128)
 	if err != nil {
 		return "", "", err
 	}
 
-	// Parse response: "1. ONE-LINER:\n[line]\n\n2. FULL SUMMARY:\n[summary]"
-	oneLiner, fullSummary := parseTwoPartSummary(response)
+	// Clean the response - it's now a single sentence
+	oneLiner := cleanOneLiner(strings.TrimSpace(response))
 
-	// Clean the one-liner of meta-commentary
-	oneLiner = cleanOneLiner(oneLiner)
+	// Use the one-liner as the full summary too (it's already a good summary)
+	fullSummary := oneLiner
 
-	// Fallback if parsing failed
+	// Fallback if empty
 	if oneLiner == "" {
-		oneLiner = truncateToWords(fullSummary, 15)
-	}
-	if fullSummary == "" {
-		fullSummary = response
-		oneLiner = truncateToWords(response, 15)
+		oneLiner = "Session summary not available"
+		fullSummary = "Session summary not available"
 	}
 
 	return oneLiner, fullSummary, nil
@@ -432,6 +429,12 @@ func cleanOneLiner(oneLiner string) string {
 		"this summary is",
 		"let me know",
 		"here is",
+		"one-liner:",
+		"one-ler:",  // Common typo
+		"1. one-liner",
+		"2. full summary",
+		"output:",
+		"format:",
 		"—",
 		"(",
 		"[",

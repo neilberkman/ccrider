@@ -149,6 +149,7 @@ func (m Model) Init() tea.Cmd {
 	}
 
 	return tea.Batch(
+		tea.EnableMouseCellMotion, // Enable mouse wheel scrolling
 		loadSessions(m.db, m.projectFilterEnabled, m.currentDirectory),
 		syncSessions(m.db, m.projectFilterEnabled, m.currentDirectory),
 	)

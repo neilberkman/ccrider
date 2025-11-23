@@ -5,70 +5,52 @@ import "fmt"
 // BuildSummaryPrompt creates a prompt for summarizing a session
 func BuildSummaryPrompt(messageText string, mode string, chunkIndex int) string {
 	if mode == "quick" {
-		return fmt.Sprintf(`Summarize this Claude Code session.
+		return fmt.Sprintf(`Summarize this coding session in 2-4 sentences.
 
 Session:
 %s
 
-Write a concise technical summary (2-4 sentences) covering:
-- What was worked on
-- Problems encountered and solutions
-- Key files, functions, or issue IDs (e.g., ENA-1234)
+Cover:
+- Features, bugs, or systems worked on
+- Technical problems and solutions
+- Specific files, functions, or errors
 
-Write only factual technical content. No pleasantries, greetings, or sign-offs.`, messageText)
+Write factual technical content. State what was built or fixed.`, messageText)
 	}
 
-	return fmt.Sprintf(`Summarize part %d of a Claude Code session.
+	return fmt.Sprintf(`Summarize part %d of a coding session.
 
 %s
 
-Write a technical summary covering:
-- Main activities and goals in this part
-- Problems encountered and solutions
-- Specific files, functions, errors, issue IDs
-- How this part connects to the overall work
+Cover:
+- Features, bugs, or systems worked on
+- Technical problems and solutions
+- Specific files, functions, errors, or code changes
+- How this connects to the overall work
 
-Write only factual technical content. No pleasantries or sign-offs.`, chunkIndex+1, messageText)
+Write factual technical content. State what was built or fixed.`, chunkIndex+1, messageText)
 }
 
 // BuildCombinedSummaryPrompt creates a prompt for combining chunk summaries
 func BuildCombinedSummaryPrompt(chunksText, projectPath string, messageCount, chunkCount int) string {
-	return fmt.Sprintf(`Summarize this Claude Code session based on the chunk summaries below.
+	return fmt.Sprintf(`Read these summaries and write one short sentence (10-15 words) describing what was worked on.
 
 Project: %s
 Messages: %d across %d chunks
 
 %s
 
-Generate EXACTLY this format:
-
-1. ONE-LINER:
-<write one sentence of 10-15 words describing what was accomplished>
-
-2. FULL SUMMARY:
-<write 2-4 paragraphs describing: the main goal, problems solved, outcome, and key technical details>
-
-Examples of good one-liners:
-- "Fixed authentication bug in login.js by updating token validation"
-- "Added real-time sync feature using WebSockets and Redis"
-- "Refactored database schema to support multi-tenancy"
-
-DO NOT include:
-- Bullet points in the one-liner
-- Headers, labels, or formatting markers
-- Pleasantries like "Best regards" or "Let me know"
-- Redundant text or repetition
-
-Write the one-liner as a single plain sentence. Write the full summary as plain paragraphs.`, projectPath, messageCount, chunkCount, chunksText)
+Write one sentence stating what feature, bug, or system was the focus.`, projectPath, messageCount, chunkCount, chunksText)
 }
 
 // BuildOneLinerPrompt creates a prompt for generating just a one-line summary
 func BuildOneLinerPrompt(fullSummary string) string {
-	return fmt.Sprintf(`Create a one-line summary (10-15 words max) of this session:
+	return fmt.Sprintf(`Create a one-line summary (10-15 words) of this session:
 
 %s
 
-Write ONLY the one-line summary as a single plain sentence. No labels, no bullet points, no formatting.`, fullSummary)
+Write a single plain sentence stating what feature/bug/system was the focus.
+Use specific technical terms. No labels, no formatting.`, fullSummary)
 }
 
 // BuildRefinementPrompt creates a prompt to shorten a too-long summary
