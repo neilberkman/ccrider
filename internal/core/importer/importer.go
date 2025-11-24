@@ -43,12 +43,16 @@ func (i *Importer) ImportSession(session *ccsessions.ParsedSession, existingMess
 		_ = tx.Rollback()
 	}()
 
-	// Extract project path from message CWD (most recent non-empty)
-	projectPath := extractProjectPathFromMessages(session.Messages)
+	// Extract project path from FIRST message CWD (where session was initiated)
+	// This is the directory where `claude` was launched, NOT where user was last working
+	projectPath := extractProjectInitiationPath(session.Messages)
 	if projectPath == "" {
 		// Fallback to decoding from directory name (legacy behavior)
 		projectPath = extractProjectPath(session.FilePath)
 	}
+
+	// Extract last CWD (where user was last working) for resume prompt
+	lastCwd := extractLastCwd(session.Messages)
 
 	// Compute timestamps from messages
 	var createdAt, updatedAt time.Time
@@ -67,10 +71,10 @@ func (i *Importer) ImportSession(session *ccsessions.ParsedSession, existingMess
 	// NOTE: We set message_count to 0 initially, will update with actual count after filtering messages
 	_, err = tx.Exec(`
 		INSERT INTO sessions (
-			session_id, project_path, summary, leaf_uuid,
+			session_id, project_path, summary, leaf_uuid, cwd,
 			created_at, updated_at, message_count, file_hash,
 			file_size, file_mtime
-		) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
 		ON CONFLICT(session_id) DO UPDATE SET
 			summary = CASE
 				WHEN excluded.file_mtime > sessions.file_mtime THEN excluded.summary
@@ -79,6 +83,10 @@ func (i *Importer) ImportSession(session *ccsessions.ParsedSession, existingMess
 			leaf_uuid = CASE
 				WHEN excluded.file_mtime > sessions.file_mtime THEN excluded.leaf_uuid
 				ELSE sessions.leaf_uuid
+			END,
+			cwd = CASE
+				WHEN excluded.file_mtime > sessions.file_mtime THEN excluded.cwd
+				ELSE sessions.cwd
 			END,
 			updated_at = CASE
 				WHEN excluded.file_mtime > sessions.file_mtime THEN excluded.updated_at
@@ -102,6 +110,7 @@ func (i *Importer) ImportSession(session *ccsessions.ParsedSession, existingMess
 		projectPath,
 		session.Summary,
 		session.LeafUUID,
+		lastCwd,
 		createdAt,
 		updatedAt,
 		hash,
@@ -326,9 +335,21 @@ func computeFileHash(path string) (string, error) {
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-// extractProjectPathFromMessages finds the most recent non-empty CWD from messages
-// This is the correct way to get the project path, as directory names can be ambiguous
-func extractProjectPathFromMessages(messages []ccsessions.ParsedMessage) string {
+// extractProjectInitiationPath finds the FIRST non-empty CWD from messages
+// This is where `claude` was launched and where the session file is stored
+func extractProjectInitiationPath(messages []ccsessions.ParsedMessage) string {
+	// Iterate forwards to find first CWD (where session initiated)
+	for i := 0; i < len(messages); i++ {
+		if messages[i].CWD != "" {
+			return messages[i].CWD
+		}
+	}
+	return ""
+}
+
+// extractLastCwd finds the LAST non-empty CWD from messages
+// This is where the user was last working (for resume prompt)
+func extractLastCwd(messages []ccsessions.ParsedMessage) string {
 	// Iterate backwards to find most recent CWD
 	for i := len(messages) - 1; i >= 0; i-- {
 		if messages[i].CWD != "" {
