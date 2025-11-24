@@ -11,7 +11,6 @@ import (
 
 var (
 	searchLimit int
-	searchCode  bool
 )
 
 var searchCmd = &cobra.Command{
@@ -19,13 +18,12 @@ var searchCmd = &cobra.Command{
 	Short: "Search Claude Code sessions using full-text search",
 	Long: `Search through all imported Claude Code sessions.
 
-Uses FTS5 full-text search with different modes:
-- Default: Natural language search with porter stemming
-- --code: Code search preserving identifiers (camelCase, etc.)
+Uses FTS5 full-text search with porter stemming for natural language.
+Results are grouped by session and show matching message snippets.
 
 Examples:
   ccrider search "authentication implementation"
-  ccrider search "getUserById" --code
+  ccrider search "ENA-7030"
   ccrider search "error handling" --limit 10`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: runSearch,
@@ -33,8 +31,7 @@ Examples:
 
 func init() {
 	rootCmd.AddCommand(searchCmd)
-	searchCmd.Flags().IntVar(&searchLimit, "limit", 50, "Maximum number of results")
-	searchCmd.Flags().BoolVar(&searchCode, "code", false, "Use code search (preserves identifiers)")
+	searchCmd.Flags().IntVar(&searchLimit, "limit", 50, "Maximum number of sessions to show")
 }
 
 func runSearch(cmd *cobra.Command, args []string) error {
@@ -50,46 +47,67 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		_ = database.Close()
 	}()
 
-	// Perform search
-	var results []search.SearchResult
-	if searchCode {
-		results, err = search.SearchCode(database, query)
-	} else {
-		results, err = search.Search(database, query)
+	// Use unified search backend (same as TUI/MCP)
+	filters := search.SearchFilters{
+		Query: query,
+		// CLI doesn't support project/date filters yet, but using unified backend
+		// means we can add them easily later
 	}
 
+	sessionResults, err := search.SearchWithFilters(database, filters)
 	if err != nil {
 		return fmt.Errorf("search failed: %w", err)
 	}
 
-	// Display results
-	if len(results) == 0 {
+	// Display results grouped by session
+	if len(sessionResults) == 0 {
 		fmt.Printf("No results found for: %s\n", query)
 		return nil
 	}
 
-	fmt.Printf("Found %d result(s) for: %s\n", len(results), query)
-	if searchCode {
-		fmt.Println("(using code search)")
+	// Count total matches across all sessions
+	totalMatches := 0
+	for _, s := range sessionResults {
+		totalMatches += len(s.Matches)
 	}
+
+	fmt.Printf("Found %d session(s) with %d match(es) for: %s\n", len(sessionResults), totalMatches, query)
 	fmt.Println()
 
-	for i, r := range results {
-		// Limit to searchLimit
-		if i >= searchLimit {
-			fmt.Printf("\n... and %d more results (use --limit to see more)\n", len(results)-searchLimit)
+	sessionCount := 0
+	for _, session := range sessionResults {
+		// Limit to searchLimit sessions
+		if sessionCount >= searchLimit {
+			fmt.Printf("\n... and %d more sessions (use --limit to see more)\n", len(sessionResults)-searchLimit)
 			break
 		}
+		sessionCount++
 
-		fmt.Printf("=== Result %d ===\n", i+1)
-		fmt.Printf("Session: %s\n", r.SessionID)
-		if r.SessionSummary != "" {
-			fmt.Printf("Summary: %s\n", r.SessionSummary)
+		fmt.Printf("=== Session %d ===\n", sessionCount)
+		fmt.Printf("ID:      %s\n", session.SessionID)
+		if session.SessionSummary != "" {
+			fmt.Printf("Summary: %s\n", session.SessionSummary)
+		} else {
+			fmt.Printf("Summary: [No summary - showing first match]\n")
 		}
-		fmt.Printf("Project: %s\n", r.ProjectPath)
-		fmt.Printf("Time:    %s\n", r.Timestamp)
-		fmt.Printf("\nMessage:\n%s\n", truncateMessage(r.MessageText, 300))
+		fmt.Printf("Project: %s\n", session.ProjectPath)
+		fmt.Printf("Updated: %s\n", session.UpdatedAt)
+		fmt.Printf("Matches: %d\n", len(session.Matches))
 		fmt.Println()
+
+		// Show up to 3 matches per session
+		matchLimit := 3
+		if len(session.Matches) > matchLimit {
+			fmt.Printf("Showing first %d of %d matches:\n", matchLimit, len(session.Matches))
+		}
+		for i, match := range session.Matches {
+			if i >= matchLimit {
+				break
+			}
+			fmt.Printf("  Match %d:\n", i+1)
+			fmt.Printf("  %s\n", truncateMessage(match.MessageText, 200))
+			fmt.Println()
+		}
 	}
 
 	return nil
