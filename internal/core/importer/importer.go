@@ -64,12 +64,13 @@ func (i *Importer) ImportSession(session *ccsessions.ParsedSession, existingMess
 	}
 
 	// Upsert session - update if this file is newer than existing
+	// NOTE: We set message_count to 0 initially, will update with actual count after filtering messages
 	_, err = tx.Exec(`
 		INSERT INTO sessions (
 			session_id, project_path, summary, leaf_uuid,
 			created_at, updated_at, message_count, file_hash,
 			file_size, file_mtime
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
 		ON CONFLICT(session_id) DO UPDATE SET
 			summary = CASE
 				WHEN excluded.file_mtime > sessions.file_mtime THEN excluded.summary
@@ -83,10 +84,7 @@ func (i *Importer) ImportSession(session *ccsessions.ParsedSession, existingMess
 				WHEN excluded.file_mtime > sessions.file_mtime THEN excluded.updated_at
 				ELSE sessions.updated_at
 			END,
-			message_count = CASE
-				WHEN excluded.file_mtime > sessions.file_mtime THEN excluded.message_count
-				ELSE sessions.message_count
-			END,
+			-- message_count is updated after processing messages, not from parsed file
 			file_hash = CASE
 				WHEN excluded.file_mtime > sessions.file_mtime THEN excluded.file_hash
 				ELSE sessions.file_hash
@@ -106,7 +104,6 @@ func (i *Importer) ImportSession(session *ccsessions.ParsedSession, existingMess
 		session.LeafUUID,
 		createdAt,
 		updatedAt,
-		len(session.Messages),
 		hash,
 		session.FileSize,
 		session.FileMtime,
@@ -127,6 +124,7 @@ func (i *Importer) ImportSession(session *ccsessions.ParsedSession, existingMess
 	messagesInserted := 0
 	foundSubstantiveUser := false
 	processedCount := 0
+	actualMessageCount := 0 // Track actual messages we'll insert (after all filtering)
 
 	for _, msg := range session.Messages {
 		// Skip messages with no text content (tool_use/tool_result only)
@@ -194,6 +192,20 @@ func (i *Importer) ImportSession(session *ccsessions.ParsedSession, existingMess
 		if err == nil && rowsAffected > 0 {
 			messagesInserted++
 		}
+		actualMessageCount++ // Count every message we process (whether inserted or already existed)
+	}
+
+	// Skip sessions with no actual messages after filtering
+	if actualMessageCount == 0 {
+		// Rollback and return nil (success, but nothing to import)
+		_ = tx.Rollback()
+		return nil
+	}
+
+	// Update the session's message_count with the ACTUAL count (not the bogus parsed value)
+	_, err = tx.Exec(`UPDATE sessions SET message_count = ? WHERE id = ?`, actualMessageCount, sessionDBID)
+	if err != nil {
+		return fmt.Errorf("failed to update message count: %w", err)
 	}
 
 	// Record import
