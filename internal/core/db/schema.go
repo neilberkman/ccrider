@@ -8,6 +8,8 @@ func (db *DB) initSchema() error {
 		session_id TEXT UNIQUE NOT NULL,
 		project_path TEXT NOT NULL,
 		summary TEXT,
+		llm_summary TEXT,
+		llm_summary_at DATETIME,
 		leaf_uuid TEXT,
 		cwd TEXT,
 		git_branch TEXT,

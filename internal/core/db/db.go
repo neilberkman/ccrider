@@ -43,6 +43,12 @@ func New(dbPath string) (*DB, error) {
 		return nil, fmt.Errorf("failed to initialize schema: %w", err)
 	}
 
+	// Run migrations for existing databases
+	if err := db.migrate(); err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("failed to run migrations: %w", err)
+	}
+
 	return db, nil
 }
 
@@ -69,4 +75,14 @@ func (db *DB) Query(query string, args ...interface{}) (*sql.Rows, error) {
 // QueryRow executes a query that returns a single row
 func (db *DB) QueryRow(query string, args ...interface{}) *sql.Row {
 	return db.conn.QueryRow(query, args...)
+}
+
+// UpdateLLMSummary updates the LLM-generated summary for a session
+func (db *DB) UpdateLLMSummary(sessionID string, summary string) error {
+	_, err := db.conn.Exec(`
+		UPDATE sessions
+		SET llm_summary = ?, llm_summary_at = CURRENT_TIMESTAMP
+		WHERE session_id = ?
+	`, summary, sessionID)
+	return err
 }
