@@ -70,9 +70,13 @@ func ParseFile(path string) (session *ParsedSession, err error) {
 		return nil, fmt.Errorf("failed to stat file: %w", err)
 	}
 
-	// Initialize session with filename-based ID (will be overwritten if sessionId found)
+	// Initialize session with filename-based ID
 	sessionID := filepath.Base(path)
 	sessionID = sessionID[:len(sessionID)-len(filepath.Ext(sessionID))]
+
+	// For agent sessions (agent-*.jsonl), KEEP the filename as the session ID
+	// because the sessionId in the file points to the parent session, not the agent
+	isAgentSession := len(sessionID) > 6 && sessionID[:6] == "agent-"
 
 	session = &ParsedSession{
 		SessionID: sessionID,
@@ -101,15 +105,17 @@ func ParseFile(path string) (session *ParsedSession, err error) {
 		if raw.Type == "summary" {
 			session.Summary = raw.Summary
 			session.LeafUUID = raw.LeafUUID
-			// Extract sessionId from summary if available
-			if raw.SessionID != "" {
+			// Extract sessionId from summary if available (but NOT for agent sessions
+			// since their sessionId points to parent, not themselves)
+			if raw.SessionID != "" && !isAgentSession {
 				session.SessionID = raw.SessionID
 			}
 			continue
 		}
 
 		// Extract sessionId from messages if we haven't found it yet
-		if raw.SessionID != "" && session.SessionID == sessionID {
+		// Skip for agent sessions - their sessionId points to parent session
+		if raw.SessionID != "" && session.SessionID == sessionID && !isAgentSession {
 			session.SessionID = raw.SessionID
 		}
 

@@ -131,7 +131,6 @@ func (i *Importer) ImportSession(session *ccsessions.ParsedSession, existingMess
 	// Insert messages (use INSERT OR IGNORE to skip duplicates from resumed sessions)
 	// Skip messages we already have based on existingMessageCount
 	messagesInserted := 0
-	foundSubstantiveUser := false
 	processedCount := 0
 	actualMessageCount := 0 // Track actual messages we'll insert (after all filtering)
 
@@ -148,28 +147,11 @@ func (i *Importer) ImportSession(session *ccsessions.ParsedSession, existingMess
 		// If we already have this message, skip inserting it
 		if processedCount <= existingMessageCount {
 			// We already have this message in DB - skip INSERT
-			// But we still need to track if we've seen substantive user messages for filtering
-			if !foundSubstantiveUser {
-				if msg.Type == "user" && trimmed != "Warmup" && len(trimmed) > 10 {
-					foundSubstantiveUser = true
-				}
-			}
+			actualMessageCount++
 			continue
 		}
 
 		// This is a new message we don't have yet - insert it
-
-		// Skip all messages until we find the first substantive user message
-		// (warmups, greetings, etc. are all noise before actual conversation)
-		if !foundSubstantiveUser {
-			if msg.Type == "user" && trimmed != "Warmup" && len(trimmed) > 10 {
-				// Found first real user message - start including from here
-				foundSubstantiveUser = true
-			} else {
-				// Skip everything before first substantive user message
-				continue
-			}
-		}
 
 		result, err := tx.Exec(`
 			INSERT OR IGNORE INTO messages (
@@ -202,13 +184,6 @@ func (i *Importer) ImportSession(session *ccsessions.ParsedSession, existingMess
 			messagesInserted++
 		}
 		actualMessageCount++ // Count every message we process (whether inserted or already existed)
-	}
-
-	// Skip sessions with no actual messages after filtering
-	if actualMessageCount == 0 {
-		// Rollback and return nil (success, but nothing to import)
-		_ = tx.Rollback()
-		return nil
 	}
 
 	// Update the session's message_count with the ACTUAL count (not the bogus parsed value)
@@ -265,9 +240,6 @@ func (i *Importer) ImportDirectory(dirPath string, progress ProgressCallback) er
 		// Extract session ID from filename
 		sessionID := filepath.Base(file)
 		sessionID = strings.TrimSuffix(sessionID, ".jsonl")
-		if strings.HasPrefix(sessionID, "agent-") {
-			sessionID = strings.TrimPrefix(sessionID, "agent-")
-		}
 
 		// Check if we have this session and if our copy is up-to-date
 		var dbMtime sql.NullTime
