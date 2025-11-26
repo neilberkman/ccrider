@@ -131,8 +131,8 @@ func (m Model) viewSearch() string {
 			query := m.searchInput.Value()
 			for j, match := range result.Matches {
 				snippet := highlightQuery(match.Snippet, query)
-				// Trim to ensure match is visible in viewport (80 chars max)
-				snippetLine := firstLine(snippet, 80)
+				// Show full snippet (100 chars max to match core extraction)
+				snippetLine := firstLine(snippet, 100)
 				b.WriteString(fmt.Sprintf("    %s", snippetLine))
 
 				if j < len(result.Matches)-1 {

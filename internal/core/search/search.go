@@ -212,8 +212,9 @@ func search(database *db.DB, query string, ftsTable string, limit int) ([]Search
 		}
 
 		// For LIKE searches, extract snippet around the match
+		// Keep it short (100 chars) so TUI can show full snippet with match visible
 		if hasSpecialChars {
-			r.MessageText = extractSnippet(r.MessageText, query, 150)
+			r.MessageText = extractSnippet(r.MessageText, query, 100)
 		}
 
 		results = append(results, r)
@@ -293,11 +294,12 @@ func extractSnippet(text, query string, maxLen int) string {
 				}
 			}
 
-			// Extract just this field value, cleaning up escaped newlines
+			// Extract just this field value, cleaning up newlines
 			if fieldEnd != -1 && fieldEnd-fieldStart < 800 {
 				snippet := text[fieldStart:fieldEnd]
-				// Replace \n with actual newlines for readability
-				snippet = strings.ReplaceAll(snippet, "\\n", "\n")
+				// Replace escaped newlines (\\n) and actual newlines with spaces
+				snippet = strings.ReplaceAll(snippet, `\n`, " ")
+				snippet = strings.ReplaceAll(snippet, "\n", " ")
 				// If still too long, truncate around the match
 				if len(snippet) > 400 {
 					matchOffset := pos - fieldStart
@@ -380,6 +382,10 @@ func extractSnippet(text, query string, maxLen int) string {
 	}
 
 	snippet := text[start:end]
+
+	// Replace escaped newlines (\\n) and actual newlines with spaces
+	snippet = strings.ReplaceAll(snippet, `\n`, " ")
+	snippet = strings.ReplaceAll(snippet, "\n", " ")
 
 	// Add ellipsis if truncated
 	if start > 0 {
