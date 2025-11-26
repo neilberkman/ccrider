@@ -141,13 +141,14 @@ func loadSessions(database *db.DB, filterByProject bool, projectPath string) tea
 				ID:           cs.SessionID,
 				Summary:      summary,
 				Project:      cs.ProjectPath,
+				LastCwd:      cs.LastCwd,
 				MessageCount: cs.MessageCount,
 				UpdatedAt:    cs.UpdatedAt.Format("2006-01-02 15:04:05"),
 				CreatedAt:    cs.CreatedAt.Format("2006-01-02 15:04:05"),
 			}
 
-			// Check if session matches current directory (for highlighting - interface concern)
-			if projectPath != "" && strings.Contains(s.Project, projectPath) {
+			// Check if session's last cwd matches current directory (for highlighting)
+			if projectPath != "" && strings.Contains(s.LastCwd, projectPath) {
 				s.MatchesCurrentDir = true
 			}
 

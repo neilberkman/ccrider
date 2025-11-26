@@ -16,7 +16,7 @@ type sessionListItem struct {
 }
 
 func (i sessionListItem) FilterValue() string {
-	return i.session.Summary + " " + i.session.Project
+	return i.session.Summary + " " + i.session.LastCwd
 }
 
 func (i sessionListItem) Title() string {
@@ -29,7 +29,7 @@ func (i sessionListItem) Title() string {
 
 func (i sessionListItem) Description() string {
 	return fmt.Sprintf("%s | %d messages | Updated: %s",
-		i.session.Project, i.session.MessageCount, formatTime(i.session.UpdatedAt))
+		i.session.LastCwd, i.session.MessageCount, formatTime(i.session.UpdatedAt))
 }
 
 // Custom delegate to handle current directory highlighting

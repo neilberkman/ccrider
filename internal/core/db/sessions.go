@@ -9,6 +9,7 @@ type Session struct {
 	SessionID    string
 	Summary      string
 	ProjectPath  string
+	LastCwd      string // Last working directory from messages
 	MessageCount int
 	UpdatedAt    time.Time
 	CreatedAt    time.Time
@@ -20,44 +21,59 @@ func (db *DB) ListSessions(projectPath string) ([]Session, error) {
 	query := `
 		SELECT
 			s.session_id,
-			CASE
-				WHEN s.summary LIKE '<user%prompt%>' OR s.summary = '<user_prompt>' OR TRIM(COALESCE(s.summary, '')) = ''
-				THEN COALESCE(
-					(SELECT
-						CASE
-							WHEN text_content LIKE '<%'
-							THEN LTRIM(SUBSTR(text_content, INSTR(text_content, '>') + 1), char(10) || char(13) || char(9) || ' ')
-							ELSE text_content
-						END
-					 FROM messages
-					 WHERE session_id = s.id
-					   AND type = 'user'
-					   AND text_content NOT LIKE 'This session is being continued%'
-					   AND text_content NOT LIKE 'Resuming session from%'
-					   AND text_content NOT LIKE '[Image %'
-					   AND text_content NOT LIKE '%Request interrupted by user%'
-					   AND text_content NOT LIKE 'Warmup'
-					   AND text_content NOT LIKE 'Base directory for this skill:%'
-					   AND LENGTH(LTRIM(
-					     CASE
-					       WHEN text_content LIKE '<%'
-					       THEN LTRIM(SUBSTR(text_content, INSTR(text_content, '>') + 1), char(10) || char(13) || char(9) || ' ')
-					       ELSE text_content
-					     END,
-					     char(10) || char(13) || char(9) || ' '
-					   )) > 0
-					 ORDER BY sequence ASC
-					 LIMIT 1),
-					''
-				)
-				ELSE s.summary
-			END as summary,
+			COALESCE(
+				NULLIF(ss.one_line_summary, ''),
+				NULLIF(s.llm_summary, ''),
+				CASE
+					WHEN s.summary LIKE '<user%prompt%>' OR s.summary = '<user_prompt>' OR TRIM(COALESCE(s.summary, '')) = ''
+					THEN COALESCE(
+						(SELECT
+							CASE
+								WHEN text_content LIKE '<%'
+								THEN LTRIM(SUBSTR(text_content, INSTR(text_content, '>') + 1), char(10) || char(13) || char(9) || ' ')
+								ELSE text_content
+							END
+						 FROM messages
+						 WHERE session_id = s.id
+						   AND type = 'user'
+						   AND text_content NOT LIKE 'This session is being continued%'
+						   AND text_content NOT LIKE 'Resuming session from%'
+						   AND text_content NOT LIKE '[Image %'
+						   AND text_content NOT LIKE '%Request interrupted by user%'
+						   AND text_content NOT LIKE 'Warmup'
+						   AND text_content NOT LIKE 'Base directory for this skill:%'
+						   AND LENGTH(LTRIM(
+						     CASE
+						       WHEN text_content LIKE '<%'
+						       THEN LTRIM(SUBSTR(text_content, INSTR(text_content, '>') + 1), char(10) || char(13) || char(9) || ' ')
+						       ELSE text_content
+						     END,
+						     char(10) || char(13) || char(9) || ' '
+						   )) > 0
+						 ORDER BY sequence ASC
+						 LIMIT 1),
+						''
+					)
+					ELSE s.summary
+				END,
+				''
+			) as summary,
 			s.project_path,
+			COALESCE(
+				(SELECT cwd FROM messages
+				 WHERE session_id = s.id
+				   AND cwd IS NOT NULL
+				   AND cwd != ''
+				 ORDER BY sequence DESC
+				 LIMIT 1),
+				s.cwd,
+				s.project_path
+			) as last_cwd,
 			(SELECT COUNT(*) FROM messages WHERE session_id = s.id) as actual_message_count,
 			s.updated_at,
-			s.created_at,
-			'' as first_message
+			s.created_at
 		FROM sessions s
+		LEFT JOIN session_summaries ss ON s.id = ss.session_id
 		WHERE (SELECT COUNT(*) FROM messages WHERE session_id = s.id) > 0
 		  -- Exclude sessions with no meaningful content
 		  AND NOT (
@@ -98,15 +114,14 @@ func (db *DB) ListSessions(projectPath string) ([]Session, error) {
 	var sessions []Session
 	for rows.Next() {
 		var s Session
-		var unusedFirstMessage string // from SELECT but not used
 		err := rows.Scan(
 			&s.SessionID,
 			&s.Summary,
 			&s.ProjectPath,
+			&s.LastCwd,
 			&s.MessageCount,
 			&s.UpdatedAt,
 			&s.CreatedAt,
-			&unusedFirstMessage,
 		)
 		if err != nil {
 			return nil, err

@@ -81,11 +81,12 @@ type Model struct {
 type sessionItem struct {
 	ID                string
 	Summary           string
-	Project           string
+	Project           string // Where session started (project_path)
+	LastCwd           string // Last working directory
 	MessageCount      int
 	UpdatedAt         string
 	CreatedAt         string
-	MatchesCurrentDir bool // True if session project matches current working directory
+	MatchesCurrentDir bool // True if session last cwd matches current working directory
 }
 
 type sessionDetail struct {
