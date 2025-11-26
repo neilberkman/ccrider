@@ -130,13 +130,10 @@ func (m Model) viewSearch() string {
 			// Show each match with clear separation
 			query := m.searchInput.Value()
 			for j, match := range result.Matches {
-				typeLabel := fmt.Sprintf("[%s]", match.MessageType)
-				b.WriteString(fmt.Sprintf("    %s ", searchMetaStyle.Render(typeLabel)))
-
 				snippet := highlightQuery(match.Snippet, query)
-				// Trim and show first line
-				snippetLine := firstLine(snippet, 100)
-				b.WriteString(fmt.Sprintf("%s", snippetLine))
+				// Trim to ensure match is visible in viewport (80 chars max)
+				snippetLine := firstLine(snippet, 80)
+				b.WriteString(fmt.Sprintf("    %s", snippetLine))
 
 				if j < len(result.Matches)-1 {
 					b.WriteString("\n")
