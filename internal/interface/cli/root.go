@@ -9,8 +9,15 @@ import (
 )
 
 var (
-	dbPath string
+	dbPath      string
+	versionInfo string
 )
+
+// SetVersion sets the version information from build-time ldflags
+func SetVersion(version, commit, date string) {
+	versionInfo = fmt.Sprintf("%s (commit: %s, built: %s)", version, commit, date)
+	rootCmd.Version = versionInfo
+}
 
 // Execute runs the CLI
 func Execute() {
@@ -27,7 +34,6 @@ var rootCmd = &cobra.Command{
 
 A fast, reliable tool for managing Claude Code sessions with full-text search,
 incremental sync, and native resume integration.`,
-	Version: "0.1.0",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Default to TUI if no subcommand specified
 		return tuiCmd.RunE(cmd, args)
