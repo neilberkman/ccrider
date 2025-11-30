@@ -121,10 +121,10 @@ end tell
 
 	// Restore clipboard in background after a delay
 	go func() {
-		exec.Command("sleep", "1").Run()
+		_ = exec.Command("sleep", "1").Run()
 		restoreCmd := exec.Command("pbcopy")
 		restoreCmd.Stdin = strings.NewReader(string(savedClip))
-		restoreCmd.Run()
+		_ = restoreCmd.Run()
 	}()
 
 	return nil
@@ -233,12 +233,6 @@ func (s *Spawner) spawnXTerm(cfg SpawnConfig) error {
 		"-e", "bash", "-l", "-c", fullCmd,
 	)
 	return cmd.Start()
-}
-
-// shellEscape escapes a string for safe use in shell commands
-func shellEscape(s string) string {
-	// Simple escape: wrap in single quotes, escape single quotes
-	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
 // appleScriptEscape escapes a string for use in AppleScript do script command

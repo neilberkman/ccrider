@@ -43,10 +43,6 @@ type exportCompletedMsg struct {
 	err      error
 }
 
-type exportPromptMsg struct {
-	sessionID string
-}
-
 func performSearch(database *db.DB, query string) tea.Cmd {
 	return func() tea.Msg {
 		// Strip any quotes from the query (user shouldn't need to escape)
@@ -251,7 +247,7 @@ func startSyncWithProgress(database *db.DB, filterByProject bool, projectPath st
 
 		// Count total files first
 		var files []string
-		filepath.Walk(sourcePath, func(path string, info os.FileInfo, err error) error {
+		_ = filepath.Walk(sourcePath, func(path string, info os.FileInfo, err error) error {
 			if err == nil && !info.IsDir() && filepath.Ext(path) == ".jsonl" {
 				files = append(files, path)
 			}
@@ -282,7 +278,7 @@ func startSyncWithProgress(database *db.DB, filterByProject bool, projectPath st
 				ch:      progressCh,
 			}
 
-			imp.ImportDirectory(sourcePath, progress)
+			_ = imp.ImportDirectory(sourcePath, progress)
 			close(progressCh)
 		}()
 
@@ -396,7 +392,7 @@ func exportSessionToPath(database *db.DB, sessionID string, filePath string) tea
 				err:     err,
 			}
 		}
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 
 		// Build markdown content
 		var b strings.Builder

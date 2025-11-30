@@ -71,7 +71,6 @@ type Model struct {
 
 	// Sync progress state
 	syncing          bool
-	syncProgress     float64 // 0-100
 	syncCurrentFile  string
 	syncTotal        int
 	syncCurrent      int
@@ -156,11 +155,11 @@ func (m Model) Init() tea.Cmd {
 	// Log startup with version info
 	f, _ := os.OpenFile("/tmp/ccrider-debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if f != nil {
-		fmt.Fprintf(f, "\n========== CCRIDER STARTUP v1.0-DEBUG ==========\n")
-		fmt.Fprintf(f, "Time: %s\n", time.Now().Format(time.RFC3339))
-		fmt.Fprintf(f, "Working directory: %s\n", m.currentDirectory)
-		fmt.Fprintf(f, "==============================================\n\n")
-		f.Close()
+		_, _ = fmt.Fprintf(f, "\n========== CCRIDER STARTUP v1.0-DEBUG ==========\n")
+		_, _ = fmt.Fprintf(f, "Time: %s\n", time.Now().Format(time.RFC3339))
+		_, _ = fmt.Fprintf(f, "Working directory: %s\n", m.currentDirectory)
+		_, _ = fmt.Fprintf(f, "==============================================\n\n")
+		_ = f.Close()
 	}
 
 	return tea.Batch(
@@ -190,10 +189,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseMsg:
 		// Handle mouse wheel scrolling
-		if msg.Type == tea.MouseWheelDown || msg.Type == tea.MouseWheelUp {
+		if msg.Action == tea.MouseActionPress && (msg.Button == tea.MouseButtonWheelDown || msg.Button == tea.MouseButtonWheelUp) {
 			switch m.mode {
 			case searchView:
-				return handleSearchMouseWheel(m, msg.Type == tea.MouseWheelDown), nil
+				return handleSearchMouseWheel(m, msg.Button == tea.MouseButtonWheelDown), nil
 			case listView:
 				// Pass mouse events to the list
 				var cmd tea.Cmd
@@ -327,7 +326,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.message != "" {
 				// Check if this is an info message (starts with "Command written")
 				if strings.HasPrefix(msg.message, "Command written") {
-					m.err = fmt.Errorf("Success: %s", msg.message)
+					m.err = fmt.Errorf("success: %s", msg.message)
 				} else {
 					m.err = fmt.Errorf("%s", msg.message)
 				}
@@ -352,7 +351,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.fallbackSummary = msg.summary
 				m.err = nil
 			} else {
-				m.err = fmt.Errorf("Failed to open session: %v", msg.err)
+				m.err = fmt.Errorf("failed to open session: %v", msg.err)
 			}
 		} else {
 			m.err = nil // Clear any previous errors
@@ -363,10 +362,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case exportCompletedMsg:
 		if msg.success {
 			// Show success message with file path
-			m.err = fmt.Errorf("Success: Exported to %s", msg.filePath)
+			m.err = fmt.Errorf("success: exported to %s", msg.filePath)
 		} else {
 			// Show error
-			m.err = fmt.Errorf("Export failed: %v", msg.err)
+			m.err = fmt.Errorf("export failed: %v", msg.err)
 		}
 		return m, nil
 

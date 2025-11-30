@@ -77,7 +77,7 @@ func runSummarize(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 
 	// Get sessions that need processing
 	sessions, err := getSummarizableSessions(database, summarizeLimit, summarizeForce)
@@ -253,7 +253,7 @@ func getSummarizableSessions(database *db.DB, limit int, force bool) ([]summariz
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var sessions []summarizeSessionInfo
 	for rows.Next() {
@@ -277,7 +277,7 @@ func getSessionMessages(database *db.DB, sessionID string) ([]llm.Message, error
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var messages []llm.Message
 	for rows.Next() {

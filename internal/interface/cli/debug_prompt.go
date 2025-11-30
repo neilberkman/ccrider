@@ -29,7 +29,7 @@ func runDebugPrompt(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 
 	// Use core function to get session launch info
 	session, lastCwd, err := database.GetSessionLaunchInfo(sessionID)

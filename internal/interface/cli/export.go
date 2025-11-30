@@ -97,7 +97,7 @@ func runExport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to query messages: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	// Build markdown content
 	var b strings.Builder

@@ -113,7 +113,7 @@ func (db *DB) SaveSessionSummary(summary SessionSummary) error {
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Upsert main summary
 	_, err = tx.Exec(`
@@ -184,7 +184,7 @@ func (db *DB) GetSessionSummary(sessionID int64) (*SessionSummary, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
 		var c ChunkSummary
@@ -212,7 +212,7 @@ func (db *DB) SaveSessionIssues(sessionID int64, issues []SessionIssue) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Clear existing issues for this session
 	_, err = tx.Exec(`DELETE FROM session_issues WHERE session_id = ?`, sessionID)
@@ -243,7 +243,7 @@ func (db *DB) FindSessionsByIssueID(issueID string) ([]int64, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var ids []int64
 	for rows.Next() {
@@ -272,7 +272,7 @@ func (db *DB) SaveSessionFiles(sessionID int64, files []SessionFile) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Clear existing files for this session
 	_, err = tx.Exec(`DELETE FROM session_files WHERE session_id = ?`, sessionID)
@@ -303,7 +303,7 @@ func (db *DB) FindSessionsByFilePath(filePath string) ([]int64, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var ids []int64
 	for rows.Next() {
@@ -335,7 +335,7 @@ func (db *DB) ListUnsummarizedSessions(limit int) ([]struct {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var sessions []struct {
 		ID           int64

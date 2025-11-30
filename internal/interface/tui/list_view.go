@@ -71,7 +71,7 @@ func (d sessionDelegate) Render(w io.Writer, m list.Model, index int, item list.
 		}
 	}
 
-	fmt.Fprintf(w, "%s\n%s", title, desc)
+	_, _ = fmt.Fprintf(w, "%s\n%s", title, desc)
 }
 
 func createSessionList(sessions []sessionItem, width, height int) list.Model {

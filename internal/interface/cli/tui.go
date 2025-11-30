@@ -33,7 +33,7 @@ func runTUI(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 
 	model := tui.New(database)
 	p := tea.NewProgram(
@@ -109,13 +109,13 @@ func execClaude(sessionID, projectPath, lastCwd, updatedAt, summary string, fork
 	if err != nil {
 		return fmt.Errorf("failed to create temp file: %w", err)
 	}
-	defer os.Remove(tmpfile.Name())
+	defer func() { _ = os.Remove(tmpfile.Name()) }()
 
 	if _, err := tmpfile.Write([]byte(resumePrompt)); err != nil {
-		tmpfile.Close()
+		_ = tmpfile.Close()
 		return fmt.Errorf("failed to write prompt: %w", err)
 	}
-	tmpfile.Close()
+	_ = tmpfile.Close()
 
 	// Build claude command with prompt from file
 	var cmd string

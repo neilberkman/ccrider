@@ -18,26 +18,6 @@ import (
 	"github.com/neilberkman/ccrider/internal/core/terminal"
 )
 
-// buildClaudeCommand creates a claude --resume command with configured flags
-func buildClaudeCommand(sessionID, workDir string, withPrompt bool) string {
-	cfg, _ := config.Load()
-
-	claudeCmd := "claude"
-	if cfg != nil && len(cfg.ClaudeFlags) > 0 {
-		claudeCmd += " " + strings.Join(cfg.ClaudeFlags, " ")
-	}
-	claudeCmd += " --resume " + sessionID
-
-	if withPrompt {
-		claudeCmd += " '%s'" // Placeholder for prompt
-	}
-
-	if workDir != "" {
-		return fmt.Sprintf("cd %s && %s", workDir, claudeCmd)
-	}
-	return claudeCmd
-}
-
 func createViewport(detail sessionDetail, width, height int) viewport.Model {
 	vp := viewport.New(width, height-8)
 	result := renderConversation(detail, "", nil, -1, width, nil)
@@ -110,8 +90,8 @@ func renderConversation(detail sessionDetail, query string, matches []int, curre
 	lines := strings.Split(baseContent, "\n")
 
 	// Get current match info
-	var currentLineNum int = -1
-	var currentOccurrenceIdx int = -1
+	currentLineNum := -1
+	currentOccurrenceIdx := -1
 	if currentMatchIdx >= 0 && currentMatchIdx < len(matchOccurrences) {
 		currentLineNum = matchOccurrences[currentMatchIdx].LineNumber
 		currentOccurrenceIdx = matchOccurrences[currentMatchIdx].OccurrenceOnLine
@@ -187,9 +167,9 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			case "j", "down", "k", "up":
 				// Manual scrolling
 				if msg.String() == "j" || msg.String() == "down" {
-					m.viewport.LineDown(1)
+					m.viewport.ScrollDown(1)
 				} else {
-					m.viewport.LineUp(1)
+					m.viewport.ScrollUp(1)
 				}
 				return m, nil
 
@@ -227,9 +207,9 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			case "j", "down", "k", "up":
 				// Manual scrolling
 				if msg.String() == "j" || msg.String() == "down" {
-					m.viewport.LineDown(1)
+					m.viewport.ScrollDown(1)
 				} else {
-					m.viewport.LineUp(1)
+					m.viewport.ScrollUp(1)
 				}
 				return m, nil
 
@@ -356,19 +336,19 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "j", "down":
-		m.viewport.LineDown(1)
+		m.viewport.ScrollDown(1)
 		return m, nil
 
 	case "k", "up":
-		m.viewport.LineUp(1)
+		m.viewport.ScrollUp(1)
 		return m, nil
 
 	case "d":
-		m.viewport.HalfViewDown()
+		m.viewport.HalfPageDown()
 		return m, nil
 
 	case "u":
-		m.viewport.HalfViewUp()
+		m.viewport.HalfPageUp()
 		return m, nil
 
 	case "g":
@@ -387,54 +367,7 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // highlightQueryInContent highlights query matches in content, line by line
 // Uses currentMatchLine to apply special highlighting to the active match
-func highlightQueryInContent(content, query string, startLine, currentMatchLine int) string {
-	if query == "" {
-		return content
-	}
 
-	lines := strings.Split(content, "\n")
-	var result strings.Builder
-
-	// DEBUG: Log every line that contains the query to see line number comparisons
-	f, _ := os.OpenFile("/tmp/ccrider-debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-
-	for i, line := range lines {
-		lineNumber := startLine + i
-		// Check if this line is the currently selected match
-		isCurrent := (lineNumber == currentMatchLine)
-
-		// DEBUG: Log every line with a match to see comparisons
-		if f != nil && strings.Contains(strings.ToLower(line), strings.ToLower(query)) {
-			truncated := line
-			if len(truncated) > 50 {
-				truncated = truncated[:50]
-			}
-			fmt.Fprintf(f, "[LINE %d] isCurrent=%v (comparing %d == %d): %s\n",
-				lineNumber, isCurrent, lineNumber, currentMatchLine, truncated)
-		}
-
-		// Highlight all matches in this line
-		highlightedLine := highlightLineWithStyle(line, query, isCurrent)
-		result.WriteString(highlightedLine)
-
-		if i < len(lines)-1 {
-			result.WriteString("\n")
-		}
-	}
-
-	if f != nil {
-		f.Close()
-	}
-
-	return result.String()
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
 
 // highlightLineWithOccurrence highlights all occurrences of query in a single line
 // If isCurrent is true, the occurrence at currentOccurrenceIdx gets green+underline, rest get yellow
@@ -487,56 +420,10 @@ func highlightLineWithOccurrence(text, query string, isCurrent bool, currentOccu
 
 // highlightLineWithStyle highlights all occurrences of query in a single line
 // Kept for compatibility - uses first occurrence as current
-func highlightLineWithStyle(text, query string, isCurrent bool) string {
-	return highlightLineWithOccurrence(text, query, isCurrent, 0)
-}
 
 // highlightQueryWithStyle highlights ALL occurrences of query in text
 // All matches get yellow, except if this is the current match message we highlight ALL in green
 // TODO: This should be fixed to only highlight the SPECIFIC occurrence, not the whole message
-func highlightQueryWithStyle(text, query string, isCurrent bool) string {
-	if query == "" {
-		return text
-	}
-
-	// For now: if this is the current message, highlight all occurrences in green
-	// Otherwise highlight all in yellow
-	style := searchMatchStyle
-	if isCurrent {
-		style = searchCurrentMatchStyle
-	}
-
-	// Highlight ALL occurrences case-insensitively
-	lower := strings.ToLower(text)
-	lowerQuery := strings.ToLower(query)
-
-	var result strings.Builder
-	lastIdx := 0
-
-	for {
-		idx := strings.Index(lower[lastIdx:], lowerQuery)
-		if idx == -1 {
-			// No more matches, append the rest
-			result.WriteString(text[lastIdx:])
-			break
-		}
-
-		// Adjust idx to be relative to original text
-		idx += lastIdx
-
-		// Append text before match
-		result.WriteString(text[lastIdx:idx])
-
-		// Append highlighted match (all in same style for this message)
-		match := text[idx : idx+len(query)]
-		result.WriteString(style.Render(match))
-
-		// Move past this match
-		lastIdx = idx + len(query)
-	}
-
-	return result.String()
-}
 
 // findMatchesInRenderedContent uses Shannon's approach:
 // 1. Render the full conversation to a string
@@ -608,14 +495,6 @@ func findMatches(messages []messageItem, query string) []int {
 }
 
 // contains checks if slice contains value
-func contains(slice []int, val int) bool {
-	for _, v := range slice {
-		if v == val {
-			return true
-		}
-	}
-	return false
-}
 
 // scrollToMatchSmart scrolls viewport intelligently for n/p navigation:
 // - If match already visible, don't scroll (preserve context)
@@ -843,12 +722,12 @@ func openInNewTerminal(sessionID, projectPath, lastCwd, updatedAt, summary strin
 			Message:    "Starting Claude Code (this may take a few seconds)...",
 		}
 
-		fmt.Fprintf(os.Stderr, "[DEBUG openInNewTerminal] About to spawn terminal\n")
-		fmt.Fprintf(os.Stderr, "[DEBUG openInNewTerminal] WorkingDir: %s\n", workDir)
-		fmt.Fprintf(os.Stderr, "[DEBUG openInNewTerminal] Command: %s\n", shellCmd)
+		_, _ = fmt.Fprintf(os.Stderr, "[DEBUG openInNewTerminal] About to spawn terminal\n")
+		_, _ = fmt.Fprintf(os.Stderr, "[DEBUG openInNewTerminal] WorkingDir: %s\n", workDir)
+		_, _ = fmt.Fprintf(os.Stderr, "[DEBUG openInNewTerminal] Command: %s\n", shellCmd)
 
 		if err := spawner.Spawn(spawnCfg); err != nil {
-			fmt.Fprintf(os.Stderr, "[DEBUG openInNewTerminal] Spawn failed: %v\n", err)
+			_, _ = fmt.Fprintf(os.Stderr, "[DEBUG openInNewTerminal] Spawn failed: %v\n", err)
 			return terminalSpawnedMsg{
 				success:     false,
 				err:         err,
@@ -860,7 +739,7 @@ func openInNewTerminal(sessionID, projectPath, lastCwd, updatedAt, summary strin
 			}
 		}
 
-		fmt.Fprintf(os.Stderr, "[DEBUG openInNewTerminal] Spawn succeeded\n")
+		_, _ = fmt.Fprintf(os.Stderr, "[DEBUG openInNewTerminal] Spawn succeeded\n")
 
 		return terminalSpawnedMsg{
 			success: true,

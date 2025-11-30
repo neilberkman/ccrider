@@ -171,9 +171,10 @@ func parseMessage(raw *rawEntry, sequence int) (*ParsedMessage, error) {
 		if err := json.Unmarshal(raw.Message, &userMsgArray); err == nil {
 			// Extract text from text blocks and tool_result blocks
 			for _, block := range userMsgArray.Content {
-				if block.Type == "text" {
+				switch block.Type {
+				case "text":
 					msg.TextContent += block.Text + "\n"
-				} else if block.Type == "tool_result" {
+				case "tool_result":
 					// Extract text from nested content in tool_result
 					for _, nested := range block.Content {
 						if nested.Type == "text" && nested.Text != "" {

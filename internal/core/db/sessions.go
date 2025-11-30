@@ -109,7 +109,7 @@ func (db *DB) ListSessions(projectPath string) ([]Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var sessions []Session
 	for rows.Next() {
@@ -225,7 +225,7 @@ func (db *DB) GetSessionDetail(sessionID string) (*SessionDetail, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
 		var msg SessionMessage

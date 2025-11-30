@@ -33,11 +33,11 @@ func (s *Spinner) Start() {
 			select {
 			case <-s.stop:
 				// Clear the line
-				fmt.Fprintf(s.writer, "\r\033[K")
+				_, _ = fmt.Fprintf(s.writer, "\r\033[K")
 				return
 			default:
 				// Print frame
-				fmt.Fprintf(s.writer, "\r%s %s", frames[i], s.message)
+				_, _ = fmt.Fprintf(s.writer, "\r%s %s", frames[i], s.message)
 				i = (i + 1) % len(frames)
 				time.Sleep(80 * time.Millisecond)
 			}

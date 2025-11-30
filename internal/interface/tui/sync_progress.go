@@ -5,40 +5,12 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/bubbletea"
 )
 
-// tuiProgressReporter sends progress updates via a channel that the TUI can subscribe to
-type tuiProgressReporter struct {
-	total     int
-	current   int
-	startTime time.Time
-	program   *tea.Program
-}
-
-func newTUIProgressReporter(total int, p *tea.Program) *tuiProgressReporter {
-	return &tuiProgressReporter{
-		total:     total,
-		current:   0,
-		startTime: time.Now(),
-		program:   p,
-	}
-}
-
-func (r *tuiProgressReporter) Update(sessionSummary string, firstMsg string) {
-	r.current++
-	if r.program != nil {
-		r.program.Send(syncProgressMsg{
-			current:     r.current,
-			total:       r.total,
-			sessionName: sessionSummary,
-		})
-	}
-}
-
-func (r *tuiProgressReporter) Finish() {
-	// Progress done
-}
+// Keep imports for future use
+var _ = tea.Quit
+var _ = time.Now
 
 // renderProgressBar creates a visual progress bar like the CLI
 func renderProgressBar(current, total int, width int) string {
