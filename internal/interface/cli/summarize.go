@@ -4,25 +4,38 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/neilberkman/ccrider/internal/core/db"
 	"github.com/neilberkman/ccrider/internal/core/llm"
 	"github.com/spf13/cobra"
 )
 
+// Env vars for Bedrock credentials (so you don't put them on command line)
+// CCRIDER_AWS_ACCESS_KEY_ID
+// CCRIDER_AWS_SECRET_ACCESS_KEY
+// CCRIDER_AWS_REGION
+// CCRIDER_AWS_PROFILE
+
 var (
 	summarizeLimit   int
 	summarizeForce   bool
 	summarizeModel   string
 	summarizeRegion  string
+	summarizeProfile string
 	summarizeVerbose bool
+	summarizeExtract bool
 )
 
 var summarizeCmd = &cobra.Command{
 	Use:   "summarize",
 	Short: "Generate LLM summaries for sessions",
-	Long: `Generate summaries for sessions using an LLM provider.
+	Long: `Generate hierarchical summaries for sessions using an LLM provider.
+
+Features:
+- Progressive chunk-based summarization for long sessions
+- Two-tier summaries: one-line (for lists) and full (detailed)
+- Metadata extraction: issue IDs (ENA-1234) and file paths
+- Incremental updates when sessions grow
 
 Currently supports AWS Bedrock with Claude models. Requires AWS credentials
 to be configured (via environment, profile, or IAM role).
@@ -38,7 +51,10 @@ Examples:
   ccrider summarize --force --limit 100
 
   # Use a specific model
-  ccrider summarize --model anthropic.claude-3-sonnet-20240229-v1:0`,
+  ccrider summarize --model anthropic.claude-3-sonnet-20240229-v1:0
+
+  # Extract metadata only (no LLM calls)
+  ccrider summarize --extract-only`,
 	RunE: runSummarize,
 }
 
@@ -48,6 +64,7 @@ func init() {
 	summarizeCmd.Flags().StringVar(&summarizeModel, "model", "", "Bedrock model ID (default: claude-3-haiku)")
 	summarizeCmd.Flags().StringVar(&summarizeRegion, "region", "", "AWS region (default: us-east-1)")
 	summarizeCmd.Flags().BoolVarP(&summarizeVerbose, "verbose", "v", false, "Show verbose output")
+	summarizeCmd.Flags().BoolVar(&summarizeExtract, "extract-only", false, "Only extract metadata (issue IDs, files), no LLM calls")
 
 	rootCmd.AddCommand(summarizeCmd)
 }
@@ -62,50 +79,10 @@ func runSummarize(cmd *cobra.Command, args []string) error {
 	}
 	defer database.Close()
 
-	// Create Bedrock provider
-	provider, err := llm.NewBedrockProvider(ctx, llm.BedrockConfig{
-		Region:  summarizeRegion,
-		ModelID: summarizeModel,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create LLM provider: %w", err)
-	}
-
-	summarizer := llm.NewSummarizer(provider)
-
-	// Query sessions that need summarization
-	whereClause := "WHERE llm_summary IS NULL OR llm_summary = ''"
-	if summarizeForce {
-		whereClause = ""
-	}
-
-	query := fmt.Sprintf(`
-		SELECT s.session_id, s.project_path, s.summary
-		FROM sessions s
-		%s
-		ORDER BY s.updated_at DESC
-		LIMIT ?
-	`, whereClause)
-
-	rows, err := database.Query(query, summarizeLimit)
+	// Get sessions that need processing
+	sessions, err := getSummarizableSessions(database, summarizeLimit, summarizeForce)
 	if err != nil {
 		return fmt.Errorf("failed to query sessions: %w", err)
-	}
-	defer rows.Close()
-
-	type sessionInfo struct {
-		sessionID   string
-		projectPath string
-		summary     string
-	}
-
-	var sessions []sessionInfo
-	for rows.Next() {
-		var s sessionInfo
-		if err := rows.Scan(&s.sessionID, &s.projectPath, &s.summary); err != nil {
-			return fmt.Errorf("failed to scan session: %w", err)
-		}
-		sessions = append(sessions, s)
 	}
 
 	if len(sessions) == 0 {
@@ -113,60 +90,180 @@ func runSummarize(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	fmt.Printf("Summarizing %d sessions using %s...\n", len(sessions), provider.Name())
+	// Initialize components
+	extractor := llm.NewMetadataExtractor()
+
+	var summarizer *llm.HierarchicalSummarizer
+	if !summarizeExtract {
+		// Check env vars for AWS credentials
+		region := summarizeRegion
+		if region == "" {
+			region = os.Getenv("CCRIDER_AWS_REGION")
+		}
+		accessKey := os.Getenv("AWS_ACCESS_KEY_ID")
+		if v := os.Getenv("CCRIDER_AWS_ACCESS_KEY_ID"); v != "" {
+			accessKey = v
+		}
+		secretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
+		if v := os.Getenv("CCRIDER_AWS_SECRET_ACCESS_KEY"); v != "" {
+			secretKey = v
+		}
+		profile := summarizeProfile
+		if profile == "" {
+			profile = os.Getenv("CCRIDER_AWS_PROFILE")
+		}
+
+		provider, err := llm.NewBedrockProvider(ctx, llm.BedrockConfig{
+			Region:          region,
+			ModelID:         summarizeModel,
+			Profile:         profile,
+			AccessKeyID:     accessKey,
+			SecretAccessKey: secretKey,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create LLM provider: %w", err)
+		}
+		summarizer = llm.NewHierarchicalSummarizer(provider)
+		fmt.Printf("Summarizing %d sessions using %s...\n", len(sessions), provider.Name())
+	} else {
+		fmt.Printf("Extracting metadata from %d sessions...\n", len(sessions))
+	}
 
 	// Process each session
+	var successCount, skipCount, errorCount int
 	for i, s := range sessions {
 		// Get messages for this session
 		messages, err := getSessionMessages(database, s.sessionID)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to get messages for %s: %v\n", s.sessionID, err)
+			errorCount++
 			continue
 		}
 
 		if len(messages) == 0 {
 			if summarizeVerbose {
-				fmt.Printf("[%d/%d] %s: no messages, skipping\n", i+1, len(sessions), s.sessionID[:8])
+				fmt.Printf("[%d/%d] %s: no messages, skipping\n", i+1, len(sessions), truncateID(s.sessionID))
 			}
+			skipCount++
 			continue
 		}
 
-		// Generate summary
-		req := llm.SummaryRequest{
-			SessionID:       s.sessionID,
-			ProjectPath:     s.projectPath,
-			Messages:        messages,
-			ExistingSummary: s.summary,
+		// Extract metadata (always do this)
+		issues := extractor.ExtractIssues(messages)
+		files := extractor.ExtractFiles(messages)
+
+		// Save extracted metadata
+		if len(issues) > 0 {
+			for j := range issues {
+				issues[j].SessionID = s.id
+			}
+			if err := database.SaveSessionIssues(s.id, issues); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to save issues for %s: %v\n", s.sessionID, err)
+			}
+		}
+		if len(files) > 0 {
+			for j := range files {
+				files[j].SessionID = s.id
+			}
+			if err := database.SaveSessionFiles(s.id, files); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to save files for %s: %v\n", s.sessionID, err)
+			}
 		}
 
-		summary, err := summarizer.Summarize(ctx, req)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to summarize %s: %v\n", s.sessionID, err)
-			continue
-		}
+		// Generate summary (unless extract-only mode)
+		if !summarizeExtract && summarizer != nil {
+			req := llm.SummaryRequest{
+				SessionID:   s.sessionID,
+				ProjectPath: s.projectPath,
+				Messages:    messages,
+			}
 
-		// Clean up summary
-		summary = strings.TrimSpace(summary)
+			summary, err := summarizer.SummarizeSession(ctx, req)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to summarize %s: %v\n", s.sessionID, err)
+				errorCount++
+				continue
+			}
 
-		// Save to database
-		if err := database.UpdateLLMSummary(s.sessionID, summary); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to save summary for %s: %v\n", s.sessionID, err)
-			continue
-		}
+			// Save summary
+			summary.SessionID = s.id
+			if err := database.SaveSessionSummary(*summary); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to save summary for %s: %v\n", s.sessionID, err)
+				errorCount++
+				continue
+			}
 
-		if summarizeVerbose {
-			fmt.Printf("[%d/%d] %s: %s\n", i+1, len(sessions), s.sessionID[:8], truncate(summary, 60))
+			if summarizeVerbose {
+				fmt.Printf("[%d/%d] %s: %s (issues:%d files:%d chunks:%d)\n",
+					i+1, len(sessions), truncateID(s.sessionID),
+					truncate(summary.OneLine, 50),
+					len(issues), len(files), len(summary.ChunkSummaries))
+			} else {
+				fmt.Printf(".")
+			}
 		} else {
-			fmt.Printf(".")
+			if summarizeVerbose {
+				fmt.Printf("[%d/%d] %s: extracted (issues:%d files:%d)\n",
+					i+1, len(sessions), truncateID(s.sessionID),
+					len(issues), len(files))
+			} else {
+				fmt.Printf(".")
+			}
 		}
+
+		successCount++
 	}
 
 	if !summarizeVerbose {
 		fmt.Println()
 	}
 
-	fmt.Println("Done!")
+	fmt.Printf("Done! Processed: %d, Skipped: %d, Errors: %d\n", successCount, skipCount, errorCount)
 	return nil
+}
+
+type summarizeSessionInfo struct {
+	id          int64
+	sessionID   string
+	projectPath string
+}
+
+func getSummarizableSessions(database *db.DB, limit int, force bool) ([]summarizeSessionInfo, error) {
+	var query string
+	if force {
+		query = `
+			SELECT s.id, s.session_id, s.project_path
+			FROM sessions s
+			WHERE s.message_count > 0
+			ORDER BY s.updated_at DESC
+			LIMIT ?
+		`
+	} else {
+		query = `
+			SELECT s.id, s.session_id, s.project_path
+			FROM sessions s
+			LEFT JOIN session_summaries ss ON s.id = ss.session_id
+			WHERE s.message_count > 0 AND (ss.session_id IS NULL OR s.message_count > ss.last_message_count)
+			ORDER BY s.updated_at DESC
+			LIMIT ?
+		`
+	}
+
+	rows, err := database.Query(query, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var sessions []summarizeSessionInfo
+	for rows.Next() {
+		var s summarizeSessionInfo
+		if err := rows.Scan(&s.id, &s.sessionID, &s.projectPath); err != nil {
+			return nil, err
+		}
+		sessions = append(sessions, s)
+	}
+	return sessions, nil
 }
 
 func getSessionMessages(database *db.DB, sessionID string) ([]llm.Message, error) {
@@ -208,4 +305,11 @@ func truncate(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen-3] + "..."
+}
+
+func truncateID(id string) string {
+	if len(id) > 8 {
+		return id[:8]
+	}
+	return id
 }

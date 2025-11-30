@@ -166,15 +166,26 @@ func parseMessage(raw *rawEntry, sequence int) (*ParsedMessage, error) {
 		var userMsgArray struct {
 			Role    string `json:"role"`
 			Content []struct {
-				Type string `json:"type"`
-				Text string `json:"text,omitempty"`
+				Type    string `json:"type"`
+				Text    string `json:"text,omitempty"`
+				Content []struct {
+					Type string `json:"type"`
+					Text string `json:"text,omitempty"`
+				} `json:"content,omitempty"` // For tool_result blocks
 			} `json:"content"`
 		}
 		if err := json.Unmarshal(raw.Message, &userMsgArray); err == nil {
-			// Extract text from text blocks only
+			// Extract text from text blocks and tool_result blocks
 			for _, block := range userMsgArray.Content {
 				if block.Type == "text" {
 					msg.TextContent += block.Text + "\n"
+				} else if block.Type == "tool_result" {
+					// Extract text from nested content in tool_result
+					for _, nested := range block.Content {
+						if nested.Type == "text" && nested.Text != "" {
+							msg.TextContent += nested.Text + "\n"
+						}
+					}
 				}
 			}
 			msg.Sender = "human"
