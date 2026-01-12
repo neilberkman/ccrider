@@ -4,14 +4,16 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
 	"time"
 )
 
 // Spinner shows a simple spinning animation while waiting
 type Spinner struct {
-	writer  io.Writer
-	message string
-	stop    chan bool
+	writer   io.Writer
+	message  string
+	stop     chan struct{}
+	stopOnce sync.Once
 }
 
 // NewSpinner creates a new spinner with a message
@@ -19,7 +21,7 @@ func NewSpinner(message string) *Spinner {
 	return &Spinner{
 		writer:  os.Stderr,
 		message: message,
-		stop:    make(chan bool),
+		stop:    make(chan struct{}),
 	}
 }
 
@@ -45,8 +47,9 @@ func (s *Spinner) Start() {
 	}()
 }
 
-// Stop stops the spinner and clears the line
+// Stop stops the spinner and clears the line. Safe to call multiple times.
 func (s *Spinner) Stop() {
-	s.stop <- true
-	close(s.stop)
+	s.stopOnce.Do(func() {
+		close(s.stop)
+	})
 }

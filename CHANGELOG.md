@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.9.9] - 2026-01-12
+
+### Fixed
+
+- **Spinner panic on resume** - fixed "send on closed channel" crash when resuming sessions. The spinner's Stop() method is now idempotent, safe to call multiple times (fixes #2).
+
 ## [0.9.8] - 2026-01-12
 
 ### Added
