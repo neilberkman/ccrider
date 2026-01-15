@@ -37,6 +37,12 @@ func runSync(cmd *cobra.Command, args []string) error {
 		sourcePath = args[0]
 	}
 
+	// Resolve symlinks (filepath.Walk doesn't follow them)
+	resolved, err := filepath.EvalSymlinks(sourcePath)
+	if err == nil {
+		sourcePath = resolved
+	}
+
 	fmt.Printf("Syncing sessions from: %s\n", sourcePath)
 	fmt.Printf("Database: %s\n\n", dbPath)
 
