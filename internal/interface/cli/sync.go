@@ -11,8 +11,7 @@ import (
 )
 
 var (
-	syncForce          bool
-	syncSkipSubagents  bool
+	syncForce bool
 )
 
 var syncCmd = &cobra.Command{
@@ -28,7 +27,6 @@ Use --force to re-import all sessions (fixes stale project_path values).`,
 
 func init() {
 	syncCmd.Flags().BoolVarP(&syncForce, "force", "f", false, "Force re-import of all sessions")
-	syncCmd.Flags().BoolVar(&syncSkipSubagents, "skip-subagents", true, "Skip subagent session files (default: true)")
 	rootCmd.AddCommand(syncCmd)
 }
 
@@ -85,8 +83,8 @@ func runSync(cmd *cobra.Command, args []string) error {
 	imp := importer.New(database)
 	progress := importer.NewProgressReporter(os.Stdout, total)
 
-	// Import
-	skipped, err := imp.ImportDirectory(sourcePath, progress, syncForce, syncSkipSubagents)
+	// Import (always skip subagents - they conflict with parent sessions)
+	skipped, err := imp.ImportDirectory(sourcePath, progress, syncForce, true)
 	if err != nil {
 		return fmt.Errorf("import failed: %w", err)
 	}
