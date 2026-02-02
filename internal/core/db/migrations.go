@@ -12,6 +12,11 @@ func (db *DB) migrate() error {
 		return err
 	}
 
+	// Migration 3: Add file tracking columns for fast import checks
+	if err := db.migration003AddFileTrackingColumns(); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -109,4 +114,29 @@ func (db *DB) migration002CreateSummaryTables() error {
 
 	_, err := db.conn.Exec(schema)
 	return err
+}
+
+// migration003AddFileTrackingColumns adds inode and device columns for fast change detection
+func (db *DB) migration003AddFileTrackingColumns() error {
+	var count int
+	err := db.conn.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name='file_inode'
+	`).Scan(&count)
+	if err != nil {
+		return err
+	}
+
+	if count == 0 {
+		// Add inode for tracking file identity (catches moves/renames)
+		_, err = db.conn.Exec(`ALTER TABLE sessions ADD COLUMN file_inode INTEGER`)
+		if err != nil {
+			return err
+		}
+		// Add device ID to ensure inode is unique across filesystems
+		_, err = db.conn.Exec(`ALTER TABLE sessions ADD COLUMN file_device INTEGER`)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }

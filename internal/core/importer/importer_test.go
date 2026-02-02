@@ -35,8 +35,15 @@ func TestImportSession(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Get file identity for the test file
+	inode, device, err := getFileIdentity(session.FilePath)
+	if err != nil {
+		// OK if not available, use 0
+		inode, device = 0, 0
+	}
+
 	// Import it
-	err = imp.ImportSession(session, 0)
+	err = imp.ImportSession(session, 0, inode, device)
 	if err != nil {
 		t.Fatalf("ImportSession() error = %v", err)
 	}
@@ -90,13 +97,16 @@ func TestImportSession_ResumedSession(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = imp.ImportSession(session1, 0)
+	// Get file identity
+	inode, device, _ := getFileIdentity(session1.FilePath)
+
+	err = imp.ImportSession(session1, 0, inode, device)
 	if err != nil {
 		t.Fatalf("ImportSession() error = %v", err)
 	}
 
 	// Import the same session again (simulating resumed session)
-	err = imp.ImportSession(session1, 0)
+	err = imp.ImportSession(session1, 0, inode, device)
 	if err != nil {
 		t.Fatalf("ImportSession() second import error = %v", err)
 	}
@@ -151,7 +161,10 @@ func TestImportSession_AgentSession(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = imp.ImportSession(session, 0)
+	// Get file identity
+	inode, device, _ := getFileIdentity(session.FilePath)
+
+	err = imp.ImportSession(session, 0, inode, device)
 	if err != nil {
 		t.Fatalf("ImportSession() error = %v", err)
 	}

@@ -60,6 +60,20 @@ func runSync(cmd *cobra.Command, args []string) error {
 		_ = database.Close()
 	}()
 
+	// Check if we need one-time migration sync
+	if !syncForce {
+		needsMigrationSync, err := database.NeedsMigrationSync()
+		if err != nil {
+			return fmt.Errorf("failed to check migration status: %w", err)
+		}
+		if needsMigrationSync {
+			fmt.Println("⚡ One-time optimization: Populating file tracking data for fast incremental syncs...")
+			fmt.Println("   This will take a minute but makes future syncs much faster.")
+			fmt.Println()
+			syncForce = true
+		}
+	}
+
 	// Count total files for progress
 	total, err := countJSONLFiles(sourcePath)
 	if err != nil {
@@ -75,12 +89,18 @@ func runSync(cmd *cobra.Command, args []string) error {
 	imp := importer.New(database)
 	progress := importer.NewProgressReporter(os.Stdout, total)
 
-	// Import
-	if err := imp.ImportDirectory(sourcePath, progress, syncForce); err != nil {
+	// Import (always skip subagents - they conflict with parent sessions)
+	skipped, err := imp.ImportDirectory(sourcePath, progress, syncForce, true)
+	if err != nil {
 		return fmt.Errorf("import failed: %w", err)
 	}
 
 	progress.Finish()
+
+	if skipped > 0 && !syncForce {
+		skipRate := float64(skipped) / float64(total) * 100
+		fmt.Printf("\nSkipped %d/%d files (%.1f%% unchanged)\n", skipped, total, skipRate)
+	}
 
 	return nil
 }
