@@ -8,7 +8,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/neilberkman/ccrider/internal/core/db"
@@ -27,8 +29,8 @@ func New(database *db.DB) *Importer {
 
 // ImportSession imports a single parsed session, optionally skipping already-imported messages
 // existingMessageCount: number of messages we already have for this session (0 for new sessions)
-func (i *Importer) ImportSession(session *ccsessions.ParsedSession, existingMessageCount int) error {
-	// Compute file hash
+func (i *Importer) ImportSession(session *ccsessions.ParsedSession, existingMessageCount int, fileInode, fileDevice uint64) error {
+	// Compute file hash (this is the most expensive operation, done last in ImportDirectory checks)
 	hash, err := computeFileHash(session.FilePath)
 	if err != nil {
 		return fmt.Errorf("failed to hash file: %w", err)
@@ -73,8 +75,8 @@ func (i *Importer) ImportSession(session *ccsessions.ParsedSession, existingMess
 		INSERT INTO sessions (
 			session_id, project_path, summary, leaf_uuid, cwd,
 			created_at, updated_at, message_count, file_hash,
-			file_size, file_mtime
-		) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+			file_size, file_mtime, file_inode, file_device
+		) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
 		ON CONFLICT(session_id) DO UPDATE SET
 			project_path = excluded.project_path,
 			summary = CASE
@@ -105,6 +107,16 @@ func (i *Importer) ImportSession(session *ccsessions.ParsedSession, existingMess
 			file_mtime = CASE
 				WHEN excluded.file_mtime > sessions.file_mtime THEN excluded.file_mtime
 				ELSE sessions.file_mtime
+			END,
+			file_inode = CASE
+				WHEN excluded.file_mtime > sessions.file_mtime THEN excluded.file_inode
+				WHEN sessions.file_inode IS NULL THEN excluded.file_inode
+				ELSE sessions.file_inode
+			END,
+			file_device = CASE
+				WHEN excluded.file_mtime > sessions.file_mtime THEN excluded.file_device
+				WHEN sessions.file_device IS NULL THEN excluded.file_device
+				ELSE sessions.file_device
 			END
 	`,
 		session.SessionID,
@@ -117,6 +129,8 @@ func (i *Importer) ImportSession(session *ccsessions.ParsedSession, existingMess
 		hash,
 		session.FileSize,
 		session.FileMtime,
+		fileInode,
+		fileDevice,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to upsert session: %w", err)
@@ -212,67 +226,207 @@ func (i *Importer) ImportSession(session *ccsessions.ParsedSession, existingMess
 
 // ImportDirectory imports all sessions from a directory tree
 // If force is true, re-imports all sessions regardless of mtime
-func (i *Importer) ImportDirectory(dirPath string, progress ProgressCallback, force bool) error {
-	// Find all .jsonl files
+// If skipSubagents is true, skips files in subagents/ directories and agent-* files
+// Returns the number of skipped files and an error
+func (i *Importer) ImportDirectory(dirPath string, progress ProgressCallback, force bool, skipSubagents bool) (int, error) {
+	// Find all .jsonl files (optionally skipping subagents)
 	var files []string
 	err := filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 		if !info.IsDir() && filepath.Ext(path) == ".jsonl" {
+			// Skip subagent files if requested
+			if skipSubagents {
+				// Skip files in subagents/ directories
+				if strings.Contains(path, "/subagents/") {
+					return nil
+				}
+				// Skip files named agent-*
+				basename := filepath.Base(path)
+				if strings.HasPrefix(basename, "agent-") {
+					return nil
+				}
+			}
 			files = append(files, path)
 		}
 		return nil
 	})
 	if err != nil {
-		return fmt.Errorf("failed to walk directory: %w", err)
+		return 0, fmt.Errorf("failed to walk directory: %w", err)
 	}
 
-	// Import each file
-	skipped := 0
+	// Pre-load all session metadata for fast lookups (avoids N queries)
+	sessionMetadata := make(map[string]struct {
+		mtime        time.Time
+		size         int64
+		inode        uint64
+		device       uint64
+		messageCount int
+		hash         string
+	})
+
+	rows, err := i.db.Query(`
+		SELECT session_id, file_mtime, file_size, file_inode, file_device, COALESCE(message_count, 0), COALESCE(file_hash, '')
+		FROM sessions
+	`)
+	if err != nil {
+		return 0, fmt.Errorf("failed to load session metadata: %w", err)
+	}
+
+	for rows.Next() {
+		var sid string
+		var mtimeStr string
+		var size sql.NullInt64
+		var inode sql.NullInt64
+		var device sql.NullInt64
+		var msgCount int
+
+		var hash string
+		if err := rows.Scan(&sid, &mtimeStr, &size, &inode, &device, &msgCount, &hash); err != nil {
+			_ = rows.Close()
+			return 0, fmt.Errorf("failed to scan session metadata: %w", err)
+		}
+
+		// Try multiple time formats (DB may have different formats from different sync runs)
+		var mtime time.Time
+		var err error
+
+		// Try ISO 8601 format first (2026-01-24T15:07:52.813484196-08:00)
+		mtime, err = time.Parse(time.RFC3339Nano, mtimeStr)
+		if err != nil {
+			// Try Go time.String() format (2026-01-21 23:38:52.285893225 -0800 PST)
+			mtime, err = time.Parse("2006-01-02 15:04:05.999999999 -0700 MST", mtimeStr)
+			if err != nil {
+				// Both formats failed - this shouldn't happen, but log and continue
+				fmt.Printf("WARN: Failed to parse mtime for %s: %v (raw: %s)\n", sid, err, mtimeStr)
+			}
+		}
+
+		sessionMetadata[sid] = struct {
+			mtime        time.Time
+			size         int64
+			inode        uint64
+			device       uint64
+			messageCount int
+			hash         string
+		}{
+			mtime:        mtime,
+			size:         size.Int64,
+			inode:        uint64(inode.Int64),
+			device:       uint64(device.Int64),
+			messageCount: msgCount,
+			hash:         hash,
+		}
+	}
+	_ = rows.Close()
+
+	// Import each file with detailed counters
+	var (
+		skipped           = 0
+		failed            = 0
+		skippedMtimeSize  = 0
+		skippedHash       = 0
+		parsed            = 0
+		hashed            = 0
+		imported          = 0
+	)
+
 	for _, file := range files {
-		// Get file info for mtime check
+		// Get file info for multi-level change detection
 		fileInfo, err := os.Stat(file)
 		if err != nil {
-			// Silently skip files we can't stat (broken symlinks, deleted files)
+			// Silently skip files that were deleted between Walk and Stat (race condition)
+			if os.IsNotExist(err) {
+				skipped++
+				continue
+			}
+			// Real error - log it
+			fmt.Printf("WARN: Cannot stat file %s: %v\n", file, err)
+			failed++
 			continue
 		}
 		fileMtime := fileInfo.ModTime()
+		fileSize := fileInfo.Size()
+
+		// Get platform-specific file identity (inode/device on Unix)
+		fileInode, fileDevice, err := getFileIdentity(file)
+		if err != nil {
+			// Failed to get file identity - continue with mtime/size checks only
+			fileInode, fileDevice = 0, 0
+		}
 
 		// Extract session ID from filename
 		sessionID := filepath.Base(file)
 		sessionID = strings.TrimSuffix(sessionID, ".jsonl")
 
-		// Check if we have this session and if our copy is up-to-date
-		var dbMtime sql.NullTime
-		var messageCount int
-		err = i.db.QueryRow(`
-			SELECT file_mtime, COALESCE(message_count, 0)
-			FROM sessions
-			WHERE session_id = ?
-		`, sessionID).Scan(&dbMtime, &messageCount)
+		// Multi-level change detection: Check against pre-loaded metadata
+		metadata, exists := sessionMetadata[sessionID]
+		messageCount := 0
 
-		if err == nil && dbMtime.Valid && !force {
-			// We have this session - check if file changed
-			if !fileMtime.After(dbMtime.Time) {
-				// File hasn't been modified since we last imported - skip
+		if exists && !force {
+			messageCount = metadata.messageCount
+
+			// Level 1: Check mtime + size (sufficient to prove file unchanged)
+			// If BOTH match (within 1 second for mtime), file content is guaranteed unchanged
+			// We allow 1s tolerance because mtime precision varies across filesystems
+			mtimeDiff := fileMtime.Sub(metadata.mtime)
+			if mtimeDiff < 0 {
+				mtimeDiff = -mtimeDiff
+			}
+			if !metadata.mtime.IsZero() && mtimeDiff < time.Second && fileSize == metadata.size {
+				// File is unchanged - skip parsing
+				// NOTE: We don't check inode because:
+				// 1. Filesystems can reassign inodes (especially network/cloud storage)
+				// 2. mtime + size is already a perfect cache key
+				// 3. Inode-only changes without mtime change are impossible (OS updates mtime on write)
 				skipped++
+				skippedMtimeSize++
+				continue
+			}
+
+			// Level 4: Check if file is older than DB (clock skew / manipulation)
+			// This is suspicious but not necessarily wrong - continue to parse/hash
+			// The hash check in ImportSession will catch actual changes
+		}
+		// else: new session or force mode - need to import
+
+		// Before parsing, check hash (fast check to avoid expensive parse)
+		currentHash, err := computeFileHash(file)
+		hashed++
+		if err != nil {
+			fmt.Printf("WARN: Cannot hash file %s: %v\n", file, err)
+			failed++
+			continue
+		}
+
+		// If we have this session and hash matches, skip (file unchanged despite mtime/size/inode differences)
+		if exists {
+			var dbHash string
+			err := i.db.QueryRow(`SELECT file_hash FROM sessions WHERE session_id = ?`, sessionID).Scan(&dbHash)
+			if err == nil && dbHash == currentHash {
+				// Hash matches - file is actually unchanged
+				skipped++
+				skippedHash++
 				continue
 			}
 		}
-		// else: new session or no mtime, need to import
 
-		// Parse and import (passing existing message count for incremental import)
+		// Hash is different or new file - need to parse and import
 		session, err := ccsessions.ParseFile(file)
+		parsed++
 		if err != nil {
-			// Silently skip unparseable files (corrupted, truncated, etc.)
+			fmt.Printf("WARN: Cannot parse file %s: %v\n", file, err)
+			failed++
 			continue
 		}
 
-		if err := i.ImportSession(session, messageCount); err != nil {
-			// Silently skip files that fail to import
+		if err := i.ImportSession(session, messageCount, fileInode, fileDevice); err != nil {
+			fmt.Printf("WARN: Cannot import session %s: %v\n", sessionID, err)
+			failed++
 			continue
 		}
+		imported++
 
 		// Update progress
 		if progress != nil {
@@ -287,9 +441,12 @@ func (i *Importer) ImportDirectory(dirPath string, progress ProgressCallback, fo
 		}
 	}
 
-	// Note: Don't print "Skipped X files" - that's an interface concern (core should be silent)
+	// Report summary only if there were failures
+	if failed > 0 {
+		fmt.Printf("\nImport completed with %d failures (see warnings above)\n", failed)
+	}
 
-	return nil
+	return skipped, nil
 }
 
 func computeFileHash(path string) (string, error) {
@@ -349,4 +506,30 @@ func extractProjectPath(filePath string) string {
 	}
 
 	return dir
+}
+
+// getFileIdentity extracts platform-specific file identity info (inode, device)
+// Returns (inode, device, error). On platforms without inode support, returns (0, 0, nil)
+func getFileIdentity(path string) (uint64, uint64, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	// Extract platform-specific file identity
+	if runtime.GOOS == "windows" {
+		// Windows doesn't have inodes in the Unix sense
+		// Could use fileIndex from GetFileInformationByHandle, but requires unsafe
+		// For now, return 0,0 and rely on mtime/size/hash checks
+		return 0, 0, nil
+	}
+
+	// Unix-like systems (Linux, macOS, BSD)
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		// Shouldn't happen on Unix, but handle gracefully
+		return 0, 0, nil
+	}
+
+	return stat.Ino, uint64(stat.Dev), nil
 }

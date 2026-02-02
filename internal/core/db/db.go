@@ -316,6 +316,42 @@ func (db *DB) FindSessionsByFilePath(filePath string) ([]int64, error) {
 	return ids, nil
 }
 
+// NeedsMigrationSync checks if we need to run a one-time sync after migration
+// Returns true if file_inode/device columns exist but are mostly unpopulated
+func (db *DB) NeedsMigrationSync() (bool, error) {
+	// Check if columns exist
+	var count int
+	err := db.conn.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name='file_inode'
+	`).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	if count == 0 {
+		// Columns don't exist yet, no migration needed
+		return false, nil
+	}
+
+	// Check how many sessions have inode data
+	var total, withInode int
+	err = db.conn.QueryRow(`
+		SELECT
+			COUNT(*) as total,
+			COUNT(CASE WHEN file_inode IS NOT NULL AND file_inode != 0 THEN 1 END) as with_inode
+		FROM sessions
+	`).Scan(&total, &withInode)
+	if err != nil {
+		return false, err
+	}
+
+	// If less than 50% have inode data, trigger migration sync
+	if total > 0 && float64(withInode)/float64(total) < 0.5 {
+		return true, nil
+	}
+
+	return false, nil
+}
+
 // ListUnsummarizedSessions returns sessions needing summarization
 func (db *DB) ListUnsummarizedSessions(limit int) ([]struct {
 	ID           int64

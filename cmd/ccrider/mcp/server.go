@@ -183,7 +183,7 @@ func syncDatabase(ctx context.Context, database *db.DB) error {
 
 	// Import from Claude directory (silent, no progress output for MCP)
 	imp := importer.New(database)
-	if err := imp.ImportDirectory(sourcePath, nil, false); err != nil {
+	if _, err := imp.ImportDirectory(sourcePath, nil, false, true); err != nil {
 		return fmt.Errorf("failed to sync: %w", err)
 	}
 
