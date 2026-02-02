@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.10.0] - 2026-02-01
+
+### Performance
+
+- **3.9x faster imports** - 19s → 2s for ~3000 sessions (74% improvement)
+  - Multi-level change detection: mtime+size → hash → parse
+  - Pre-load all session metadata in single query (eliminates N queries)
+  - Skip 90%+ of files instantly via mtime+size check
+  - Only hash/parse files that actually changed
+- **Handle arbitrarily large JSONL lines** - tested with 105MB lines
+  - Switched from bufio.Scanner (64MB limit) to bufio.Reader
+  - No more "token too long" errors on sessions with huge base64 images or tool outputs
+
+### Added
+
+- **File-based change detection** - new DB columns: file_mtime, file_size, file_inode, file_device, file_hash
+  - Content-based deduplication via SHA256 hashing
+  - Handles filesystem quirks (clock skew, inode reuse)
+  - Automatic one-time migration populates tracking data
+
+### Fixed
+
+- Support both RFC3339 and Go time formats when reading DB timestamps
+- Silently skip files deleted between directory walk and import (race condition)
+- Always skip subagent sessions (they use parent session IDs and would conflict)
+
+### Changed
+
+- Show failure count summary instead of verbose statistics
+- Log warnings only for actual errors (parse failures, hash failures)
+- Clean startup with no error spam
+
 ## [0.9.9] - 2026-01-12
 
 ### Fixed
