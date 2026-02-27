@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/neilberkman/ccrider/internal/core/db"
 	"github.com/neilberkman/ccrider/internal/core/importer"
@@ -60,20 +61,6 @@ func runSync(cmd *cobra.Command, args []string) error {
 		_ = database.Close()
 	}()
 
-	// Check if we need one-time migration sync
-	if !syncForce {
-		needsMigrationSync, err := database.NeedsMigrationSync()
-		if err != nil {
-			return fmt.Errorf("failed to check migration status: %w", err)
-		}
-		if needsMigrationSync {
-			fmt.Println("⚡ One-time optimization: Populating file tracking data for fast incremental syncs...")
-			fmt.Println("   This will take a minute but makes future syncs much faster.")
-			fmt.Println()
-			syncForce = true
-		}
-	}
-
 	// Count total files for progress
 	total, err := countJSONLFiles(sourcePath)
 	if err != nil {
@@ -120,6 +107,14 @@ func countJSONLFiles(dirPath string) (int, error) {
 			return err
 		}
 		if !info.IsDir() && filepath.Ext(path) == ".jsonl" {
+			basename := filepath.Base(path)
+			// Match ImportDirectory filters
+			if strings.Contains(basename, "Edit conflict") {
+				return nil
+			}
+			if strings.Contains(path, "/subagents/") || strings.HasPrefix(basename, "agent-") {
+				return nil
+			}
 			count++
 		}
 		return nil

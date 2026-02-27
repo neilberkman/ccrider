@@ -66,5 +66,5 @@ func (p *ProgressReporter) Update(sessionSummary string, firstMsg string) {
 // Finish completes the progress display
 func (p *ProgressReporter) Finish() {
 	elapsed := time.Since(p.startTime)
-	_, _ = fmt.Fprintf(p.writer, "\nCompleted: Imported %d sessions in %s\n", p.total, elapsed.Round(time.Millisecond))
+	_, _ = fmt.Fprintf(p.writer, "\nCompleted: Scanned %d sessions in %s\n", p.total, elapsed.Round(time.Millisecond))
 }
