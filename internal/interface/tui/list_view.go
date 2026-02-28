@@ -20,11 +20,18 @@ func (i sessionListItem) FilterValue() string {
 }
 
 func (i sessionListItem) Title() string {
-	// Priority: Claude summary > first message (truncated) > session ID
-	if i.session.Summary != "" {
-		return i.session.Summary
+	title := i.session.Summary
+	if title == "" {
+		if len(i.session.ID) > 12 {
+			title = i.session.ID[:12] + "..."
+		} else {
+			title = i.session.ID
+		}
 	}
-	return i.session.ID[:12] + "..."
+	if i.session.Provider != "" && i.session.Provider != "claude" {
+		title = "[" + i.session.Provider + "] " + title
+	}
+	return title
 }
 
 func (i sessionListItem) Description() string {

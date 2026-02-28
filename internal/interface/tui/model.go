@@ -86,7 +86,8 @@ type sessionItem struct {
 	MessageCount      int
 	UpdatedAt         string
 	CreatedAt         string
-	MatchesCurrentDir bool // True if session last cwd matches current working directory
+	MatchesCurrentDir bool   // True if session last cwd matches current working directory
+	Provider          string // claude, codex, etc.
 }
 
 type sessionDetail struct {

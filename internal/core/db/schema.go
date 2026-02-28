@@ -21,7 +21,8 @@ func (db *DB) initSchema() error {
 		last_synced_at DATETIME,
 		file_hash TEXT,
 		file_size INTEGER,
-		file_mtime DATETIME
+		file_mtime DATETIME,
+		provider TEXT DEFAULT 'claude'
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_sessions_session_id ON sessions(session_id);

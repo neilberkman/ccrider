@@ -13,11 +13,12 @@ type Session struct {
 	MessageCount int
 	UpdatedAt    time.Time
 	CreatedAt    time.Time
+	Provider     string // claude, codex, etc.
 }
 
-// ListSessions returns all sessions, optionally filtered by project path
-// Sessions with no meaningful content (warmup-only, etc) are excluded
-func (db *DB) ListSessions(projectPath string) ([]Session, error) {
+// ListSessions returns all sessions, optionally filtered by project path and provider.
+// Sessions with no meaningful content (warmup-only, etc) are excluded.
+func (db *DB) ListSessions(projectPath string, provider ...string) ([]Session, error) {
 	query := `
 		SELECT
 			s.session_id,
@@ -71,7 +72,8 @@ func (db *DB) ListSessions(projectPath string) ([]Session, error) {
 			) as last_cwd,
 			(SELECT COUNT(*) FROM messages WHERE session_id = s.id) as actual_message_count,
 			s.updated_at,
-			s.created_at
+			s.created_at,
+			COALESCE(s.provider, 'claude') as provider
 		FROM sessions s
 		LEFT JOIN session_summaries ss ON s.id = ss.session_id
 		WHERE (SELECT COUNT(*) FROM messages WHERE session_id = s.id) > 0
@@ -99,6 +101,10 @@ func (db *DB) ListSessions(projectPath string) ([]Session, error) {
 		query += " AND s.project_path LIKE ?"
 		args = append(args, "%"+projectPath+"%")
 	}
+	if len(provider) > 0 && provider[0] != "" {
+		query += " AND COALESCE(s.provider, 'claude') = ?"
+		args = append(args, provider[0])
+	}
 
 	query += `
 		ORDER BY s.updated_at DESC
@@ -122,6 +128,7 @@ func (db *DB) ListSessions(projectPath string) ([]Session, error) {
 			&s.MessageCount,
 			&s.UpdatedAt,
 			&s.CreatedAt,
+			&s.Provider,
 		)
 		if err != nil {
 			return nil, err
@@ -150,7 +157,8 @@ func (db *DB) GetSessionLaunchInfo(sessionID string) (*Session, string, error) {
 				   AND cwd != '/'
 				 ORDER BY sequence DESC LIMIT 1),
 				s.project_path
-			) as last_cwd
+			) as last_cwd,
+			COALESCE(s.provider, 'claude') as provider
 		FROM sessions s
 		WHERE s.session_id = ?
 	`
@@ -165,6 +173,7 @@ func (db *DB) GetSessionLaunchInfo(sessionID string) (*Session, string, error) {
 		&session.UpdatedAt,
 		&session.CreatedAt,
 		&lastCwd,
+		&session.Provider,
 	)
 	if err != nil {
 		return nil, "", err
@@ -191,7 +200,8 @@ func (db *DB) GetSessionDetail(sessionID string) (*SessionDetail, error) {
 				 ORDER BY sequence DESC LIMIT 1),
 				s.project_path
 			) as last_cwd,
-			updated_at
+			updated_at,
+			COALESCE(s.provider, 'claude') as provider
 		FROM sessions s
 		WHERE session_id = ?
 	`
@@ -204,6 +214,7 @@ func (db *DB) GetSessionDetail(sessionID string) (*SessionDetail, error) {
 		&detail.MessageCount,
 		&detail.LastCwd,
 		&detail.UpdatedAt,
+		&detail.Provider,
 	)
 	if err != nil {
 		return nil, err
@@ -248,6 +259,7 @@ type SessionDetail struct {
 	LastCwd      string // Last working directory from messages
 	UpdatedAt    time.Time
 	Messages     []SessionMessage
+	Provider     string // claude, codex, etc.
 }
 
 // SessionMessage represents a single message in a session

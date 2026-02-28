@@ -75,32 +75,38 @@ func runSync(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Count total files for progress
-	total, err := countJSONLFiles(sourcePath)
-	if err != nil {
-		return fmt.Errorf("failed to count files: %w", err)
-	}
-
-	if total == 0 {
-		fmt.Println("No session files found")
-		return nil
-	}
-
-	// Create importer with progress
 	imp := importer.New(database)
-	progress := importer.NewProgressReporter(os.Stdout, total)
 
-	// Import (always skip subagents - they conflict with parent sessions)
-	skipped, err := imp.ImportDirectory(sourcePath, progress, syncForce, true)
-	if err != nil {
-		return fmt.Errorf("import failed: %w", err)
-	}
+	for _, src := range importer.DefaultSources() {
+		// When user specified a custom path, only import Claude from that path
+		if len(args) > 0 && src.Provider != "claude" {
+			continue
+		}
+		importPath := src.Path
+		if len(args) > 0 {
+			importPath = sourcePath
+		}
 
-	progress.Finish()
+		total, err := countJSONLFiles(importPath)
+		if err != nil {
+			return fmt.Errorf("failed to count %s files: %w", src.Provider, err)
+		}
+		if total == 0 {
+			continue
+		}
 
-	if skipped > 0 && !syncForce {
-		skipRate := float64(skipped) / float64(total) * 100
-		fmt.Printf("\nSkipped %d/%d files (%.1f%% unchanged)\n", skipped, total, skipRate)
+		fmt.Printf("Syncing %s sessions from: %s\n", src.Provider, importPath)
+		progress := importer.NewProgressReporter(os.Stdout, total)
+		skipped, err := imp.ImportDirectory(importPath, progress, syncForce, src.SkipSubagents, src.ParseFn, src.Provider)
+		if err != nil {
+			return fmt.Errorf("%s import failed: %w", src.Provider, err)
+		}
+		progress.Finish()
+
+		if skipped > 0 && !syncForce {
+			skipRate := float64(skipped) / float64(total) * 100
+			fmt.Printf("\nSkipped %d/%d %s files (%.1f%% unchanged)\n", skipped, total, src.Provider, skipRate)
+		}
 	}
 
 	return nil
