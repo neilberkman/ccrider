@@ -7,9 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/neilberkman/ccrider/internal/core/db"
@@ -413,30 +411,4 @@ func extractProjectPath(filePath string) string {
 	}
 
 	return dir
-}
-
-// getFileIdentity extracts platform-specific file identity info (inode, device)
-// Returns (inode, device, error). On platforms without inode support, returns (0, 0, nil)
-func getFileIdentity(path string) (uint64, uint64, error) {
-	info, err := os.Stat(path)
-	if err != nil {
-		return 0, 0, err
-	}
-
-	// Extract platform-specific file identity
-	if runtime.GOOS == "windows" {
-		// Windows doesn't have inodes in the Unix sense
-		// Could use fileIndex from GetFileInformationByHandle, but requires unsafe
-		// For now, return 0,0 and rely on mtime/size/hash checks
-		return 0, 0, nil
-	}
-
-	// Unix-like systems (Linux, macOS, BSD)
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
-		// Shouldn't happen on Unix, but handle gracefully
-		return 0, 0, nil
-	}
-
-	return stat.Ino, uint64(stat.Dev), nil
 }
