@@ -122,6 +122,7 @@ func loadSessions(database *db.DB, filterByProject bool, projectPath string) tea
 				MessageCount: cs.MessageCount,
 				UpdatedAt:    cs.UpdatedAt.Format("2006-01-02 15:04:05"),
 				CreatedAt:    cs.CreatedAt.Format("2006-01-02 15:04:05"),
+				Provider:     cs.Provider,
 			}
 
 			// Check if session's last cwd matches current directory (for highlighting)
@@ -186,7 +187,8 @@ func loadSessionDetail(database *db.DB, sessionID string) tea.Cmd {
 			Project:      coreDetail.ProjectPath,
 			MessageCount: coreDetail.MessageCount,
 			UpdatedAt:    coreDetail.UpdatedAt.Format("2006-01-02 15:04:05"),
-			CreatedAt:    coreDetail.UpdatedAt.Format("2006-01-02 15:04:05"), // Use UpdatedAt as fallback
+			CreatedAt:    coreDetail.UpdatedAt.Format("2006-01-02 15:04:05"),
+			Provider:     coreDetail.Provider,
 		}
 
 		var messages []messageItem
@@ -222,35 +224,26 @@ type syncProgressMsg struct {
 // StartSyncWithProgress initiates a sync and returns a command that listens for progress
 func startSyncWithProgress(database *db.DB, filterByProject bool, projectPath string) tea.Cmd {
 	return func() tea.Msg {
-		// Get default Claude directory
-		home, _ := os.UserHomeDir()
-		sourcePath := filepath.Join(home, ".claude", "projects")
+		sources := importer.DefaultSources()
 
-		// Count total files first
-		var files []string
-		_ = filepath.Walk(sourcePath, func(path string, info os.FileInfo, err error) error {
-			if err == nil && !info.IsDir() && filepath.Ext(path) == ".jsonl" {
-				files = append(files, path)
-			}
-			return nil
-		})
+		// Count total files across all source directories
+		var total int
+		for _, src := range sources {
+			_ = filepath.Walk(src.Path, func(path string, info os.FileInfo, err error) error {
+				if err == nil && !info.IsDir() && filepath.Ext(path) == ".jsonl" {
+					total++
+				}
+				return nil
+			})
+		}
 
-		total := len(files)
-
-		// Send initial progress message with total
-		// This will be sent IMMEDIATELY before any import starts
-		// We'll use a subscription pattern - send progress via tea.Program
 		progressCh := make(chan syncProgressMsg, 100)
-
-		// Send initial message with total count immediately
-		// This ensures the progress bar shows up right away
 		progressCh <- syncProgressMsg{
 			current:     0,
 			total:       total,
 			sessionName: "",
 		}
 
-		// Start sync in background goroutine
 		go func() {
 			imp := importer.New(database)
 			progress := &channelProgressReporter{
@@ -259,13 +252,15 @@ func startSyncWithProgress(database *db.DB, filterByProject bool, projectPath st
 				ch:      progressCh,
 			}
 
-			_, _ = imp.ImportDirectory(sourcePath, progress, false, true)
+			for _, src := range sources {
+				if _, err := imp.ImportDirectory(src.Path, progress, false, src.SkipSubagents, src.ParseFn, src.Provider); err != nil {
+					fmt.Fprintf(os.Stderr, "WARN: %s sync failed: %v\n", src.Provider, err)
+				}
+			}
+
 			close(progressCh)
 		}()
 
-		// This goroutine will send progress updates to the TUI
-		// But we can't return multiple messages from one Cmd
-		// So we'll use a different pattern: subscribe to the channel
 		return syncSubscribe(progressCh, database, filterByProject, projectPath)()
 	}
 }

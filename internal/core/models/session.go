@@ -23,6 +23,7 @@ type Session struct {
 	FileHash     string // BLAKE3 for change detection
 	FileSize     int64
 	FileMtime    time.Time
+	Provider     string // claude, codex, etc.
 }
 
 // Validate checks if the session has required fields

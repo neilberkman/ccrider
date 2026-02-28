@@ -5,17 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/neilberkman/ccrider/internal/core/db"
-	"github.com/sethvargo/go-diceware/diceware"
 	"github.com/neilberkman/ccrider/internal/core/importer"
 	"github.com/neilberkman/ccrider/internal/core/search"
+	"github.com/sethvargo/go-diceware/diceware"
 )
 
 // SearchSessionsArgs defines arguments for the search_sessions tool
@@ -23,6 +21,7 @@ type SearchSessionsArgs struct {
 	Query            string `json:"query" jsonschema:"description=Search term to match against message content,required"`
 	Limit            int    `json:"limit,omitempty" jsonschema:"description=Max number of sessions to return (default: 10)"`
 	Project          string `json:"project,omitempty" jsonschema:"description=Filter by project path"`
+	Provider         string `json:"provider,omitempty" jsonschema:"description=Filter by provider (claude or codex)"`
 	CurrentSessionID string `json:"current_session_id,omitempty" jsonschema:"description=Current session ID to search within (searches only this session)"`
 	ExcludeCurrent   bool   `json:"exclude_current,omitempty" jsonschema:"description=Exclude current session from results (searches only other sessions)"`
 	AfterDate        string `json:"after_date,omitempty" jsonschema:"description=Only sessions updated after this date (ISO 8601 format, e.g. 2025-01-01)"`
@@ -33,8 +32,9 @@ type SearchSessionsArgs struct {
 
 // ListRecentSessionsArgs defines arguments for the list_recent_sessions tool
 type ListRecentSessionsArgs struct {
-	Limit   int    `json:"limit,omitempty" jsonschema:"description=Max sessions to return (default: 20)"`
-	Project string `json:"project,omitempty" jsonschema:"description=Filter by project path"`
+	Limit    int    `json:"limit,omitempty" jsonschema:"description=Max sessions to return (default: 20)"`
+	Project  string `json:"project,omitempty" jsonschema:"description=Filter by project path"`
+	Provider string `json:"provider,omitempty" jsonschema:"description=Filter by provider (claude or codex)"`
 }
 
 // GetSessionMessagesArgs defines arguments for the get_session_messages tool
@@ -60,6 +60,7 @@ type SessionMatch struct {
 	Summary    string         `json:"summary"`
 	Project    string         `json:"project"`
 	UpdatedAt  string         `json:"updated_at"`
+	Provider   string         `json:"provider"`
 	MatchCount int            `json:"match_count"`
 	Matches    []MatchSnippet `json:"matches"`
 }
@@ -85,6 +86,7 @@ type SessionSummary struct {
 	Summary      string `json:"summary"`
 	Project      string `json:"project"`
 	UpdatedAt    string `json:"updated_at"`
+	Provider     string `json:"provider"`
 	MessageCount int    `json:"message_count"`
 }
 
@@ -140,16 +142,20 @@ func StartServer(dbPath string) error {
 			mcp.Description("Exact phrase that must exist in the session. Use this to find your current session: pick a unique phrase you just said or saw, and the search will only return sessions containing that phrase. Combined with recency, this reliably identifies the current conversation.")),
 		mcp.WithBoolean("exact_match",
 			mcp.Description("If true, treats the query as an exact phrase match (auto-quoted). Use this instead of trying to add quotes yourself.")),
+		mcp.WithString("provider",
+			mcp.Description("Filter by provider (e.g. \"claude\" or \"codex\")")),
 	)
 	s.AddTool(searchTool, makeSearchSessionsHandler(database))
 
 	// Register list_recent_sessions tool
 	listTool := mcp.NewTool("list_recent_sessions",
-		mcp.WithDescription("Get recent Claude Code sessions, optionally filtered by project"),
+		mcp.WithDescription("Get recent Claude Code and Codex CLI sessions, optionally filtered by project or provider"),
 		mcp.WithNumber("limit",
 			mcp.Description("Max sessions to return (default: 20)")),
 		mcp.WithString("project",
 			mcp.Description("Filter by project path")),
+		mcp.WithString("provider",
+			mcp.Description("Filter by provider (e.g. \"claude\" or \"codex\")")),
 	)
 	s.AddTool(listTool, makeListRecentSessionsHandler(database))
 
@@ -179,20 +185,7 @@ func StartServer(dbPath string) error {
 
 // syncDatabase ensures the database is up-to-date before running tool queries
 func syncDatabase(ctx context.Context, database *db.DB) error {
-	// Get Claude Code projects directory
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("failed to get home dir: %w", err)
-	}
-	sourcePath := filepath.Join(home, ".claude", "projects")
-
-	// Import from Claude directory (silent, no progress output for MCP)
-	imp := importer.New(database)
-	if _, err := imp.ImportDirectory(sourcePath, nil, false, true); err != nil {
-		return fmt.Errorf("failed to sync: %w", err)
-	}
-
-	return nil
+	return importer.New(database).SyncAll(false)
 }
 
 func makeSearchSessionsHandler(database *db.DB) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -283,6 +276,7 @@ func makeSearchSessionsHandler(database *db.DB) func(context.Context, mcp.CallTo
 		coreFilters := search.SearchFilters{
 			Query:            query,
 			ProjectPath:      args.Project,
+			Provider:         args.Provider,
 			CurrentSessionID: args.CurrentSessionID,
 			ExcludeCurrent:   args.ExcludeCurrent,
 			AfterDate:        args.AfterDate,
@@ -308,6 +302,7 @@ func makeSearchSessionsHandler(database *db.DB) func(context.Context, mcp.CallTo
 				Summary:   coreSession.SessionSummary,
 				Project:   coreSession.ProjectPath,
 				UpdatedAt: coreSession.UpdatedAt,
+				Provider:  coreSession.Provider,
 				Matches:   []MatchSnippet{},
 			}
 
@@ -369,7 +364,7 @@ func makeListRecentSessionsHandler(database *db.DB) func(context.Context, mcp.Ca
 		}
 
 		// Use core function to get sessions
-		coreSessions, err := database.ListSessions(args.Project)
+		coreSessions, err := database.ListSessions(args.Project, args.Provider)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("query failed: %v", err)), nil
 		}
@@ -387,6 +382,7 @@ func makeListRecentSessionsHandler(database *db.DB) func(context.Context, mcp.Ca
 				Summary:      cs.Summary,
 				Project:      cs.ProjectPath,
 				UpdatedAt:    cs.UpdatedAt.Format("2006-01-02 15:04:05"),
+				Provider:     cs.Provider,
 				MessageCount: cs.MessageCount,
 			})
 		}

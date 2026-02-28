@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.1.0] - 2026-02-28
+
+### Added
+
+- **Codex CLI session support** — indexes OpenAI Codex CLI sessions from `~/.codex/sessions/` alongside Claude Code sessions into a single searchable database
+- **Provider filtering** — `--provider codex` or `--provider claude` on CLI list/search, plus `provider` parameter on MCP tools (`search_sessions`, `list_recent_sessions`)
+- **Codex session parser** (`pkg/codexsessions/`) — parses Codex rollout JSONL format, maps `event_msg` payloads to the same schema used by Claude sessions, generates deterministic UUIDs via BLAKE3
+- **`[codex]` tags** in TUI and CLI list output for non-Claude sessions
+
+### Fixed
+
+- Panic on sessions with IDs shorter than 12 characters
+- UTF-8 corruption when truncating multi-byte summaries (bytes → runes)
+- Silent zero timestamps from unparseable Codex timestamp fields
+
 ## [1.0.0] - 2026-02-28
 
 ### Changed

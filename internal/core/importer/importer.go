@@ -15,6 +15,10 @@ import (
 	"github.com/zeebo/blake3"
 )
 
+// ParseFunc parses a session JSONL file and returns a ParsedSession.
+// Different providers (Claude, Codex) supply different implementations.
+type ParseFunc func(string) (*ccsessions.ParsedSession, error)
+
 // Importer handles importing sessions into the database
 type Importer struct {
 	db *db.DB
@@ -28,7 +32,8 @@ func New(database *db.DB) *Importer {
 // ImportSession imports a single parsed session, optionally skipping already-imported messages
 // existingMessageCount: number of messages we already have for this session (0 for new sessions)
 // fileHash: pre-computed BLAKE3 hash from ImportDirectory (avoids double-hashing)
-func (i *Importer) ImportSession(session *ccsessions.ParsedSession, existingMessageCount int, fileInode, fileDevice uint64, fileHash string) error {
+// provider: identifies the agent (e.g. "claude", "codex")
+func (i *Importer) ImportSession(session *ccsessions.ParsedSession, existingMessageCount int, fileInode, fileDevice uint64, fileHash string, provider string) error {
 	hash := fileHash
 
 	// Use filename as DB key (not parsed sessionId which points to previous
@@ -74,8 +79,8 @@ func (i *Importer) ImportSession(session *ccsessions.ParsedSession, existingMess
 		INSERT INTO sessions (
 			session_id, project_path, summary, leaf_uuid, cwd,
 			created_at, updated_at, message_count, file_hash,
-			file_size, file_mtime, file_inode, file_device
-		) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
+			file_size, file_mtime, file_inode, file_device, provider
+		) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(session_id) DO UPDATE SET
 			project_path = excluded.project_path,
 			summary = excluded.summary,
@@ -86,7 +91,8 @@ func (i *Importer) ImportSession(session *ccsessions.ParsedSession, existingMess
 			file_size = excluded.file_size,
 			file_mtime = excluded.file_mtime,
 			file_inode = excluded.file_inode,
-			file_device = excluded.file_device
+			file_device = excluded.file_device,
+			provider = excluded.provider
 	`,
 		fileSessionID,
 		projectPath,
@@ -100,6 +106,7 @@ func (i *Importer) ImportSession(session *ccsessions.ParsedSession, existingMess
 		session.FileMtime,
 		fileInode,
 		fileDevice,
+		provider,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to upsert session: %w", err)
@@ -197,8 +204,10 @@ func (i *Importer) ImportSession(session *ccsessions.ParsedSession, existingMess
 // ImportDirectory imports all sessions from a directory tree
 // If force is true, re-imports all sessions regardless of mtime
 // If skipSubagents is true, skips files in subagents/ directories and agent-* files
+// parseFn controls how each JSONL file is parsed (e.g. ccsessions.ParseFile or codexsessions.ParseFile)
+// provider identifies the agent for DB storage (e.g. "claude", "codex")
 // Returns the number of skipped files and an error
-func (i *Importer) ImportDirectory(dirPath string, progress ProgressCallback, force bool, skipSubagents bool) (int, error) {
+func (i *Importer) ImportDirectory(dirPath string, progress ProgressCallback, force bool, skipSubagents bool, parseFn ParseFunc, provider string) (int, error) {
 	// Find all .jsonl files (optionally skipping subagents)
 	var files []string
 	err := filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
@@ -320,7 +329,7 @@ func (i *Importer) ImportDirectory(dirPath string, progress ProgressCallback, fo
 			continue
 		}
 
-		session, err := ccsessions.ParseFile(file)
+		session, err := parseFn(file)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "WARN: Cannot parse file %s: %v\n", file, err)
 			failed++
@@ -329,7 +338,7 @@ func (i *Importer) ImportDirectory(dirPath string, progress ProgressCallback, fo
 
 		fileInode, fileDevice, _ := getFileIdentity(file)
 
-		if err := i.ImportSession(session, messageCount, fileInode, fileDevice, currentHash); err != nil {
+		if err := i.ImportSession(session, messageCount, fileInode, fileDevice, currentHash, provider); err != nil {
 			fmt.Fprintf(os.Stderr, "WARN: Cannot import session %s: %v\n", sessionID, err)
 			failed++
 			continue

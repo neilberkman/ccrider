@@ -17,6 +17,11 @@ func (db *DB) migrate() error {
 		return err
 	}
 
+	// Migration 4: Add provider column for multi-agent support (claude, codex, etc.)
+	if err := db.migration004AddProviderColumn(); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -136,6 +141,22 @@ func (db *DB) migration003AddFileTrackingColumns() error {
 			if _, err := db.conn.Exec(col.ddl); err != nil {
 				return err
 			}
+		}
+	}
+	return nil
+}
+
+func (db *DB) migration004AddProviderColumn() error {
+	var count int
+	err := db.conn.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name='provider'
+	`).Scan(&count)
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		if _, err := db.conn.Exec(`ALTER TABLE sessions ADD COLUMN provider TEXT DEFAULT 'claude'`); err != nil {
+			return err
 		}
 	}
 	return nil

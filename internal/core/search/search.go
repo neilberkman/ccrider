@@ -20,13 +20,15 @@ type SearchResult struct {
 	ProjectPath    string
 	LastCwd        string
 	MessageCount   int
-	Sequence       int // Message sequence number within session
+	Sequence       int    // Message sequence number within session
+	Provider       string // claude, codex, etc.
 }
 
 // SearchFilters defines filtering criteria for search
 type SearchFilters struct {
 	Query            string // The search query text
 	ProjectPath      string // Filter by project path (substring match)
+	Provider         string // Filter by provider (claude, codex)
 	CurrentSessionID string // If set, only search within this session
 	ExcludeCurrent   bool   // If true with CurrentSessionID set, exclude that session
 	AfterDate        string // Only results after this timestamp (ISO 8601)
@@ -43,6 +45,7 @@ type SessionSearchResult struct {
 	MessageCount   int
 	Matches        []SearchResult
 	Score          float64 // Relevance score for ranking
+	Provider       string  // claude, codex, etc.
 }
 
 // Default sort order for search results (most recent first)
@@ -91,6 +94,11 @@ func SearchWithFilters(database *db.DB, filters SearchFilters) ([]SessionSearchR
 			}
 		}
 
+		// Filter by provider
+		if filters.Provider != "" && result.Provider != filters.Provider {
+			continue
+		}
+
 		// Filter by project path
 		if filters.ProjectPath != "" && !strings.Contains(result.ProjectPath, filters.ProjectPath) {
 			continue
@@ -124,6 +132,7 @@ func SearchWithFilters(database *db.DB, filters SearchFilters) ([]SessionSearchR
 				UpdatedAt:      result.Timestamp,
 				MessageCount:   result.MessageCount,
 				Matches:        []SearchResult{},
+				Provider:       result.Provider,
 			}
 			sessionMap[sessionID] = session
 			sessionOrder = append(sessionOrder, sessionID)
@@ -179,7 +188,8 @@ func search(database *db.DB, query string, ftsTable string, limit int) ([]Search
 			s.project_path,
 			COALESCE(s.cwd, s.project_path),
 			s.message_count,
-			m.sequence
+			m.sequence,
+			COALESCE(s.provider, 'claude')
 		FROM %s
 		JOIN messages m ON %s.rowid = m.id
 		JOIN sessions s ON s.id = m.session_id
@@ -208,6 +218,7 @@ func search(database *db.DB, query string, ftsTable string, limit int) ([]Search
 			&r.LastCwd,
 			&r.MessageCount,
 			&r.Sequence,
+			&r.Provider,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan result: %w", err)
 		}
@@ -265,7 +276,8 @@ func filterOnlySessions(database *db.DB, filters SearchFilters) ([]SessionSearch
 			s.project_path,
 			COALESCE(s.cwd, s.project_path),
 			s.updated_at,
-			s.message_count
+			s.message_count,
+			COALESCE(s.provider, 'claude')
 		FROM sessions s
 		LEFT JOIN session_summaries ss ON s.id = ss.session_id
 		WHERE 1=1
@@ -275,6 +287,10 @@ func filterOnlySessions(database *db.DB, filters SearchFilters) ([]SessionSearch
 	if filters.ProjectPath != "" {
 		query += " AND s.project_path LIKE '%' || ? || '%'"
 		args = append(args, filters.ProjectPath)
+	}
+	if filters.Provider != "" {
+		query += " AND COALESCE(s.provider, 'claude') = ?"
+		args = append(args, filters.Provider)
 	}
 	// Date filtering done in Go due to timestamp format inconsistencies
 
@@ -305,6 +321,7 @@ func filterOnlySessions(database *db.DB, filters SearchFilters) ([]SessionSearch
 			&r.LastCwd,
 			&r.UpdatedAt,
 			&r.MessageCount,
+			&r.Provider,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan session: %w", err)
 		}

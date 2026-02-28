@@ -1,0 +1,10 @@
+{"timestamp":"2026-02-04T02:45:38.671Z","type":"session_meta","payload":{"id":"019c268a-86db-7022-958a-d18b1c5b99ad","timestamp":"2026-02-04T02:45:38.651Z","cwd":"/home/testuser/myproject","originator":"codex_cli_rs","cli_version":"0.94.0","source":"cli","model_provider":"openai"}}
+{"timestamp":"2026-02-04T02:45:41.134Z","type":"turn_context","payload":{"cwd":"/home/testuser/myproject","model":"gpt-5.2-codex"}}
+{"timestamp":"2026-02-04T02:45:41.200Z","type":"event_msg","payload":{"type":"user_message","message":"Fix the bug in the login handler"}}
+{"timestamp":"2026-02-04T02:45:42.000Z","type":"event_msg","payload":{"type":"token_count","count":150}}
+{"timestamp":"2026-02-04T02:45:43.000Z","type":"event_msg","payload":{"type":"agent_reasoning","text":"Looking at the login handler code"}}
+{"timestamp":"2026-02-04T02:45:44.500Z","type":"event_msg","payload":{"type":"agent_message","message":"I found the bug in the login handler. The session token was not being refreshed on re-authentication."}}
+{"timestamp":"2026-02-04T02:46:00.000Z","type":"turn_context","payload":{"cwd":"/home/testuser/myproject/src"}}
+{"timestamp":"2026-02-04T02:46:01.000Z","type":"event_msg","payload":{"type":"user_message","message":"Great, can you also add a test for it?"}}
+{"timestamp":"2026-02-04T02:46:05.000Z","type":"event_msg","payload":{"type":"agent_message","message":"Sure, I'll add a test for the login handler fix."}}
+{"timestamp":"2026-02-04T02:46:06.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"skipped by parser"}]}}

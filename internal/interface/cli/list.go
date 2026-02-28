@@ -11,21 +11,23 @@ import (
 )
 
 var (
-	listLimit   int
-	listProject string
+	listLimit    int
+	listProject  string
+	listProvider string
 )
 
 var listCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List Claude Code sessions",
-	Long: `List all imported Claude Code sessions in reverse chronological order.
+	Short: "List coding agent sessions",
+	Long: `List all imported sessions in reverse chronological order.
 
 Shows session summaries, project paths, message counts, and timestamps.
 
 Examples:
   ccrider list
   ccrider list --limit 10
-  ccrider list --project /path/to/project`,
+  ccrider list --project /path/to/project
+  ccrider list --provider codex`,
 	RunE: runList,
 }
 
@@ -33,6 +35,7 @@ func init() {
 	rootCmd.AddCommand(listCmd)
 	listCmd.Flags().IntVar(&listLimit, "limit", 20, "Maximum number of sessions to display")
 	listCmd.Flags().StringVar(&listProject, "project", "", "Filter by project path")
+	listCmd.Flags().StringVar(&listProvider, "provider", "", "Filter by provider (claude, codex)")
 }
 
 func runList(cmd *cobra.Command, args []string) error {
@@ -46,7 +49,7 @@ func runList(cmd *cobra.Command, args []string) error {
 	}()
 
 	// Use core function to get sessions
-	coreSessions, err := database.ListSessions(listProject)
+	coreSessions, err := database.ListSessions(listProject, listProvider)
 	if err != nil {
 		return fmt.Errorf("failed to list sessions: %w", err)
 	}
@@ -66,6 +69,7 @@ func runList(cmd *cobra.Command, args []string) error {
 			messageCount: cs.MessageCount,
 			updatedAt:    cs.UpdatedAt,
 			createdAt:    cs.CreatedAt,
+			provider:     cs.Provider,
 		})
 	}
 
@@ -87,7 +91,11 @@ func runList(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 
 	for i, s := range sessions {
-		fmt.Printf("[%d] %s\n", i+1, s.sessionID)
+		if s.provider != "" && s.provider != "claude" {
+			fmt.Printf("[%d] [%s] %s\n", i+1, s.provider, s.sessionID)
+		} else {
+			fmt.Printf("[%d] %s\n", i+1, s.sessionID)
+		}
 		if s.summary.Valid && s.summary.String != "" {
 			summary := truncateSummary(s.summary.String, 80)
 			fmt.Printf("    Summary: %s\n", summary)
@@ -113,6 +121,7 @@ type sessionInfo struct {
 	messageCount int
 	updatedAt    time.Time
 	createdAt    time.Time
+	provider     string
 }
 
 // truncateSummary truncates long summaries for display

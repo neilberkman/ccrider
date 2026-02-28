@@ -6,6 +6,7 @@ import (
 
 	"github.com/neilberkman/ccrider/internal/core/db"
 	"github.com/neilberkman/ccrider/pkg/ccsessions"
+	"github.com/neilberkman/ccrider/pkg/codexsessions"
 )
 
 func TestImportSession(t *testing.T) {
@@ -41,7 +42,7 @@ func TestImportSession(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = imp.ImportSession(session, 0, inode, device, hash)
+	err = imp.ImportSession(session, 0, inode, device, hash, "claude")
 	if err != nil {
 		t.Fatalf("ImportSession() error = %v", err)
 	}
@@ -101,12 +102,12 @@ func TestImportSession_ResumedSession(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = imp.ImportSession(session1, 0, inode, device, hash)
+	err = imp.ImportSession(session1, 0, inode, device, hash, "claude")
 	if err != nil {
 		t.Fatalf("ImportSession() error = %v", err)
 	}
 
-	err = imp.ImportSession(session1, 0, inode, device, hash)
+	err = imp.ImportSession(session1, 0, inode, device, hash, "claude")
 	if err != nil {
 		t.Fatalf("ImportSession() second import error = %v", err)
 	}
@@ -167,7 +168,7 @@ func TestImportSession_AgentSession(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = imp.ImportSession(session, 0, inode, device, hash)
+	err = imp.ImportSession(session, 0, inode, device, hash, "claude")
 	if err != nil {
 		t.Fatalf("ImportSession() error = %v", err)
 	}
@@ -181,5 +182,115 @@ func TestImportSession_AgentSession(t *testing.T) {
 
 	if sessionID != "agent-session" {
 		t.Errorf("Expected session_id 'agent-session' (filename), got %s", sessionID)
+	}
+}
+
+func TestImportSession_CodexSession(t *testing.T) {
+	tmpfile, err := os.CreateTemp("", "test-*.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Remove(tmpfile.Name()) }()
+	_ = tmpfile.Close()
+
+	database, err := db.New(tmpfile.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+
+	imp := New(database)
+
+	session, err := codexsessions.ParseFile("../../../pkg/codexsessions/testdata/sample.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	inode, device, _ := getFileIdentity(session.FilePath)
+	hash, err := computeFileHash(session.FilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = imp.ImportSession(session, 0, inode, device, hash, "codex")
+	if err != nil {
+		t.Fatalf("ImportSession() error = %v", err)
+	}
+
+	// Verify provider is stored correctly
+	var provider string
+	err = database.QueryRow("SELECT provider FROM sessions").Scan(&provider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if provider != "codex" {
+		t.Errorf("Expected provider 'codex', got %q", provider)
+	}
+
+	// Verify messages were imported
+	var msgCount int
+	err = database.QueryRow("SELECT COUNT(*) FROM messages").Scan(&msgCount)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msgCount != 4 {
+		t.Errorf("Expected 4 messages, got %d", msgCount)
+	}
+
+	// Verify idempotent re-import
+	err = imp.ImportSession(session, 0, inode, device, hash, "codex")
+	if err != nil {
+		t.Fatalf("ImportSession() re-import error = %v", err)
+	}
+
+	var sessionCount int
+	err = database.QueryRow("SELECT COUNT(*) FROM sessions").Scan(&sessionCount)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sessionCount != 1 {
+		t.Errorf("Expected 1 session after re-import, got %d", sessionCount)
+	}
+}
+
+func TestImportSession_ProviderStoredForClaude(t *testing.T) {
+	tmpfile, err := os.CreateTemp("", "test-*.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Remove(tmpfile.Name()) }()
+	_ = tmpfile.Close()
+
+	database, err := db.New(tmpfile.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+
+	imp := New(database)
+
+	session, err := ccsessions.ParseFile("../../../pkg/ccsessions/testdata/sample.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	inode, device, _ := getFileIdentity(session.FilePath)
+	hash, err := computeFileHash(session.FilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = imp.ImportSession(session, 0, inode, device, hash, "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var provider string
+	err = database.QueryRow("SELECT provider FROM sessions").Scan(&provider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if provider != "claude" {
+		t.Errorf("Expected provider 'claude', got %q", provider)
 	}
 }
