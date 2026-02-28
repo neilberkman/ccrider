@@ -20,7 +20,7 @@ type Session struct {
 	Version      string // Claude Code version
 	ImportedAt   time.Time
 	LastSyncedAt time.Time
-	FileHash     string // SHA256 for change detection
+	FileHash     string // BLAKE3 for change detection
 	FileSize     int64
 	FileMtime    time.Time
 }

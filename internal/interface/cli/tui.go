@@ -401,7 +401,7 @@ func buildRecoveryPrompt(ctx *db.RecoveryContext) string {
 
 	sb.WriteString("\n## How to Continue\n\n")
 	sb.WriteString("You have access to the CCRider MCP server. To find more context from the old session:\n\n")
-	sb.WriteString(fmt.Sprintf("1. Search for specific topics: `mcp__ccrider__search_sessions` with query and session_id `%s`\n", ctx.SessionID))
+	sb.WriteString(fmt.Sprintf("1. Search for specific topics: `mcp__ccrider__search_sessions` with query and current_session_id `%s`\n", ctx.SessionID))
 	sb.WriteString(fmt.Sprintf("2. Get more messages: `mcp__ccrider__get_session_messages` with session_id `%s` and `last_n` or `around_sequence`\n", ctx.SessionID))
 	sb.WriteString("\n**Ask the user what they'd like to continue working on, then search the old session for relevant context.**\n")
 

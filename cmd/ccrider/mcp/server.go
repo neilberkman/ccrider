@@ -45,9 +45,14 @@ type GetSessionMessagesArgs struct {
 	ContextSize    int    `json:"context_size,omitempty" jsonschema:"description=Messages before/after around_sequence (default: 10)"`
 }
 
-// MaxResponseBytes is the hard limit on response size to prevent context overflow
-// ~50KB is roughly 12-15k tokens, a reasonable chunk that won't blow up context
-const MaxResponseBytes = 50000
+// MaxResponseTokens is the hard limit on estimated tokens per MCP tool response.
+// Claude Code hard-rejects responses >25k tokens and warns at >10k.
+// We target 9k tokens to stay comfortably under the warning threshold.
+// Token estimate: len(jsonBytes) / 4  (conservative for mixed JSON/English)
+const MaxResponseTokens = 9000
+
+// maxResponseBytes returns the byte budget corresponding to MaxResponseTokens.
+func maxResponseBytes() int { return MaxResponseTokens * 4 }
 
 // SessionMatch represents a session search result
 type SessionMatch struct {
@@ -205,7 +210,7 @@ func makeSearchSessionsHandler(database *db.DB) func(context.Context, mcp.CallTo
 
 		// Set defaults (interface concern - pagination)
 		limit := args.Limit
-		if limit == 0 {
+		if limit <= 0 {
 			limit = 10
 		}
 
@@ -329,6 +334,9 @@ func makeSearchSessionsHandler(database *db.DB) func(context.Context, mcp.CallTo
 			}
 		}
 
+		// Trim to fit token budget
+		results, _ = trimSearchResultsToFit(results)
+
 		// Return results as JSON (interface concern - protocol)
 		resultJSON, err := json.Marshal(map[string]interface{}{
 			"sessions": results,
@@ -356,7 +364,7 @@ func makeListRecentSessionsHandler(database *db.DB) func(context.Context, mcp.Ca
 
 		// Set defaults
 		limit := args.Limit
-		if limit == 0 {
+		if limit <= 0 {
 			limit = 20
 		}
 
@@ -382,6 +390,9 @@ func makeListRecentSessionsHandler(database *db.DB) func(context.Context, mcp.Ca
 				MessageCount: cs.MessageCount,
 			})
 		}
+
+		// Trim to fit token budget
+		sessions, _ = trimSessionSummariesToFit(sessions)
 
 		// Return results as JSON
 		resultJSON, err := json.Marshal(map[string]interface{}{
@@ -421,9 +432,8 @@ func makeGetSessionMessagesHandler(database *db.DB) func(context.Context, mcp.Ca
 			return mcp.NewToolResultError(fmt.Sprintf("failed to get messages: %v", err)), nil
 		}
 
-		// Convert to MCP format and calculate total size
+		// Convert to MCP format
 		var mcpMessages []MessageDetail
-		totalBytes := 0
 		for _, msg := range messages {
 			mcpMessages = append(mcpMessages, MessageDetail{
 				Type:      msg.Type,
@@ -431,26 +441,11 @@ func makeGetSessionMessagesHandler(database *db.DB) func(context.Context, mcp.Ca
 				Timestamp: msg.Timestamp.Format("2006-01-02 15:04:05"),
 				Sequence:  msg.Sequence,
 			})
-			totalBytes += len(msg.Content)
 		}
 
-		// Truncate evenly from beginning/end if over byte limit
-		truncated := false
+		// Trim to fit token budget, measured against actual serialized JSON
 		originalCount := len(mcpMessages)
-		for totalBytes > MaxResponseBytes && len(mcpMessages) > 2 {
-			truncated = true
-			// Remove from both ends evenly
-			frontSize := len(mcpMessages[0].Content)
-			backSize := len(mcpMessages[len(mcpMessages)-1].Content)
-
-			if frontSize >= backSize {
-				totalBytes -= frontSize
-				mcpMessages = mcpMessages[1:]
-			} else {
-				totalBytes -= backSize
-				mcpMessages = mcpMessages[:len(mcpMessages)-1]
-			}
-		}
+		mcpMessages, truncated := trimMessagesToFit(mcpMessages, args.SessionID, totalCount, args.LastN > 0)
 
 		var returnedFrom, returnedTo int
 		if len(mcpMessages) > 0 {
@@ -466,10 +461,9 @@ func makeGetSessionMessagesHandler(database *db.DB) func(context.Context, mcp.Ca
 			Messages:     mcpMessages,
 		}
 
-		// Add truncation warning if applicable
 		if truncated {
 			response.Truncated = true
-			response.TruncatedMessage = fmt.Sprintf("Response truncated to ~%dKB (%d of %d messages). Use last_n or around_sequence for targeted retrieval.", totalBytes/1000, len(mcpMessages), originalCount)
+			response.TruncatedMessage = fmt.Sprintf("Response truncated to ~%d tokens (%d of %d messages). Use last_n or around_sequence for targeted retrieval.", estimateTokens(mustMarshal(response)), len(mcpMessages), originalCount)
 		}
 
 		resultJSON, err := json.Marshal(response)
@@ -479,6 +473,90 @@ func makeGetSessionMessagesHandler(database *db.DB) func(context.Context, mcp.Ca
 
 		return mcp.NewToolResultText(string(resultJSON)), nil
 	}
+}
+
+// estimateTokens returns a conservative token estimate for a JSON byte slice.
+// Claude tokenizes at ~4 bytes/token for English; JSON structure inflates slightly.
+func estimateTokens(b []byte) int {
+	return len(b) / 4
+}
+
+func mustMarshal(v interface{}) []byte {
+	b, _ := json.Marshal(v)
+	return b
+}
+
+// trimMessagesToFit removes messages until the full serialized
+// SessionMessagesResponse fits within MaxResponseTokens.
+// When tailMode is true (last_n request), only trims from the front to
+// preserve the most recent messages the caller asked for.
+func trimMessagesToFit(msgs []MessageDetail, sessionID string, totalCount int, tailMode bool) ([]MessageDetail, bool) {
+	budget := maxResponseBytes()
+	truncated := false
+
+	for len(msgs) > 2 {
+		resp := SessionMessagesResponse{
+			SessionID:  sessionID,
+			TotalCount: totalCount,
+			Messages:   msgs,
+		}
+		if len(msgs) > 0 {
+			resp.ReturnedFrom = msgs[0].Sequence
+			resp.ReturnedTo = msgs[len(msgs)-1].Sequence
+		}
+		if len(mustMarshal(resp)) <= budget {
+			break
+		}
+		truncated = true
+		if tailMode {
+			msgs = msgs[1:]
+		} else {
+			frontSize := len(msgs[0].Content)
+			backSize := len(msgs[len(msgs)-1].Content)
+			if frontSize >= backSize {
+				msgs = msgs[1:]
+			} else {
+				msgs = msgs[:len(msgs)-1]
+			}
+		}
+	}
+
+	// Final safety check: if even the minimum set exceeds budget, return empty
+	resp := SessionMessagesResponse{SessionID: sessionID, TotalCount: totalCount, Messages: msgs}
+	if len(mustMarshal(resp)) > budget {
+		return nil, true
+	}
+	return msgs, truncated
+}
+
+// trimSearchResultsToFit removes the last session result until the serialized
+// response fits within MaxResponseTokens.
+func trimSearchResultsToFit(results []SessionMatch) ([]SessionMatch, bool) {
+	budget := maxResponseBytes()
+	truncated := false
+	for len(results) > 0 {
+		if len(mustMarshal(map[string]interface{}{"sessions": results})) <= budget {
+			break
+		}
+		truncated = true
+		results = results[:len(results)-1]
+	}
+	return results, truncated
+}
+
+// trimSessionSummariesToFit removes the last session until the serialized
+// response fits within MaxResponseTokens.
+func trimSessionSummariesToFit(sessions []SessionSummary) ([]SessionSummary, bool) {
+	budget := maxResponseBytes()
+	truncated := false
+	for len(sessions) > 0 {
+		if len(mustMarshal(map[string]interface{}{"sessions": sessions})) <= budget {
+			break
+		}
+		truncated = true
+		sessions = sessions[:len(sessions)-1]
+	}
+	return sessions, truncated
 }
 
 func makeGenerateSessionAnchorHandler() func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {

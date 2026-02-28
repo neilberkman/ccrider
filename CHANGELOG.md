@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.0.0] - 2026-02-28
+
+### Changed
+
+- **BLAKE3 hashing** replaces SHA256 for file change detection — faster and better sync convergence on cloud drives (inspired by @rcny's PR #5)
+- **Filename-based session keying** — sessions are now keyed by JSONL filename instead of the parsed `sessionId` field. Fixes hash thrashing where resumed sessions (which reference their parent's UUID) caused multiple files to fight over one DB row
+- **MCP response trimming** — deterministic token-based limits on all MCP handlers (was a guessed byte limit on one handler). Measures against actual serialized JSON, respects Claude Code's 25k token hard limit
+
+### Fixed
+
+- **Message relinking** — messages that were stuck under orphan session rows (from the old keying scheme) are now correctly reassigned during sync via `ON CONFLICT(uuid) DO UPDATE SET session_id`
+- **MCP protocol corruption** — importer warnings were written to stdout, which IS the MCP JSON-RPC transport. Moved to stderr
+- **Crash-safe migrations** — each column addition now checks for its own existence individually, so a crash between two ALTER TABLEs won't leave the schema half-migrated
+- **Recovery prompt param name** — recovery mode told Claude to use `session_id` for search, but the actual MCP tool parameter is `current_session_id`
+- **Negative limit panic** — MCP handler crashed on negative limit values
+- **Trim edge cases** — trim loops could stop with items still over budget; `last_n` mode now correctly trims from front only
+
 ## [0.10.0] - 2026-02-01
 
 ### Performance

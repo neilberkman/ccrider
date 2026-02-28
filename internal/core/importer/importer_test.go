@@ -35,15 +35,13 @@ func TestImportSession(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Get file identity for the test file
-	inode, device, err := getFileIdentity(session.FilePath)
+	inode, device, _ := getFileIdentity(session.FilePath)
+	hash, err := computeFileHash(session.FilePath)
 	if err != nil {
-		// OK if not available, use 0
-		inode, device = 0, 0
+		t.Fatal(err)
 	}
 
-	// Import it
-	err = imp.ImportSession(session, 0, inode, device)
+	err = imp.ImportSession(session, 0, inode, device, hash)
 	if err != nil {
 		t.Fatalf("ImportSession() error = %v", err)
 	}
@@ -97,16 +95,18 @@ func TestImportSession_ResumedSession(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Get file identity
 	inode, device, _ := getFileIdentity(session1.FilePath)
+	hash, err := computeFileHash(session1.FilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	err = imp.ImportSession(session1, 0, inode, device)
+	err = imp.ImportSession(session1, 0, inode, device, hash)
 	if err != nil {
 		t.Fatalf("ImportSession() error = %v", err)
 	}
 
-	// Import the same session again (simulating resumed session)
-	err = imp.ImportSession(session1, 0, inode, device)
+	err = imp.ImportSession(session1, 0, inode, device, hash)
 	if err != nil {
 		t.Fatalf("ImportSession() second import error = %v", err)
 	}
@@ -161,10 +161,13 @@ func TestImportSession_AgentSession(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Get file identity
 	inode, device, _ := getFileIdentity(session.FilePath)
+	hash, err := computeFileHash(session.FilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	err = imp.ImportSession(session, 0, inode, device)
+	err = imp.ImportSession(session, 0, inode, device, hash)
 	if err != nil {
 		t.Fatalf("ImportSession() error = %v", err)
 	}
@@ -176,7 +179,7 @@ func TestImportSession_AgentSession(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if sessionID != "test-session-123" {
-		t.Errorf("Expected session_id 'test-session-123', got %s", sessionID)
+	if sessionID != "agent-session" {
+		t.Errorf("Expected session_id 'agent-session' (filename), got %s", sessionID)
 	}
 }

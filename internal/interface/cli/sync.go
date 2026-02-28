@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/neilberkman/ccrider/internal/core/db"
 	"github.com/neilberkman/ccrider/internal/core/importer"
@@ -120,6 +121,13 @@ func countJSONLFiles(dirPath string) (int, error) {
 			return err
 		}
 		if !info.IsDir() && filepath.Ext(path) == ".jsonl" {
+			basename := filepath.Base(path)
+			if strings.Contains(basename, "Edit conflict") {
+				return nil
+			}
+			if strings.Contains(path, "/subagents/") || strings.HasPrefix(basename, "agent-") {
+				return nil
+			}
 			count++
 		}
 		return nil
