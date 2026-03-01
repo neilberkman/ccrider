@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 
@@ -183,6 +184,19 @@ func StartServer(dbPath string) error {
 	return server.ServeStdio(s)
 }
 
+// coerceStringNumbers converts string-encoded numbers to float64 in an arguments map.
+// LLMs sometimes send numbers as strings (e.g. "3913" instead of 3913), which causes
+// json.Unmarshal to fail on int fields. This pre-processes the map to fix that.
+func coerceStringNumbers(args map[string]interface{}) {
+	for k, v := range args {
+		if s, ok := v.(string); ok {
+			if n, err := strconv.ParseFloat(s, 64); err == nil {
+				args[k] = n
+			}
+		}
+	}
+}
+
 // syncDatabase ensures the database is up-to-date before running tool queries
 func syncDatabase(ctx context.Context, database *db.DB) error {
 	return importer.New(database).SyncAll(false)
@@ -196,6 +210,9 @@ func makeSearchSessionsHandler(database *db.DB) func(context.Context, mcp.CallTo
 		}
 
 		var args SearchSessionsArgs
+		if m, ok := request.Params.Arguments.(map[string]interface{}); ok {
+			coerceStringNumbers(m)
+		}
 		argsBytes, _ := json.Marshal(request.Params.Arguments)
 		if err := json.Unmarshal(argsBytes, &args); err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("invalid arguments: %v", err)), nil
@@ -352,6 +369,9 @@ func makeListRecentSessionsHandler(database *db.DB) func(context.Context, mcp.Ca
 		}
 
 		var args ListRecentSessionsArgs
+		if m, ok := request.Params.Arguments.(map[string]interface{}); ok {
+			coerceStringNumbers(m)
+		}
 		argsBytes, _ := json.Marshal(request.Params.Arguments)
 		if err := json.Unmarshal(argsBytes, &args); err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("invalid arguments: %v", err)), nil
@@ -410,6 +430,9 @@ func makeGetSessionMessagesHandler(database *db.DB) func(context.Context, mcp.Ca
 		}
 
 		var args GetSessionMessagesArgs
+		if m, ok := request.Params.Arguments.(map[string]interface{}); ok {
+			coerceStringNumbers(m)
+		}
 		argsBytes, _ := json.Marshal(request.Params.Arguments)
 		if err := json.Unmarshal(argsBytes, &args); err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("invalid arguments: %v", err)), nil
