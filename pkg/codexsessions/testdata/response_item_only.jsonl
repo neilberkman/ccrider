@@ -1,0 +1,7 @@
+{"timestamp":"2026-03-01T10:00:00.000Z","type":"session_meta","payload":{"id":"test-ri-session","timestamp":"2026-03-01T10:00:00.000Z","cwd":"/home/testuser/project","originator":"codex_cli_rs","cli_version":"0.95.0","source":"cli","model_provider":"openai"}}
+{"timestamp":"2026-03-01T10:00:01.000Z","type":"turn_context","payload":{"cwd":"/home/testuser/project","model":"gpt-5.2-codex"}}
+{"timestamp":"2026-03-01T10:00:02.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Refactor the database module"}]}}
+{"timestamp":"2026-03-01T10:00:03.000Z","type":"response_item","payload":{"type":"function_call","name":"shell","call_id":"call_1","arguments":"{\"cmd\":\"ls\"}"}}
+{"timestamp":"2026-03-01T10:00:04.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"I'll refactor the database module for better separation of concerns."}]}}
+{"timestamp":"2026-03-01T10:00:05.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Also add connection pooling"}]}}
+{"timestamp":"2026-03-01T10:00:06.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Done. I've added connection pooling with configurable pool size."}]}}

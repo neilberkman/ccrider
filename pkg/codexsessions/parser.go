@@ -38,6 +38,41 @@ type eventMsgPayload struct {
 	Message string `json:"message"`
 }
 
+type responseItemPayload struct {
+	Type    string          `json:"type"`
+	Role    string          `json:"role"`
+	Content json.RawMessage `json:"content"`
+}
+
+type contentItem struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+func extractTextFromContent(raw json.RawMessage) string {
+	var items []contentItem
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return ""
+	}
+	var texts []string
+	for _, item := range items {
+		if item.Text != "" && (item.Type == "input_text" || item.Type == "output_text") {
+			texts = append(texts, item.Text)
+		}
+	}
+	if len(texts) == 1 {
+		return texts[0]
+	}
+	result := ""
+	for i, t := range texts {
+		if i > 0 {
+			result += "\n\n"
+		}
+		result += t
+	}
+	return result
+}
+
 func deterministicUUID(sessionID string, sequence int) string {
 	h := blake3.New()
 	_, _ = h.Write([]byte(sessionID + ":" + strconv.Itoa(sequence)))
@@ -72,7 +107,12 @@ func ParseFile(path string) (*ccsessions.ParsedSession, error) {
 	var lineBuffer bytes.Buffer
 	var currentCWD string
 	var currentVersion string
-	sequence := 0
+
+	// Dual-buffer: collect messages from both sources, prefer response_item
+	var responseItemMsgs []ccsessions.ParsedMessage
+	var eventMsgMsgs []ccsessions.ParsedMessage
+	riSequence := 0
+	emSequence := 0
 
 	for {
 		lineBuffer.Reset()
@@ -82,6 +122,13 @@ func ParseFile(path string) (*ccsessions.ParsedSession, error) {
 			lineBuffer.Write(chunk)
 			if err == io.EOF {
 				if lineBuffer.Len() == 0 {
+					// Choose message source: prefer response_item if it captured more messages
+					if len(responseItemMsgs) >= len(eventMsgMsgs) && len(responseItemMsgs) > 0 {
+						session.Messages = responseItemMsgs
+					} else {
+						session.Messages = eventMsgMsgs
+					}
+
 					if session.Summary == "" && len(session.Messages) > 0 {
 						for _, m := range session.Messages {
 							if m.Sender == "human" && m.TextContent != "" {
@@ -149,6 +196,49 @@ func ParseFile(path string) (*ccsessions.ParsedSession, error) {
 				}
 			}
 
+		case "response_item":
+			var ri responseItemPayload
+			if err := json.Unmarshal(raw.Payload, &ri); err != nil {
+				continue
+			}
+			if ri.Type != "message" {
+				continue
+			}
+			switch ri.Role {
+			case "user":
+				text := extractTextFromContent(ri.Content)
+				if text == "" {
+					continue
+				}
+				riSequence++
+				responseItemMsgs = append(responseItemMsgs, ccsessions.ParsedMessage{
+					UUID:        deterministicUUID(session.SessionID, riSequence),
+					Type:        "user",
+					Sender:      "human",
+					TextContent: text,
+					Timestamp:   ts,
+					Sequence:    riSequence,
+					CWD:         currentCWD,
+					Version:     currentVersion,
+				})
+			case "assistant":
+				text := extractTextFromContent(ri.Content)
+				if text == "" {
+					continue
+				}
+				riSequence++
+				responseItemMsgs = append(responseItemMsgs, ccsessions.ParsedMessage{
+					UUID:        deterministicUUID(session.SessionID, riSequence),
+					Type:        "assistant",
+					Sender:      "assistant",
+					TextContent: text,
+					Timestamp:   ts,
+					Sequence:    riSequence,
+					CWD:         currentCWD,
+					Version:     currentVersion,
+				})
+			}
+
 		case "event_msg":
 			var ev eventMsgPayload
 			if err := json.Unmarshal(raw.Payload, &ev); err != nil {
@@ -160,14 +250,14 @@ func ParseFile(path string) (*ccsessions.ParsedSession, error) {
 				if ev.Message == "" {
 					continue
 				}
-				sequence++
-				session.Messages = append(session.Messages, ccsessions.ParsedMessage{
-					UUID:        deterministicUUID(session.SessionID, sequence),
+				emSequence++
+				eventMsgMsgs = append(eventMsgMsgs, ccsessions.ParsedMessage{
+					UUID:        deterministicUUID(session.SessionID, emSequence),
 					Type:        "user",
 					Sender:      "human",
 					TextContent: ev.Message,
 					Timestamp:   ts,
-					Sequence:    sequence,
+					Sequence:    emSequence,
 					CWD:         currentCWD,
 					Version:     currentVersion,
 				})
@@ -176,14 +266,14 @@ func ParseFile(path string) (*ccsessions.ParsedSession, error) {
 				if ev.Message == "" {
 					continue
 				}
-				sequence++
-				session.Messages = append(session.Messages, ccsessions.ParsedMessage{
-					UUID:        deterministicUUID(session.SessionID, sequence),
+				emSequence++
+				eventMsgMsgs = append(eventMsgMsgs, ccsessions.ParsedMessage{
+					UUID:        deterministicUUID(session.SessionID, emSequence),
 					Type:        "assistant",
 					Sender:      "assistant",
 					TextContent: ev.Message,
 					Timestamp:   ts,
-					Sequence:    sequence,
+					Sequence:    emSequence,
 					CWD:         currentCWD,
 					Version:     currentVersion,
 				})
