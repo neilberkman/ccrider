@@ -121,6 +121,44 @@ func TestParseFile_DualBufferSelectsLargerSource(t *testing.T) {
 	}
 }
 
+func TestIsSystemBoilerplate(t *testing.T) {
+	tests := []struct {
+		text string
+		want bool
+	}{
+		{"# AGENTS.md instructions for /Users/neil/scrubbed", true},
+		{"<environment_context>\n<cwd>/Users/neil</cwd>", true},
+		{"<system-reminder>something</system-reminder>", true},
+		{"Fix the bug in the login handler", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		if got := isSystemBoilerplate(tt.text); got != tt.want {
+			t.Errorf("isSystemBoilerplate(%q) = %v, want %v", tt.text[:min(len(tt.text), 40)], got, tt.want)
+		}
+	}
+}
+
+func TestParseFile_SkipsBoilerplateUserMessages(t *testing.T) {
+	session, err := ParseFile("testdata/boilerplate_filter.jsonl")
+	if err != nil {
+		t.Fatalf("ParseFile() error = %v", err)
+	}
+
+	// Should have 2 messages: the real user message and the assistant reply
+	// The AGENTS.md and environment_context messages should be filtered out
+	if len(session.Messages) != 2 {
+		t.Fatalf("len(Messages) = %d, want 2 (boilerplate filtered)", len(session.Messages))
+	}
+
+	if session.Messages[0].TextContent != "Fix the login bug" {
+		t.Errorf("Messages[0] text = %q, want real user message", session.Messages[0].TextContent)
+	}
+	if session.Summary != "Fix the login bug" {
+		t.Errorf("Summary = %q, want real user message not boilerplate", session.Summary)
+	}
+}
+
 func TestParseFile_SkipsNonMessageEvents(t *testing.T) {
 	session, err := ParseFile("testdata/sample.jsonl")
 	if err != nil {

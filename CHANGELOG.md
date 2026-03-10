@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.1.3] - 2026-03-09
+
+### Fixed
+
+- **Codex response_item parsing** — parse `response_item` events in addition to `event_msg`, fixing ~16% message loss and eliminating zero-message sessions where Codex CLI used `response_item` exclusively (thanks @APE-147)
+- **Filter system boilerplate** — skip AGENTS.md instructions, environment_context, and system-reminder messages that Codex CLI emits as `role=user` response_items
+- **Migration for existing users** — one-time migration wipes and re-imports Codex sessions automatically on upgrade, including derived data (summaries, issues, files)
+
+## [1.1.2] - 2026-03-04
+
+### Fixed
+
+- **MCP tool annotations** — all tools now declare `readOnlyHint`, `destructiveHint: false`, `openWorldHint: false`, and `idempotentHint` so clients no longer label them as "destructive, open-world"
+
 ## [1.1.0] - 2026-02-28
 
 ### Added

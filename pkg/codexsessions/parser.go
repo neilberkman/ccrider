@@ -50,6 +50,14 @@ type contentItem struct {
 	Text string `json:"text"`
 }
 
+// isSystemBoilerplate detects Codex CLI system instructions that get
+// emitted as role=user response_item messages instead of role=developer.
+func isSystemBoilerplate(text string) bool {
+	return strings.HasPrefix(text, "# AGENTS.md") ||
+		strings.HasPrefix(text, "<environment_context>") ||
+		strings.HasPrefix(text, "<system-reminder>")
+}
+
 func extractTextFromContent(raw json.RawMessage) string {
 	var items []contentItem
 	if err := json.Unmarshal(raw, &items); err != nil {
@@ -199,7 +207,7 @@ func ParseFile(path string) (*ccsessions.ParsedSession, error) {
 			// "developer" role carries system instructions, not conversation content — skip it
 			case "user":
 				text := extractTextFromContent(ri.Content)
-				if text == "" {
+				if text == "" || isSystemBoilerplate(text) {
 					continue
 				}
 				riSequence++
