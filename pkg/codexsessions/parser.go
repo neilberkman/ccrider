@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/neilberkman/ccrider/pkg/ccsessions"
@@ -60,17 +61,7 @@ func extractTextFromContent(raw json.RawMessage) string {
 			texts = append(texts, item.Text)
 		}
 	}
-	if len(texts) == 1 {
-		return texts[0]
-	}
-	result := ""
-	for i, t := range texts {
-		if i > 0 {
-			result += "\n\n"
-		}
-		result += t
-	}
-	return result
+	return strings.Join(texts, "\n\n")
 }
 
 func deterministicUUID(sessionID string, sequence int) string {
@@ -205,6 +196,7 @@ func ParseFile(path string) (*ccsessions.ParsedSession, error) {
 				continue
 			}
 			switch ri.Role {
+			// "developer" role carries system instructions, not conversation content — skip it
 			case "user":
 				text := extractTextFromContent(ri.Content)
 				if text == "" {

@@ -22,6 +22,11 @@ func (db *DB) migrate() error {
 		return err
 	}
 
+	// Migration 5: Invalidate Codex sessions so they re-import with response_item parsing
+	if err := db.migration005ReimportCodexSessions(); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -144,6 +149,65 @@ func (db *DB) migration003AddFileTrackingColumns() error {
 		}
 	}
 	return nil
+}
+
+// migration005ReimportCodexSessions deletes Codex messages and invalidates file
+// tracking so the next sync re-parses them with the new response_item parser.
+// One-time migration: the parser previously ignored response_item events, causing
+// up to 16% message loss and zero-message sessions.
+//
+// Note: sessions whose source JSONL files have been deleted from disk will lose
+// their cached messages. This is acceptable since the DB is a cache over the
+// source files — if the files are gone, the source of truth is already lost.
+func (db *DB) migration005ReimportCodexSessions() error {
+	// Idempotent check: use a marker column to detect if already applied
+	var count int
+	err := db.conn.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name='parser_version'
+	`).Scan(&count)
+	if err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+
+	// Run all three statements atomically so a partial failure doesn't leave
+	// the migration marker set without completing the data cleanup.
+	tx, err := db.conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.Exec(`ALTER TABLE sessions ADD COLUMN parser_version INTEGER DEFAULT 1`); err != nil {
+		return err
+	}
+
+	// Delete all messages and derived data from Codex sessions so they re-import cleanly.
+	// Derived tables (summaries, issues, files) are built from messages and would be
+	// stale after re-import with the new parser.
+	for _, table := range []string{"messages", "session_summaries", "summary_chunks", "session_issues", "session_files"} {
+		if _, err := tx.Exec(`
+			DELETE FROM `+table+` WHERE session_id IN (
+				SELECT id FROM sessions WHERE provider = 'codex'
+			)
+		`); err != nil {
+			return err
+		}
+	}
+
+	// Invalidate file tracking so next sync re-parses these sessions.
+	// Clearing file_hash and file_size causes both the mtime+size fast path
+	// and the hash check to fail, triggering a natural re-parse.
+	if _, err := tx.Exec(`
+		UPDATE sessions SET message_count = 0, file_hash = '', file_size = 0
+		WHERE provider = 'codex'
+	`); err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 func (db *DB) migration004AddProviderColumn() error {

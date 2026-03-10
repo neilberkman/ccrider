@@ -103,9 +103,9 @@ func TestParseFile_ResponseItemOnly(t *testing.T) {
 	}
 }
 
-func TestParseFile_ResponseItemPreferredWhenMore(t *testing.T) {
+func TestParseFile_DualBufferSelectsLargerSource(t *testing.T) {
 	// sample.jsonl has 4 event_msg messages and 1 response_item message
-	// Parser should prefer event_msg since it has more messages
+	// Parser should select event_msg since it has more messages
 	session, err := ParseFile("testdata/sample.jsonl")
 	if err != nil {
 		t.Fatalf("ParseFile() error = %v", err)
