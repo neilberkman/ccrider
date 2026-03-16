@@ -123,6 +123,10 @@ func StartServer(dbPath string) error {
 
 	// Register search_sessions tool
 	searchTool := mcp.NewTool("search_sessions",
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithOpenWorldHintAnnotation(false),
+		mcp.WithIdempotentHintAnnotation(true),
 		mcp.WithDescription("Search Claude Code sessions for a query string across all message content. Can search current session only, exclude current session, or search all sessions. Supports date and project filtering.\n\nTO FIND EARLIER CONTEXT IN YOUR CURRENT SESSION (disappeared due to context compaction): Use anchor_phrase with a unique phrase you just said or saw - this identifies your session. Then query searches only within that session. The database syncs before every search so even recent messages are searchable."),
 		mcp.WithString("query",
 			mcp.Required(),
@@ -150,6 +154,10 @@ func StartServer(dbPath string) error {
 
 	// Register list_recent_sessions tool
 	listTool := mcp.NewTool("list_recent_sessions",
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithOpenWorldHintAnnotation(false),
+		mcp.WithIdempotentHintAnnotation(true),
 		mcp.WithDescription("Get recent Claude Code and Codex CLI sessions, optionally filtered by project or provider"),
 		mcp.WithNumber("limit",
 			mcp.Description("Max sessions to return (default: 20)")),
@@ -162,6 +170,10 @@ func StartServer(dbPath string) error {
 
 	// Register get_session_messages tool
 	messagesTool := mcp.NewTool("get_session_messages",
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithOpenWorldHintAnnotation(false),
+		mcp.WithIdempotentHintAnnotation(true),
 		mcp.WithDescription("Get messages from a Claude Code session. Use last_n for tail (e.g., 'where were we'), around_sequence for context around a search match, or neither for full transcript."),
 		mcp.WithString("session_id",
 			mcp.Required(),
@@ -177,6 +189,10 @@ func StartServer(dbPath string) error {
 
 	// Register generate_session_anchor tool
 	anchorTool := mcp.NewTool("generate_session_anchor",
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithOpenWorldHintAnnotation(false),
+		mcp.WithIdempotentHintAnnotation(false),
 		mcp.WithDescription("USE THIS when the user asks about something from earlier in THIS conversation that you can't see (context compaction removed it). Generates a unique phrase you say aloud to 'tag' your session, then search for it. Two-step: 1) Call this, say the phrase, ask user to reply 'go', 2) After they reply, search with anchor_phrase to find your session's earlier context."),
 	)
 	s.AddTool(anchorTool, makeGenerateSessionAnchorHandler())

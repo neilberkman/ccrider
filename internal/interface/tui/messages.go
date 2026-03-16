@@ -120,8 +120,8 @@ func loadSessions(database *db.DB, filterByProject bool, projectPath string) tea
 				Project:      cs.ProjectPath,
 				LastCwd:      cs.LastCwd,
 				MessageCount: cs.MessageCount,
-				UpdatedAt:    cs.UpdatedAt.Format("2006-01-02 15:04:05"),
-				CreatedAt:    cs.CreatedAt.Format("2006-01-02 15:04:05"),
+				UpdatedAt:    cs.UpdatedAt.Format(time.RFC3339),
+				CreatedAt:    cs.CreatedAt.Format(time.RFC3339),
 				Provider:     cs.Provider,
 			}
 
@@ -166,7 +166,7 @@ func loadSessionForLaunch(database *db.DB, sessionID string) tea.Cmd {
 			sessionID:   session.SessionID,
 			projectPath: session.ProjectPath,
 			lastCwd:     lastCwd,
-			updatedAt:   session.UpdatedAt.Format("2006-01-02 15:04:05"),
+			updatedAt:   session.UpdatedAt.Format(time.RFC3339),
 			summary:     session.Summary,
 		}
 	}
@@ -186,8 +186,8 @@ func loadSessionDetail(database *db.DB, sessionID string) tea.Cmd {
 			Summary:      coreDetail.Summary,
 			Project:      coreDetail.ProjectPath,
 			MessageCount: coreDetail.MessageCount,
-			UpdatedAt:    coreDetail.UpdatedAt.Format("2006-01-02 15:04:05"),
-			CreatedAt:    coreDetail.UpdatedAt.Format("2006-01-02 15:04:05"),
+			UpdatedAt:    coreDetail.UpdatedAt.Format(time.RFC3339),
+			CreatedAt:    coreDetail.UpdatedAt.Format(time.RFC3339),
 			Provider:     coreDetail.Provider,
 		}
 

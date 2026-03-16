@@ -62,10 +62,17 @@ func (i *Importer) ImportSession(session *ccsessions.ParsedSession, existingMess
 	lastCwd := extractLastCwd(session.Messages)
 
 	// Compute timestamps from messages
+	// Use first message for createdAt, max timestamp across ALL messages for updatedAt
+	// (don't assume messages are chronologically ordered — some may have zero timestamps)
+	// Normalize to UTC so the DB is consistent regardless of local timezone
 	var createdAt, updatedAt time.Time
-	if len(session.Messages) > 0 {
-		createdAt = session.Messages[0].Timestamp
-		updatedAt = session.Messages[len(session.Messages)-1].Timestamp
+	for _, msg := range session.Messages {
+		if createdAt.IsZero() && !msg.Timestamp.IsZero() {
+			createdAt = msg.Timestamp
+		}
+		if msg.Timestamp.After(updatedAt) {
+			updatedAt = msg.Timestamp
+		}
 	}
 	if createdAt.IsZero() {
 		createdAt = session.FileMtime

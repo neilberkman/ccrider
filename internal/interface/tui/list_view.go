@@ -199,6 +199,9 @@ func (m Model) viewList() string {
 	}
 
 	if len(m.sessions) == 0 {
+		if m.initialLoad {
+			return "Loading sessions...\n\n" + helpText
+		}
 		return "No sessions found. Press 's' to sync.\n\n" + helpText
 	}
 
@@ -210,13 +213,19 @@ func (m Model) viewList() string {
 }
 
 func formatTime(t string) string {
-	// Parse SQLite datetime format
-	parsed, err := time.Parse("2006-01-02T15:04:05.999Z07:00", t)
+	// Try RFC3339 first (preferred — preserves timezone)
+	parsed, err := time.Parse(time.RFC3339, t)
 	if err != nil {
-		// Try without timezone
-		parsed, err = time.Parse("2006-01-02 15:04:05", t)
+		// Try with fractional seconds
+		parsed, err = time.Parse("2006-01-02T15:04:05.999Z07:00", t)
 		if err != nil {
-			return t
+			// Legacy: no timezone (treated as local time)
+			parsed, err = time.Parse("2006-01-02 15:04:05", t)
+			if err != nil {
+				return t
+			}
+			// Assume local time since no timezone was provided
+			parsed = parsed.In(time.Local)
 		}
 	}
 	return humanize.Time(parsed)

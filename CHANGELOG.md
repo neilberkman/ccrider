@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.4] - 2026-03-16
+
+### Fixed
+
+- **Session timestamps off by timezone offset** — "Updated: 7 hours ago" on sessions active minutes ago due to timezone being stripped during time formatting roundtrip (Format without timezone → Parse assumes UTC)
+- **Importer uses max message timestamp** — use maximum timestamp across all messages instead of last array element, reducing unnecessary file_mtime fallback
+- **"No sessions found" flash on startup** — briefly showed alarming empty-state message before async session load completed; now shows "Loading sessions..." during initial load
+
 ## [1.1.3] - 2026-03-09
 
 ### Fixed

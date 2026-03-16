@@ -70,6 +70,9 @@ type Model struct {
 	fallbackUpdatedAt   string
 	fallbackSummary     string
 
+	// Loading state
+	initialLoad bool // True until first sessionsLoadedMsg arrives
+
 	// Sync progress state
 	syncing          bool
 	syncCurrentFile  string
@@ -149,6 +152,7 @@ func New(database *db.DB) Model {
 		inSessionSearch:      inSessionTi,
 		projectFilterEnabled: false, // Disabled by default
 		currentDirectory:     currentDir,
+		initialLoad:          true, // True until first sessionsLoadedMsg
 		syncing:              true, // Start with syncing=true
 	}
 }
@@ -280,6 +284,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, syncSubscribe(msg.ch, msg.db, msg.filterByProject, msg.projectPath)
 
 	case sessionsLoadedMsg:
+		m.initialLoad = false
 		m.sessions = msg.sessions
 		m.list = createSessionList(msg.sessions, m.width, m.height)
 
