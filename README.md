@@ -151,6 +151,8 @@ All tools support a `provider` parameter to filter by `claude` or `codex`. The M
 
 ## Configuration
 
+> **Note:** Claude Code auto-deletes session JSON files after 30 days by default. ccrider preserves all session content in its own database, but if you want the original files kept (for resume, etc.), add `"cleanupPeriodDays": 99999` to your `~/.claude/settings.json`.
+
 ccrider looks for config in `~/.config/ccrider/`:
 
 ```toml
