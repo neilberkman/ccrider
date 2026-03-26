@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.1.5] - 2026-03-26
+
+### Changed
+
+- **Repo-aware session export** — pressing `e` in the TUI now opens an export dialog with a prefilled path instead of immediately writing to cwd. Default destination for repo-backed sessions is `<repo>/.ccrider/exports/session-<id>.md`. Nothing is written until Enter confirms. Closes #10
+- **CLI export writes to stdout by default** — `ccrider export <id>` is now pipeable. Use `--repo` for repo-local export, `--output` for explicit path, `--force` to overwrite
+- **Export markdown generation moved to core** — shared `internal/core/export/` package replaces duplicated raw SQL in interface layers
+
+### Fixed
+
+- **"Error: success: exported to..." display bug** — export success messages no longer route through `fmt.Errorf`; uses a dedicated status message field
+
+### Added
+
+- **Light theme support** — TUI colors adapt to terminal background using `lipgloss.AdaptiveColor`, fixing unreadable yellow-on-white in light terminals (thanks @seguri)
+- **Export directory memory** — remembers last export directory per-repo and globally in config
+
 ## [1.1.4] - 2026-03-16
 
 ### Fixed
