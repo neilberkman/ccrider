@@ -285,7 +285,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "?":
-			if m.mode != exportDialogView && m.mode != searchView && !(m.mode == detailView && m.inSessionSearchMode) {
+			if m.mode != exportDialogView && m.mode != searchView && (m.mode != detailView || !m.inSessionSearchMode) {
 				m.mode = helpView
 				return m, nil
 			}

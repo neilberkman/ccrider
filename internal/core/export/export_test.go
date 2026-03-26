@@ -14,13 +14,13 @@ func setupTestDB(t *testing.T) *db.DB {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.Remove(tmpfile.Name()) })
+	t.Cleanup(func() { _ = os.Remove(tmpfile.Name()) })
 
 	database, err := db.New(tmpfile.Name())
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { database.Close() })
+	t.Cleanup(func() { _ = database.Close() })
 
 	// Insert a test session with messages
 	_, err = database.Exec(`
@@ -155,7 +155,9 @@ func TestWriteExport_NoOverwrite(t *testing.T) {
 	filePath := filepath.Join(tmpDir, "existing.md")
 
 	// Create existing file
-	os.WriteFile(filePath, []byte("original"), 0644)
+	if err := os.WriteFile(filePath, []byte("original"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	err := WriteExport("new content", filePath, false)
 	if err == nil {
@@ -174,7 +176,9 @@ func TestWriteExport_ForceOverwrite(t *testing.T) {
 	filePath := filepath.Join(tmpDir, "existing.md")
 
 	// Create existing file
-	os.WriteFile(filePath, []byte("original"), 0644)
+	if err := os.WriteFile(filePath, []byte("original"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	err := WriteExport("new content", filePath, true)
 	if err != nil {
