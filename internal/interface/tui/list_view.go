@@ -148,18 +148,26 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, syncSessions(m.db, m.projectFilterEnabled, m.currentDirectory)
 
 	case "e":
-		// Quick export to current directory
+		// Open export dialog with repo-aware default path
 		if selected, ok := m.list.SelectedItem().(sessionListItem); ok {
-			return m, exportSession(m.db, selected.session.ID)
+			m.exportSessionID = selected.session.ID
+			m.exportSessionProject = selected.session.Project
+			defaultPath := resolveDefaultExportPath(selected.session.ID, selected.session.Project)
+			m.exportInput.SetValue(defaultPath)
+			m.exportInput.CursorEnd()
+			m.exportInput.Focus()
+			m.mode = exportDialogView
 		}
 		return m, nil
 
 	case "E":
-		// Export with custom filename (save as)
-		// TODO: Add text input prompt for custom filename
+		// Open export dialog with blank path (user types their own)
 		if selected, ok := m.list.SelectedItem().(sessionListItem); ok {
-			// For now, just do quick export
-			return m, exportSession(m.db, selected.session.ID)
+			m.exportSessionID = selected.session.ID
+			m.exportSessionProject = selected.session.Project
+			m.exportInput.SetValue("")
+			m.exportInput.Focus()
+			m.mode = exportDialogView
 		}
 		return m, nil
 	}

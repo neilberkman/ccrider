@@ -315,18 +315,26 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "e":
-		// Quick export to current directory
+		// Open export dialog with repo-aware default path
 		if m.currentSession != nil {
-			return m, exportSession(m.db, m.currentSession.Session.ID)
+			m.exportSessionID = m.currentSession.Session.ID
+			m.exportSessionProject = m.currentSession.Session.Project
+			defaultPath := resolveDefaultExportPath(m.currentSession.Session.ID, m.currentSession.Session.Project)
+			m.exportInput.SetValue(defaultPath)
+			m.exportInput.CursorEnd()
+			m.exportInput.Focus()
+			m.mode = exportDialogView
 		}
 		return m, nil
 
 	case "E":
-		// Export with custom filename (save as)
-		// TODO: Add text input prompt for custom filename
+		// Open export dialog with blank path (user types their own)
 		if m.currentSession != nil {
-			// For now, just do quick export
-			return m, exportSession(m.db, m.currentSession.Session.ID)
+			m.exportSessionID = m.currentSession.Session.ID
+			m.exportSessionProject = m.currentSession.Session.Project
+			m.exportInput.SetValue("")
+			m.exportInput.Focus()
+			m.mode = exportDialogView
 		}
 		return m, nil
 

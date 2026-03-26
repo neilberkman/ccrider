@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,11 +20,15 @@ type Config struct {
 	TerminalCommand      string   // Custom command to spawn terminal (optional)
 	ClaudeFlags          []string // Additional flags to pass to claude --resume
 	LLMProvider          string   // LLM provider for summarization: "anthropic" or "bedrock"
+	LastExportDir        string            // Last manually chosen export directory (global)
+	RepoExportDirs       map[string]string // Last chosen export directory per repo root
 }
 
 type tomlConfig struct {
-	ClaudeFlags []string `toml:"claude_flags"`
-	LLMProvider string   `toml:"llm_provider"`
+	ClaudeFlags    []string          `toml:"claude_flags"`
+	LLMProvider    string            `toml:"llm_provider"`
+	LastExportDir  string            `toml:"last_export_dir,omitempty"`
+	RepoExportDirs map[string]string `toml:"repo_export_dirs,omitempty"`
 }
 
 // Load reads config from ~/.config/ccrider/
@@ -48,6 +53,8 @@ func Load() (*Config, error) {
 		if _, err := toml.DecodeFile(tomlPath, &tc); err == nil {
 			cfg.ClaudeFlags = tc.ClaudeFlags
 			cfg.LLMProvider = tc.LLMProvider
+			cfg.LastExportDir = tc.LastExportDir
+			cfg.RepoExportDirs = tc.RepoExportDirs
 		}
 	}
 
@@ -62,4 +69,32 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// Save writes the TOML-serializable parts of the config back to config.toml.
+// Fields stored in separate files (resume_prompt.txt, terminal_command.txt) are not affected.
+func Save(cfg *Config) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+
+	configDir := filepath.Join(home, ".config", "ccrider")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return err
+	}
+
+	tc := tomlConfig{
+		ClaudeFlags:    cfg.ClaudeFlags,
+		LLMProvider:    cfg.LLMProvider,
+		LastExportDir:  cfg.LastExportDir,
+		RepoExportDirs: cfg.RepoExportDirs,
+	}
+
+	var buf bytes.Buffer
+	if err := toml.NewEncoder(&buf).Encode(tc); err != nil {
+		return err
+	}
+
+	return os.WriteFile(filepath.Join(configDir, "config.toml"), buf.Bytes(), 0644)
 }

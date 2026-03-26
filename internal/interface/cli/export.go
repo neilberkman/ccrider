@@ -4,40 +4,53 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
-	"time"
 
+	"github.com/neilberkman/ccrider/internal/core/config"
 	"github.com/neilberkman/ccrider/internal/core/db"
+	"github.com/neilberkman/ccrider/internal/core/export"
 	"github.com/spf13/cobra"
 )
 
 var (
 	exportOutput string
+	exportRepo   bool
+	exportForce  bool
 )
 
 var exportCmd = &cobra.Command{
 	Use:   "export <session-id>",
 	Short: "Export a session to markdown",
-	Long: `Export a Claude Code session to a markdown file.
+	Long: `Export a Claude Code session to markdown.
 
-By default exports to current directory as session-<id>.md.
-Use --output to specify a custom path.
+By default, writes markdown to stdout for piping or redirection.
+
+Use --output to write to a specific file path.
+Use --repo to write to the session's repo at <repo>/.ccrider/exports/session-<id>.md.
 
 Examples:
   ccrider export 0ccfddc4-00e7-443a-bb82-58ede5936619
+  ccrider export 0ccfddc4-00e7-443a-bb82-58ede5936619 | pbcopy
+  ccrider export 0ccfddc4-00e7-443a-bb82-58ede5936619 > session.md
+  ccrider export 0ccfddc4-00e7-443a-bb82-58ede5936619 --repo
   ccrider export 0ccfddc4-00e7-443a-bb82-58ede5936619 --output ~/exported-session.md
-  ccrider export 0ccfddc4-00e7-443a-bb82-58ede5936619 -o session.md`,
+  ccrider export 0ccfddc4-00e7-443a-bb82-58ede5936619 --output session.md --force`,
 	Args: cobra.ExactArgs(1),
 	RunE: runExport,
 }
 
 func init() {
 	rootCmd.AddCommand(exportCmd)
-	exportCmd.Flags().StringVarP(&exportOutput, "output", "o", "", "Output file path (default: session-<id>.md in current directory)")
+	exportCmd.Flags().StringVarP(&exportOutput, "output", "o", "", "Output file path")
+	exportCmd.Flags().BoolVar(&exportRepo, "repo", false, "Write to session's repo at <repo>/.ccrider/exports/")
+	exportCmd.Flags().BoolVarP(&exportForce, "force", "f", false, "Overwrite existing file")
 }
 
 func runExport(cmd *cobra.Command, args []string) error {
 	sessionID := args[0]
+
+	if exportOutput != "" && exportRepo {
+		return fmt.Errorf("--output and --repo are mutually exclusive")
+	}
 
 	// Open database
 	database, err := db.New(dbPath)
@@ -48,142 +61,65 @@ func runExport(cmd *cobra.Command, args []string) error {
 		_ = database.Close()
 	}()
 
-	// Get current working directory
-	cwd, err := os.Getwd()
+	// Generate markdown
+	content, err := export.GenerateMarkdown(database, sessionID)
 	if err != nil {
-		return fmt.Errorf("failed to get current directory: %w", err)
+		return err
 	}
 
-	// Determine output path
-	outputPath := exportOutput
-	if outputPath == "" {
-		// Generate default filename in current directory
-		shortID := sessionID
-		if len(shortID) > 8 {
-			shortID = shortID[:8]
+	// Determine output mode
+	if exportOutput == "" && !exportRepo {
+		// Default: write to stdout
+		fmt.Print(content)
+		return nil
+	}
+
+	var outputPath string
+
+	if exportRepo {
+		// Look up session's project path
+		detail, err := database.GetSessionDetail(sessionID)
+		if err != nil {
+			return fmt.Errorf("session not found: %w", err)
 		}
-		outputPath = filepath.Join(cwd, fmt.Sprintf("session-%s.md", shortID))
-	} else if !filepath.IsAbs(outputPath) {
-		// Make relative paths absolute to current directory
-		outputPath = filepath.Join(cwd, outputPath)
-	}
-
-	// Query session data
-	var sessionInternalID int64
-	var summary, project, createdAt, updatedAt string
-	var messageCount int
-	err = database.QueryRow(`
-		SELECT
-			id,
-			COALESCE(summary, ''),
-			project_path,
-			created_at,
-			updated_at,
-			(SELECT COUNT(*) FROM messages WHERE session_id = sessions.id) as message_count
-		FROM sessions
-		WHERE session_id = ?
-	`, sessionID).Scan(&sessionInternalID, &summary, &project, &createdAt, &updatedAt, &messageCount)
-	if err != nil {
-		return fmt.Errorf("session not found: %w", err)
-	}
-
-	// Get all messages
-	rows, err := database.Query(`
-		SELECT type, COALESCE(sender, ''), COALESCE(text_content, ''), timestamp, sequence
-		FROM messages
-		WHERE session_id = ?
-		ORDER BY sequence ASC
-	`, sessionInternalID)
-	if err != nil {
-		return fmt.Errorf("failed to query messages: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	// Build markdown content
-	var b strings.Builder
-
-	// Header
-	b.WriteString("# ")
-	b.WriteString(summary)
-	b.WriteString("\n\n")
-
-	// Metadata
-	b.WriteString("**Session ID:** `")
-	b.WriteString(sessionID)
-	b.WriteString("`  \n")
-	b.WriteString("**Project:** `")
-	b.WriteString(project)
-	b.WriteString("`  \n")
-	b.WriteString("**Created:** ")
-	b.WriteString(formatTimestampForExport(createdAt))
-	b.WriteString("  \n")
-	b.WriteString("**Updated:** ")
-	b.WriteString(formatTimestampForExport(updatedAt))
-	b.WriteString("  \n")
-	b.WriteString("**Messages:** ")
-	b.WriteString(fmt.Sprintf("%d", messageCount))
-	b.WriteString("\n\n")
-	b.WriteString("---\n\n")
-
-	// Messages
-	for rows.Next() {
-		var msgType, sender, content, timestamp string
-		var sequence int
-		if err := rows.Scan(&msgType, &sender, &content, &timestamp, &sequence); err != nil {
-			continue
+		if detail.ProjectPath == "" {
+			return fmt.Errorf("session has no associated repo; use --output to specify a path")
 		}
-
-		// Skip summary entries
-		if msgType == "summary" {
-			continue
+		outputPath = export.RepoExportPath(sessionID, detail.ProjectPath)
+	} else {
+		// Explicit --output path
+		outputPath = exportOutput
+		if !filepath.IsAbs(outputPath) {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return fmt.Errorf("failed to get current directory: %w", err)
+			}
+			outputPath = filepath.Join(cwd, outputPath)
 		}
-
-		// Determine label
-		label := strings.ToUpper(msgType)
-		if sender != "" {
-			label = strings.ToUpper(sender)
-		}
-
-		// Message header
-		b.WriteString("**")
-		b.WriteString(label)
-		b.WriteString("**")
-		b.WriteString(" _")
-		b.WriteString(formatTimestampForExport(timestamp))
-		b.WriteString("_\n\n")
-
-		// Content (no truncation)
-		if content != "" {
-			b.WriteString(content)
-			b.WriteString("\n\n")
-		}
-
-		b.WriteString("---\n\n")
 	}
 
-	// Write to file
-	if err := os.WriteFile(outputPath, []byte(b.String()), 0644); err != nil {
-		return fmt.Errorf("failed to write file: %w", err)
+	if err := export.WriteExport(content, outputPath, exportForce); err != nil {
+		return err
 	}
 
-	fmt.Printf("Exported session to: %s\n", outputPath)
+	// Remember the export directory in config
+	cfg, _ := config.Load()
+	if cfg != nil {
+		dir := filepath.Dir(outputPath)
+		cfg.LastExportDir = dir
+		if exportRepo {
+			// Look up project path for per-repo memory
+			detail, _ := database.GetSessionDetail(sessionID)
+			if detail != nil && detail.ProjectPath != "" {
+				if cfg.RepoExportDirs == nil {
+					cfg.RepoExportDirs = make(map[string]string)
+				}
+				cfg.RepoExportDirs[detail.ProjectPath] = dir
+			}
+		}
+		_ = config.Save(cfg)
+	}
+
+	fmt.Fprintf(os.Stderr, "Exported session to %s\n", outputPath)
 	return nil
-}
-
-func formatTimestampForExport(ts string) string {
-	// Try parsing various formats
-	formats := []string{
-		"2006-01-02T15:04:05.999Z07:00",
-		"2006-01-02 15:04:05",
-		"2006-01-02T15:04:05",
-	}
-
-	for _, format := range formats {
-		if t, err := time.Parse(format, ts); err == nil {
-			return t.Format("Jan 02, 2006 15:04:05")
-		}
-	}
-
-	// If parsing fails, return as-is
-	return ts
 }

@@ -21,6 +21,7 @@ const (
 	searchView
 	helpView
 	terminalFallbackView
+	exportDialogView
 )
 
 type Model struct {
@@ -69,6 +70,14 @@ type Model struct {
 	fallbackLastCwd     string
 	fallbackUpdatedAt   string
 	fallbackSummary     string
+
+	// Export dialog state
+	exportInput          textinput.Model
+	exportSessionID      string
+	exportSessionProject string
+
+	// Status message (non-error feedback like export success)
+	statusMsg string
 
 	// Loading state
 	initialLoad bool // True until first sessionsLoadedMsg arrives
@@ -137,6 +146,11 @@ func New(database *db.DB) Model {
 	inSessionTi.CharLimit = 200
 	inSessionTi.Width = 50
 
+	exportTi := textinput.New()
+	exportTi.Placeholder = "path/to/export.md"
+	exportTi.CharLimit = 500
+	exportTi.Width = 60
+
 	// Create empty list initially (will be populated when sessions load)
 	emptyList := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
 	emptyList.Title = "Claude Code Sessions"
@@ -150,6 +164,7 @@ func New(database *db.DB) Model {
 		list:                 emptyList,
 		searchInput:          ti,
 		inSessionSearch:      inSessionTi,
+		exportInput:          exportTi,
 		projectFilterEnabled: false, // Disabled by default
 		currentDirectory:     currentDir,
 		initialLoad:          true, // True until first sessionsLoadedMsg
@@ -213,6 +228,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.KeyMsg:
+		// If showing a status message, esc clears it
+		if m.statusMsg != "" {
+			if msg.String() == "esc" {
+				m.statusMsg = ""
+				return m, nil
+			}
+			if msg.String() == "q" {
+				return m, tea.Quit
+			}
+		}
+
 		// If showing an error, esc clears it and goes back to previous view
 		if m.err != nil {
 			if msg.String() == "esc" {
@@ -242,6 +268,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.mode == searchView {
 				// In search view, let 'q' be typed into search input
 				// Don't intercept it here
+			} else if m.mode == exportDialogView {
+				// In export dialog, let 'q' be typed into path input
+				// Don't intercept it here
 			} else if m.mode == detailView && m.inSessionSearchMode {
 				// In detail view search mode, let 'q' be typed into search input
 				// Don't intercept it here
@@ -256,8 +285,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "?":
-			m.mode = helpView
-			return m, nil
+			if m.mode != exportDialogView && m.mode != searchView && !(m.mode == detailView && m.inSessionSearchMode) {
+				m.mode = helpView
+				return m, nil
+			}
 		}
 
 		// Mode-specific key handling
@@ -272,6 +303,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateHelp(msg)
 		case terminalFallbackView:
 			return m.updateTerminalFallback(msg)
+		case exportDialogView:
+			return m.updateExportDialog(msg)
 		}
 
 	case syncProgressMsg:
@@ -371,10 +404,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case exportCompletedMsg:
 		if msg.success {
-			// Show success message with file path
-			m.err = fmt.Errorf("success: exported to %s", msg.filePath)
+			m.statusMsg = fmt.Sprintf("Exported session to %s", msg.filePath)
 		} else {
-			// Show error
 			m.err = fmt.Errorf("export failed: %v", msg.err)
 		}
 		return m, nil
@@ -388,14 +419,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
+	// Status messages (non-error feedback)
+	if m.statusMsg != "" {
+		return m.statusMsg + "\n\nPress esc to go back"
+	}
+
 	if m.err != nil {
 		errMsg := m.err.Error()
-
-		// Handle success messages
-		if strings.HasPrefix(errMsg, "Success: ") {
-			msg := strings.TrimPrefix(errMsg, "Success: ")
-			return msg + "\n\nPress esc to go back"
-		}
 
 		// Handle "NoClipboard:" prefix (from fallback view)
 		if strings.HasPrefix(errMsg, "NoClipboard: ") {
@@ -423,6 +453,8 @@ func (m Model) View() string {
 		return m.viewHelp()
 	case terminalFallbackView:
 		return m.viewTerminalFallback()
+	case exportDialogView:
+		return m.viewExportDialog()
 	}
 
 	return ""
