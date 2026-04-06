@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.1.7] - 2026-04-06
+
+### Fixed
+- **Goreleaser CI failure** — fixed `.golangci.yml` schema error (`version: 2` is not allowed).
+
 ## [1.1.6] - 2026-04-06
 
 ### Fixed
