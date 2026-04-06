@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.1.6] - 2026-04-06
+
+### Fixed
+- **Goreleaser CI failure** — fixed "exit code 1" by tidying Go modules, removing accidentally tracked binary, and updating GitHub Actions to use official linter action.
+
 ## [1.1.5] - 2026-03-26
 
 ### Changed
