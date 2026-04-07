@@ -60,6 +60,26 @@ func TestParseFile_AgentSession(t *testing.T) {
 	}
 }
 
+func TestParseFile_CorruptedLine(t *testing.T) {
+	session, err := ParseFile("testdata/corrupted-line.jsonl")
+	if err != nil {
+		t.Fatalf("ParseFile() should skip corrupted lines, got error = %v", err)
+	}
+
+	if session.Summary != "Corrupted session" {
+		t.Errorf("Summary = %v, want 'Corrupted session'", session.Summary)
+	}
+
+	// Should have 2 messages (corrupted line 3 skipped)
+	if len(session.Messages) != 2 {
+		t.Errorf("Message count = %v, want 2 (corrupted line should be skipped)", len(session.Messages))
+	}
+
+	if session.Messages[0].TextContent != "before corruption" {
+		t.Errorf("First message = %q, want 'before corruption'", session.Messages[0].TextContent)
+	}
+}
+
 func TestParseFile_NoSummary(t *testing.T) {
 	session, err := ParseFile("testdata/no-summary.jsonl")
 	if err != nil {

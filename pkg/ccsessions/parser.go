@@ -54,7 +54,9 @@ type rawEntry struct {
 	Version     string          `json:"version,omitempty"`
 }
 
-// ParseFile parses a Claude Code session JSONL file
+// ParseFile parses a Claude Code session JSONL file.
+// Corrupted or unparseable lines are silently skipped so that a single bad line
+// (e.g. null bytes from incomplete writes) doesn't discard the entire session.
 func ParseFile(path string) (session *ParsedSession, err error) {
 	file, ferr := os.Open(path)
 	if ferr != nil {
@@ -132,7 +134,9 @@ func ParseFile(path string) (session *ParsedSession, err error) {
 
 		var raw rawEntry
 		if err := json.Unmarshal(line, &raw); err != nil {
-			return nil, fmt.Errorf("line %d: failed to parse JSON: %w", lineNum, err)
+			// Skip corrupted lines (null bytes, truncated writes, etc.)
+			// rather than discarding the entire session
+			continue
 		}
 
 		// Handle summary if present (may not be first line, or may not exist)

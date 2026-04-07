@@ -77,7 +77,7 @@ func (m Model) viewSearch() string {
 	} else if len(m.searchResults) == 0 {
 		b.WriteString(searchMetaStyle.Render("No results found"))
 	} else {
-		b.WriteString(fmt.Sprintf(searchMetaStyle.Render("Found %d sessions:"), len(m.searchResults)))
+		fmt.Fprintf(&b, searchMetaStyle.Render("Found %d sessions:"), len(m.searchResults))
 		b.WriteString("\n\n")
 
 		// Calculate max results based on screen height
@@ -150,15 +150,15 @@ func (m Model) viewSearch() string {
 			matchCount := fmt.Sprintf("(%d %s)", len(result.Matches),
 				map[bool]string{true: "match", false: "matches"}[len(result.Matches) == 1])
 			updatedTime := formatTime(result.UpdatedAt)
-			b.WriteString(fmt.Sprintf("%s%s %s | %s\n", prefix, summary,
-				searchMetaStyle.Render(matchCount), searchMetaStyle.Render(updatedTime)))
+			fmt.Fprintf(&b, "%s%s %s | %s\n", prefix, summary,
+				searchMetaStyle.Render(matchCount), searchMetaStyle.Render(updatedTime))
 
 			// Truncate project path too
 			project := result.Project
 			if len(project) > m.width-4 {
 				project = "..." + project[len(project)-(m.width-7):]
 			}
-			b.WriteString(fmt.Sprintf("  %s\n", searchMetaStyle.Render(project)))
+			fmt.Fprintf(&b, "  %s\n", searchMetaStyle.Render(project))
 
 			// Show each match with clear separation
 			query := m.searchInput.Value()
@@ -166,7 +166,7 @@ func (m Model) viewSearch() string {
 				snippet := highlightQuery(match.Snippet, query)
 				// Show full snippet (100 chars max to match core extraction)
 				snippetLine := firstLine(snippet, 100)
-				b.WriteString(fmt.Sprintf("    %s", snippetLine))
+				fmt.Fprintf(&b, "    %s", snippetLine)
 
 				if j < len(result.Matches)-1 {
 					b.WriteString("\n")

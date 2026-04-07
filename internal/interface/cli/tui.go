@@ -358,14 +358,14 @@ func buildRecoveryPrompt(ctx *db.RecoveryContext) string {
 	sb.WriteString("The original session file is no longer available, but CCRider has preserved context from that session.\n\n")
 
 	sb.WriteString("## Previous Session Info\n")
-	sb.WriteString(fmt.Sprintf("- **Session ID**: %s\n", ctx.SessionID))
-	sb.WriteString(fmt.Sprintf("- **Summary**: %s\n", ctx.Summary))
-	sb.WriteString(fmt.Sprintf("- **Project**: %s\n", ctx.ProjectPath))
+	fmt.Fprintf(&sb, "- **Session ID**: %s\n", ctx.SessionID)
+	fmt.Fprintf(&sb, "- **Summary**: %s\n", ctx.Summary)
+	fmt.Fprintf(&sb, "- **Project**: %s\n", ctx.ProjectPath)
 	if ctx.LastCwd != "" && ctx.LastCwd != ctx.ProjectPath {
-		sb.WriteString(fmt.Sprintf("- **Last Working Directory**: %s\n", ctx.LastCwd))
+		fmt.Fprintf(&sb, "- **Last Working Directory**: %s\n", ctx.LastCwd)
 	}
-	sb.WriteString(fmt.Sprintf("- **Message Count**: %d\n", ctx.MessageCount))
-	sb.WriteString(fmt.Sprintf("- **Last Updated**: %s (%s)\n", ctx.UpdatedAt.Format("2006-01-02 15:04"), humanize.Time(ctx.UpdatedAt)))
+	fmt.Fprintf(&sb, "- **Message Count**: %d\n", ctx.MessageCount)
+	fmt.Fprintf(&sb, "- **Last Updated**: %s (%s)\n", ctx.UpdatedAt.Format("2006-01-02 15:04"), humanize.Time(ctx.UpdatedAt))
 
 	// First messages
 	if len(ctx.FirstMsgs) > 0 {
@@ -379,7 +379,7 @@ func buildRecoveryPrompt(ctx *db.RecoveryContext) string {
 			if len(content) > 500 {
 				content = content[:500] + "..."
 			}
-			sb.WriteString(fmt.Sprintf("**%s**: %s\n\n", prefix, content))
+			fmt.Fprintf(&sb, "**%s**: %s\n\n", prefix, content)
 		}
 	}
 
@@ -395,14 +395,14 @@ func buildRecoveryPrompt(ctx *db.RecoveryContext) string {
 			if len(content) > 500 {
 				content = content[:500] + "..."
 			}
-			sb.WriteString(fmt.Sprintf("**%s**: %s\n\n", prefix, content))
+			fmt.Fprintf(&sb, "**%s**: %s\n\n", prefix, content)
 		}
 	}
 
 	sb.WriteString("\n## How to Continue\n\n")
 	sb.WriteString("You have access to the CCRider MCP server. To find more context from the old session:\n\n")
-	sb.WriteString(fmt.Sprintf("1. Search for specific topics: `mcp__ccrider__search_sessions` with query and current_session_id `%s`\n", ctx.SessionID))
-	sb.WriteString(fmt.Sprintf("2. Get more messages: `mcp__ccrider__get_session_messages` with session_id `%s` and `last_n` or `around_sequence`\n", ctx.SessionID))
+	fmt.Fprintf(&sb, "1. Search for specific topics: `mcp__ccrider__search_sessions` with query and current_session_id `%s`\n", ctx.SessionID)
+	fmt.Fprintf(&sb, "2. Get more messages: `mcp__ccrider__get_session_messages` with session_id `%s` and `last_n` or `around_sequence`\n", ctx.SessionID)
 	sb.WriteString("\n**Ask the user what they'd like to continue working on, then search the old session for relevant context.**\n")
 
 	return sb.String()
