@@ -35,8 +35,8 @@ func renderConversation(detail sessionDetail, query string, matches []int, curre
 
 	// Header
 	b.WriteString(titleStyle.Render("Session: "+detail.Session.Summary) + "\n")
-	b.WriteString(fmt.Sprintf("Project: %s\n", detail.Session.Project))
-	b.WriteString(fmt.Sprintf("Messages: %d\n", detail.Session.MessageCount))
+	fmt.Fprintf(&b, "Project: %s\n", detail.Session.Project)
+	fmt.Fprintf(&b, "Messages: %d\n", detail.Session.MessageCount)
 	b.WriteString(strings.Repeat("─", width) + "\n\n")
 
 	// Messages - render WITHOUT highlighting first

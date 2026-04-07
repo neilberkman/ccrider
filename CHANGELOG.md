@@ -1,9 +1,15 @@
 # Changelog
 
+## [1.1.8] - 2026-04-07
+
+### Fixed
+- **Skip corrupted JSONL lines** — the session importer now silently skips corrupted lines (e.g., null bytes from incomplete writes) instead of aborting the entire parsing process.
+- **CI configuration and linting** — updated `.golangci.yml` for compatibility with newer linter versions and resolved several pre-existing staticcheck warnings.
+
 ## [1.1.7] - 2026-04-06
 
 ### Fixed
-- **Goreleaser CI failure** — fixed `.golangci.yml` schema error (`version: 2` is not allowed).
+- **Goreleaser CI failure** — fixed `.golangci.yml` schema error (added `version: "2"` for newer golangci-lint compatibility).
 
 ## [1.1.6] - 2026-04-06
 

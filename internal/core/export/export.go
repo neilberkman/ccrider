@@ -35,7 +35,7 @@ func GenerateMarkdown(database *db.DB, sessionID string) (string, error) {
 	b.WriteString(detail.UpdatedAt.Format("Jan 02, 2006 15:04:05"))
 	b.WriteString("  \n")
 	b.WriteString("**Messages:** ")
-	b.WriteString(fmt.Sprintf("%d", detail.MessageCount))
+	fmt.Fprintf(&b, "%d", detail.MessageCount)
 	b.WriteString("\n\n")
 	b.WriteString("---\n\n")
 
