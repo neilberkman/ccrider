@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.1.9] - 2026-04-22
+
+### Added
+- **`view` command** — `ccrider view <session-id>` prints a session as markdown to stdout, using the same output as `export` without needing flags
+
 ## [1.1.8] - 2026-04-07
 
 ### Fixed
