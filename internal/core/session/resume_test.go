@@ -1,6 +1,9 @@
 package session
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestResumeBinary(t *testing.T) {
 	cases := map[string]string{
@@ -13,6 +16,21 @@ func TestResumeBinary(t *testing.T) {
 	for provider, want := range cases {
 		if got := ResumeBinary(provider); got != want {
 			t.Errorf("ResumeBinary(%q) = %q, want %q", provider, got, want)
+		}
+	}
+}
+
+func TestShellQuote(t *testing.T) {
+	cases := map[string]string{
+		"abc":             "'abc'",
+		"":                "''",
+		"a b":             "'a b'",
+		"it's":            `'it'\''s'`,
+		"x'; rm -rf /; '": `'x'\''; rm -rf /; '\'''`,
+	}
+	for in, want := range cases {
+		if got := ShellQuote(in); got != want {
+			t.Errorf("ShellQuote(%q) = %q, want %q", in, got, want)
 		}
 	}
 }
@@ -30,7 +48,7 @@ func TestBuildResumeSpec(t *testing.T) {
 		{
 			name:       "claude default",
 			provider:   ProviderClaude,
-			wantPrefix: "claude --resume sess-1",
+			wantPrefix: "claude --resume 'sess-1'",
 			wantPrompt: true,
 			wantBinary: "claude",
 		},
@@ -38,7 +56,7 @@ func TestBuildResumeSpec(t *testing.T) {
 			name:        "claude with flags",
 			provider:    ProviderClaude,
 			claudeFlags: []string{"--dangerously-skip-permissions"},
-			wantPrefix:  "claude --dangerously-skip-permissions --resume sess-1",
+			wantPrefix:  "claude --dangerously-skip-permissions --resume 'sess-1'",
 			wantPrompt:  true,
 			wantBinary:  "claude",
 		},
@@ -46,14 +64,14 @@ func TestBuildResumeSpec(t *testing.T) {
 			name:       "claude fork",
 			provider:   ProviderClaude,
 			fork:       true,
-			wantPrefix: "claude --resume sess-1 --fork-session",
+			wantPrefix: "claude --resume 'sess-1' --fork-session",
 			wantPrompt: true,
 			wantBinary: "claude",
 		},
 		{
 			name:       "codex resume",
 			provider:   ProviderCodex,
-			wantPrefix: "codex resume sess-1",
+			wantPrefix: "codex resume 'sess-1'",
 			wantPrompt: true,
 			wantBinary: "codex",
 		},
@@ -61,14 +79,14 @@ func TestBuildResumeSpec(t *testing.T) {
 			name:       "codex fork",
 			provider:   ProviderCodex,
 			fork:       true,
-			wantPrefix: "codex fork sess-1",
+			wantPrefix: "codex fork 'sess-1'",
 			wantPrompt: true,
 			wantBinary: "codex",
 		},
 		{
 			name:       "copilot resume",
 			provider:   ProviderCopilot,
-			wantPrefix: "copilot --resume=sess-1",
+			wantPrefix: "copilot --resume='sess-1'",
 			wantPrompt: false,
 			wantBinary: "copilot",
 		},
@@ -76,20 +94,32 @@ func TestBuildResumeSpec(t *testing.T) {
 			name:        "codex ignores claude flags",
 			provider:    ProviderCodex,
 			claudeFlags: []string{"--dangerously-skip-permissions"},
-			wantPrefix:  "codex resume sess-1",
+			wantPrefix:  "codex resume 'sess-1'",
 			wantPrompt:  true,
 			wantBinary:  "codex",
 		},
 	}
 
 	// Codex stores sessions under a rollout filename; resume must use the
-	// trailing UUID. Verified separately below since the id differs.
+	// trailing UUID (and quote it). Verified separately since the id differs.
 	t.Run("codex rollout id extracts uuid", func(t *testing.T) {
 		id := "rollout-2026-06-04T14-40-56-019e93f0-3efe-7742-9598-bb06b36fb25a"
 		spec := BuildResumeSpec(ProviderCodex, id, false, nil)
-		want := "codex resume 019e93f0-3efe-7742-9598-bb06b36fb25a"
+		want := "codex resume '019e93f0-3efe-7742-9598-bb06b36fb25a'"
 		if spec.Prefix != want {
 			t.Errorf("Prefix = %q, want %q", spec.Prefix, want)
+		}
+	})
+
+	// A session id containing shell metacharacters must be neutralized by
+	// quoting so it cannot break out of the command.
+	t.Run("malicious id is quoted", func(t *testing.T) {
+		id := "x'; rm -rf /; '"
+		for _, provider := range []string{ProviderClaude, ProviderCodex, ProviderCopilot} {
+			spec := BuildResumeSpec(provider, id, false, nil)
+			if !strings.Contains(spec.Prefix, ShellQuote(id)) {
+				t.Errorf("%s prefix = %q, want it to contain the quoted id %q", provider, spec.Prefix, ShellQuote(id))
+			}
 		}
 	})
 
@@ -120,31 +150,31 @@ func TestResumeCommand(t *testing.T) {
 		{
 			name:     "claude no prompt",
 			provider: ProviderClaude,
-			want:     "claude --resume sess-1",
+			want:     "claude --resume 'sess-1'",
 		},
 		{
 			name:     "claude with prompt",
 			provider: ProviderClaude,
 			prompt:   "pick up where we left off",
-			want:     "claude --resume sess-1 'pick up where we left off'",
+			want:     "claude --resume 'sess-1' 'pick up where we left off'",
 		},
 		{
 			name:     "codex with prompt",
 			provider: ProviderCodex,
 			prompt:   "keep going",
-			want:     "codex resume sess-1 'keep going'",
+			want:     "codex resume 'sess-1' 'keep going'",
 		},
 		{
 			name:     "copilot drops prompt",
 			provider: ProviderCopilot,
 			prompt:   "keep going",
-			want:     "copilot --resume=sess-1",
+			want:     "copilot --resume='sess-1'",
 		},
 		{
 			name:     "prompt with single quote is escaped",
 			provider: ProviderClaude,
 			prompt:   "it's done",
-			want:     `claude --resume sess-1 'it'\''s done'`,
+			want:     `claude --resume 'sess-1' 'it'\''s done'`,
 		},
 	}
 

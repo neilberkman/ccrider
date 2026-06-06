@@ -90,9 +90,9 @@ func runDebugPrompt(cmd *cobra.Command, args []string) error {
 	fmt.Println("=== COMMAND ===")
 	spec := coresession.BuildResumeSpec(session.Provider, sessionID, false, cfg.ClaudeFlags)
 	if spec.AcceptsPrompt {
-		fmt.Printf("cd %s && %s \"<prompt above>\"\n", projectPath, spec.Prefix)
+		fmt.Printf("cd %s && %s \"<prompt above>\"\n", coresession.ShellQuote(projectPath), spec.Prefix)
 	} else {
-		fmt.Printf("cd %s && %s\n", projectPath, spec.Prefix)
+		fmt.Printf("cd %s && %s\n", coresession.ShellQuote(projectPath), spec.Prefix)
 	}
 
 	return nil

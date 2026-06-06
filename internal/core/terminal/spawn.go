@@ -83,7 +83,7 @@ func (s *Spawner) Spawn(cfg SpawnConfig) error {
 func (s *Spawner) spawnGhostty(cfg SpawnConfig) error {
 	// Ghostty on macOS: Use clipboard + paste approach
 	// Save current clipboard, use it, then restore
-	fullCmd := fmt.Sprintf("cd %s", cfg.WorkingDir)
+	fullCmd := fmt.Sprintf("cd %s", shellQuoteDir(cfg.WorkingDir))
 	if cfg.Message != "" {
 		fullCmd += fmt.Sprintf(" && echo '%s'", cfg.Message)
 	}
@@ -132,7 +132,7 @@ end tell
 
 func (s *Spawner) spawnITerm(cfg SpawnConfig) error {
 	// iTerm2: Use AppleScript
-	cmdStr := fmt.Sprintf("cd %s", cfg.WorkingDir)
+	cmdStr := fmt.Sprintf("cd %s", shellQuoteDir(cfg.WorkingDir))
 	if cfg.Message != "" {
 		// Escape single quotes in message for shell
 		safeMsg := strings.ReplaceAll(cfg.Message, "'", "'\\''")
@@ -156,7 +156,7 @@ end tell
 func (s *Spawner) spawnTerminalApp(cfg SpawnConfig) error {
 	// Terminal.app: Use AppleScript to open new window
 	// Build command string (will be executed by shell in Terminal)
-	cmdStr := fmt.Sprintf("cd %s", cfg.WorkingDir)
+	cmdStr := fmt.Sprintf("cd %s", shellQuoteDir(cfg.WorkingDir))
 	if cfg.Message != "" {
 		// Escape single quotes in message for shell
 		safeMsg := strings.ReplaceAll(cfg.Message, "'", "'\\''")
@@ -228,11 +228,19 @@ func (s *Spawner) spawnKonsole(cfg SpawnConfig) error {
 
 func (s *Spawner) spawnXTerm(cfg SpawnConfig) error {
 	// XTerm - basic but universally available
-	fullCmd := fmt.Sprintf("cd %s && %s", cfg.WorkingDir, cfg.Command)
+	fullCmd := fmt.Sprintf("cd %s && %s", shellQuoteDir(cfg.WorkingDir), cfg.Command)
 	cmd := exec.Command("xterm",
 		"-e", "bash", "-l", "-c", fullCmd,
 	)
 	return cmd.Start()
+}
+
+// shellQuoteDir single-quotes a working directory so it can be interpolated
+// into a `cd` command run by a shell (working dirs routinely contain spaces,
+// e.g. cloud-storage paths). Kept local so this low-level package stays
+// dependency-free.
+func shellQuoteDir(dir string) string {
+	return "'" + strings.ReplaceAll(dir, "'", `'\''`) + "'"
 }
 
 // appleScriptEscape escapes a string for use in AppleScript do script command

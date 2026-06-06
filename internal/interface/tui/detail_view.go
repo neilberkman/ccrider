@@ -575,7 +575,7 @@ func launchClaudeSession(provider, sessionID, projectPath, lastCwd, updatedAt, s
 		spec := session.BuildResumeSpec(provider, sessionID, fork, nil)
 		return sessionLaunchedMsg{
 			success:     true,
-			message:     fmt.Sprintf("cd %s && %s", projectPath, spec.Prefix),
+			message:     fmt.Sprintf("cd %s && %s", session.ShellQuote(projectPath), spec.Prefix),
 			provider:    provider,
 			sessionID:   sessionID,
 			projectPath: projectPath,
@@ -600,7 +600,7 @@ func copyResumeCommandWithContext(provider, sessionID, projectPath, lastCwd stri
 		resumeCmd := session.ResumeCommand(provider, sessionID, "", false, nil)
 		var cmd string
 		if workDir != "" {
-			cmd = fmt.Sprintf("cd %s && %s", workDir, resumeCmd)
+			cmd = fmt.Sprintf("cd %s && %s", session.ShellQuote(workDir), resumeCmd)
 		} else {
 			cmd = resumeCmd
 		}
@@ -638,7 +638,7 @@ func writeCommandToFile(provider, sessionID, projectPath, lastCwd string) tea.Cm
 		resumeCmd := session.ResumeCommand(provider, sessionID, "", false, nil)
 		var cmd string
 		if workDir != "" {
-			cmd = fmt.Sprintf("cd %s && %s", workDir, resumeCmd)
+			cmd = fmt.Sprintf("cd %s && %s", session.ShellQuote(workDir), resumeCmd)
 		} else {
 			cmd = resumeCmd
 		}
