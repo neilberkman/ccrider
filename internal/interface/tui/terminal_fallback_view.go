@@ -63,7 +63,7 @@ func (m Model) viewTerminalFallback() string {
 	resumeCmd := session.ResumeCommand(m.fallbackProvider, m.fallbackSessionID, "", false, nil)
 	var cmd string
 	if workDir != "" {
-		cmd = fmt.Sprintf("cd %s && %s", workDir, resumeCmd)
+		cmd = fmt.Sprintf("cd %s && %s", session.ShellQuote(workDir), resumeCmd)
 	} else {
 		cmd = resumeCmd
 	}

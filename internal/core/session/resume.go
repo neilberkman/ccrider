@@ -59,6 +59,9 @@ type ResumeSpec struct {
 // BuildResumeSpec returns provider-specific resume invocation details.
 // claudeFlags are only applied for the Claude CLI.
 func BuildResumeSpec(provider, sessionID string, fork bool, claudeFlags []string) ResumeSpec {
+	// Session IDs come from the database and are normally UUID/rollout-shaped,
+	// but shell-quote them anyway so an unexpected value can never break out of
+	// the command (defense-in-depth, since this string is run by a shell).
 	switch provider {
 	case ProviderCodex:
 		// codex resume <id> [prompt]; forking uses `codex fork <id> [prompt]`.
@@ -68,14 +71,14 @@ func BuildResumeSpec(provider, sessionID string, fork bool, claudeFlags []string
 		}
 		return ResumeSpec{
 			Binary:        "codex",
-			Prefix:        fmt.Sprintf("codex %s %s", verb, codexResumeID(sessionID)),
+			Prefix:        fmt.Sprintf("codex %s %s", verb, ShellQuote(codexResumeID(sessionID))),
 			AcceptsPrompt: true,
 		}
 	case ProviderCopilot:
 		// copilot --resume=<id>; interactive resume has no positional prompt.
 		return ResumeSpec{
 			Binary:        "copilot",
-			Prefix:        fmt.Sprintf("copilot --resume=%s", sessionID),
+			Prefix:        fmt.Sprintf("copilot --resume=%s", ShellQuote(sessionID)),
 			AcceptsPrompt: false,
 		}
 	default:
@@ -83,7 +86,7 @@ func BuildResumeSpec(provider, sessionID string, fork bool, claudeFlags []string
 		if len(claudeFlags) > 0 {
 			flags = " " + strings.Join(claudeFlags, " ")
 		}
-		prefix := fmt.Sprintf("claude%s --resume %s", flags, sessionID)
+		prefix := fmt.Sprintf("claude%s --resume %s", flags, ShellQuote(sessionID))
 		if fork {
 			prefix += " --fork-session"
 		}
@@ -103,11 +106,11 @@ func ResumeCommand(provider, sessionID, prompt string, fork bool, claudeFlags []
 	if prompt == "" || !spec.AcceptsPrompt {
 		return spec.Prefix
 	}
-	return spec.Prefix + " " + shellSingleQuote(prompt)
+	return spec.Prefix + " " + ShellQuote(prompt)
 }
 
-// shellSingleQuote wraps s in single quotes, safely escaping any embedded single
-// quotes for POSIX shells.
-func shellSingleQuote(s string) string {
+// ShellQuote wraps s in single quotes, safely escaping any embedded single
+// quotes, so it can be interpolated into a POSIX shell command as one argument.
+func ShellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
