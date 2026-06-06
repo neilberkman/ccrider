@@ -265,6 +265,7 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Resume session in Claude Code
 		if m.currentSession != nil {
 			return m, launchClaudeSession(
+				m.currentSession.Session.Provider,
 				m.currentSession.Session.ID,
 				m.currentSession.Session.Project,
 				m.currentSession.LastCwd,
@@ -279,6 +280,7 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Fork session (resume with new session ID)
 		if m.currentSession != nil {
 			return m, launchClaudeSession(
+				m.currentSession.Session.Provider,
 				m.currentSession.Session.ID,
 				m.currentSession.Session.Project,
 				m.currentSession.LastCwd,
@@ -293,6 +295,7 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Copy resume command to clipboard
 		if m.currentSession != nil {
 			return m, copyResumeCommand(
+				m.currentSession.Session.Provider,
 				m.currentSession.Session.ID,
 				m.currentSession.Session.Project,
 				m.currentSession.LastCwd,
@@ -305,6 +308,7 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.currentSession != nil {
 			m.err = nil // Clear any previous errors
 			return m, openInNewTerminal(
+				m.currentSession.Session.Provider,
 				m.currentSession.Session.ID,
 				m.currentSession.Session.Project,
 				m.currentSession.LastCwd,
@@ -554,6 +558,7 @@ type sessionLaunchedMsg struct {
 	success     bool
 	message     string
 	err         error
+	provider    string
 	sessionID   string
 	projectPath string
 	lastCwd     string
@@ -562,14 +567,16 @@ type sessionLaunchedMsg struct {
 	fork        bool
 }
 
-func launchClaudeSession(sessionID, projectPath, lastCwd, updatedAt, summary string, fork bool) tea.Cmd {
+func launchClaudeSession(provider, sessionID, projectPath, lastCwd, updatedAt, summary string, fork bool) tea.Cmd {
 	return func() tea.Msg {
 		// We need to exec() to replace the process, but bubbletea makes this tricky
 		// Instead, we'll return a special message telling the TUI to quit,
-		// then the CLI layer will exec claude
+		// then the CLI layer will exec the agent's resume command.
+		spec := session.BuildResumeSpec(provider, sessionID, fork, nil)
 		return sessionLaunchedMsg{
 			success:     true,
-			message:     fmt.Sprintf("cd %s && claude --resume %s", projectPath, sessionID),
+			message:     fmt.Sprintf("cd %s && %s", projectPath, spec.Prefix),
+			provider:    provider,
 			sessionID:   sessionID,
 			projectPath: projectPath,
 			lastCwd:     lastCwd,
@@ -580,21 +587,22 @@ func launchClaudeSession(sessionID, projectPath, lastCwd, updatedAt, summary str
 	}
 }
 
-func copyResumeCommand(sessionID, projectPath, lastCwd string) tea.Cmd {
-	return copyResumeCommandWithContext(sessionID, projectPath, lastCwd, false)
+func copyResumeCommand(provider, sessionID, projectPath, lastCwd string) tea.Cmd {
+	return copyResumeCommandWithContext(provider, sessionID, projectPath, lastCwd, false)
 }
 
-func copyResumeCommandWithContext(sessionID, projectPath, lastCwd string, fromFallbackView bool) tea.Cmd {
+func copyResumeCommandWithContext(provider, sessionID, projectPath, lastCwd string, fromFallbackView bool) tea.Cmd {
 	return func() tea.Msg {
 		// Resolve working directory (always projectPath, see session.ResolveWorkingDir)
 		workDir := session.ResolveWorkingDir(projectPath, lastCwd)
 
-		// Create a command that cd's to the working directory and runs claude
+		// Create a command that cd's to the working directory and runs the agent
+		resumeCmd := session.ResumeCommand(provider, sessionID, "", false, nil)
 		var cmd string
 		if workDir != "" {
-			cmd = fmt.Sprintf("cd %s && claude --resume %s", workDir, sessionID)
+			cmd = fmt.Sprintf("cd %s && %s", workDir, resumeCmd)
 		} else {
-			cmd = fmt.Sprintf("claude --resume %s", sessionID)
+			cmd = resumeCmd
 		}
 
 		// Use cross-platform clipboard library
@@ -621,17 +629,18 @@ func copyResumeCommandWithContext(sessionID, projectPath, lastCwd string, fromFa
 	}
 }
 
-func writeCommandToFile(sessionID, projectPath, lastCwd string) tea.Cmd {
+func writeCommandToFile(provider, sessionID, projectPath, lastCwd string) tea.Cmd {
 	return func() tea.Msg {
 		// Resolve working directory
 		workDir := session.ResolveWorkingDir(projectPath, lastCwd)
 
 		// Create command
+		resumeCmd := session.ResumeCommand(provider, sessionID, "", false, nil)
 		var cmd string
 		if workDir != "" {
-			cmd = fmt.Sprintf("cd %s && claude --resume %s", workDir, sessionID)
+			cmd = fmt.Sprintf("cd %s && %s", workDir, resumeCmd)
 		} else {
-			cmd = fmt.Sprintf("claude --resume %s", sessionID)
+			cmd = resumeCmd
 		}
 
 		// Write to file
@@ -657,6 +666,7 @@ type terminalSpawnedMsg struct {
 	success     bool
 	message     string
 	err         error
+	provider    string
 	sessionID   string
 	projectPath string
 	lastCwd     string
@@ -664,7 +674,7 @@ type terminalSpawnedMsg struct {
 	summary     string
 }
 
-func openInNewTerminal(sessionID, projectPath, lastCwd, updatedAt, summary string) tea.Cmd {
+func openInNewTerminal(provider, sessionID, projectPath, lastCwd, updatedAt, summary string) tea.Cmd {
 	return func() tea.Msg {
 		// Load config to get terminal command and resume prompt template
 		cfg, err := config.Load()
@@ -675,6 +685,9 @@ func openInNewTerminal(sessionID, projectPath, lastCwd, updatedAt, summary strin
 				err:     fmt.Errorf("config load: %w", err),
 			}
 		}
+
+		// Build the resume invocation for this provider.
+		spec := session.BuildResumeSpec(provider, sessionID, false, nil)
 
 		// Build template data for resume prompt
 		updatedTime, _ := time.Parse("2006-01-02 15:04:05", updatedAt)
@@ -690,35 +703,41 @@ func openInNewTerminal(sessionID, projectPath, lastCwd, updatedAt, summary strin
 		// Check if we're already in the right directory
 		sameDir := (lastCwd == projectPath)
 
-		templateData := map[string]interface{}{
-			"last_updated":        updatedAt,
-			"last_cwd":            lastCwd,
-			"time_since":          timeSince,
-			"project_path":        projectPath,
-			"same_directory":      sameDir,
-			"different_directory": !sameDir,
+		// Build the full command that will run in the new terminal. Providers
+		// that accept an initial prompt (Claude, Codex) get the rendered resume
+		// prompt; others (Copilot) resume without one.
+		shellCmd := spec.Prefix
+		if spec.AcceptsPrompt {
+			templateData := map[string]interface{}{
+				"last_updated":        updatedAt,
+				"last_cwd":            lastCwd,
+				"time_since":          timeSince,
+				"project_path":        projectPath,
+				"same_directory":      sameDir,
+				"different_directory": !sameDir,
+			}
+
+			// Render the resume prompt
+			resumePrompt, err := mustache.Render(cfg.ResumePromptTemplate, templateData)
+			if err != nil {
+				// Fall back to simple prompt if template fails
+				resumePrompt = fmt.Sprintf("Resuming session. You were last in: %s", lastCwd)
+			}
+
+			// Replace newlines with spaces for shell command
+			resumePrompt = strings.ReplaceAll(resumePrompt, "\n", " ")
+			resumePrompt = strings.ReplaceAll(resumePrompt, "\r", " ")
+
+			// Build via ResumeCommand so the prompt is safely shell-quoted
+			// (a prompt or cwd containing a single quote must not break the command).
+			shellCmd = session.ResumeCommand(provider, sessionID, resumePrompt, false, nil)
 		}
-
-		// Render the resume prompt
-		resumePrompt, err := mustache.Render(cfg.ResumePromptTemplate, templateData)
-		if err != nil {
-			// Fall back to simple prompt if template fails
-			resumePrompt = fmt.Sprintf("Resuming session. You were last in: %s", lastCwd)
-		}
-
-		// Replace newlines with spaces for shell command
-		resumePrompt = strings.ReplaceAll(resumePrompt, "\n", " ")
-		resumePrompt = strings.ReplaceAll(resumePrompt, "\r", " ")
-
-		// Build the full command that will run in the new terminal
-		// Use shell with the prompt as an argument to claude
-		shellCmd := fmt.Sprintf("claude --resume %s '%s'", sessionID, resumePrompt)
 
 		// Resolve working directory (always projectPath, see session.ResolveWorkingDir)
 		workDir := session.ResolveWorkingDir(projectPath, lastCwd)
 
-		// Pre-flight check: verify claude is runnable from this directory
-		if err := session.ValidateClaudeRunnable(workDir); err != nil {
+		// Pre-flight check: verify the agent binary is runnable from this directory
+		if err := session.ValidateRunnable(provider, workDir); err != nil {
 			return terminalSpawnedMsg{
 				success: false,
 				err:     err,
@@ -735,13 +754,14 @@ func openInNewTerminal(sessionID, projectPath, lastCwd, updatedAt, summary strin
 		spawnCfg := terminal.SpawnConfig{
 			WorkingDir: workDir,
 			Command:    shellCmd,
-			Message:    "Starting Claude Code (this may take a few seconds)...",
+			Message:    "Starting " + session.ResumeBinary(provider) + " (this may take a few seconds)...",
 		}
 
 		if err := spawner.Spawn(spawnCfg); err != nil {
 			return terminalSpawnedMsg{
 				success:     false,
 				err:         err,
+				provider:    provider,
 				sessionID:   sessionID,
 				projectPath: projectPath,
 				lastCwd:     lastCwd,

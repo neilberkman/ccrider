@@ -26,6 +26,7 @@ type sessionDetailLoadedMsg struct {
 }
 
 type sessionLaunchInfoMsg struct {
+	provider    string
 	sessionID   string
 	projectPath string
 	lastCwd     string
@@ -163,6 +164,7 @@ func loadSessionForLaunch(database *db.DB, sessionID string) tea.Cmd {
 		}
 
 		return sessionLaunchInfoMsg{
+			provider:    session.Provider,
 			sessionID:   session.SessionID,
 			projectPath: session.ProjectPath,
 			lastCwd:     lastCwd,

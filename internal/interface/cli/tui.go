@@ -51,8 +51,9 @@ func runTUI(cmd *cobra.Command, args []string) error {
 	// Check if user wants to launch a session
 	if m, ok := finalModel.(tui.Model); ok {
 		if m.LaunchSessionID != "" {
-			// Exec claude to replace this process
-			return execClaude(
+			// Exec the agent's resume command to replace this process
+			return execResume(
+				m.LaunchProvider,
 				m.LaunchSessionID,
 				m.LaunchProjectPath,
 				m.LaunchLastCwd,
@@ -64,6 +65,122 @@ func runTUI(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// execResume dispatches to the right resume path for the session's provider.
+// Claude keeps its dedicated path (session-file recovery, prompt handling);
+// other agents (Codex, Copilot) use the generic execAgent path.
+func execResume(provider, sessionID, projectPath, lastCwd, updatedAt, summary string, fork bool) error {
+	switch provider {
+	case session.ProviderCodex, session.ProviderCopilot:
+		return execAgent(provider, sessionID, projectPath, lastCwd, updatedAt, summary, fork)
+	default:
+		return execClaude(sessionID, projectPath, lastCwd, updatedAt, summary, fork)
+	}
+}
+
+// execAgent resumes a non-Claude agent session (Codex, Copilot) by exec'ing the
+// provider's resume command, replacing the current process.
+func execAgent(provider, sessionID, projectPath, lastCwd, updatedAt, summary string, fork bool) error {
+	spec := session.BuildResumeSpec(provider, sessionID, fork, nil)
+	cmd := spec.Prefix
+
+	// Providers that accept an initial prompt (Codex) get the rendered resume
+	// prompt, passed via a temp file to avoid shell escaping issues.
+	if spec.AcceptsPrompt {
+		if cfg, err := config.Load(); err == nil {
+			if prompt := renderResumePrompt(cfg, projectPath, lastCwd, updatedAt); prompt != "" {
+				tmpfile, err := os.CreateTemp("", "ccrider-prompt-*.txt")
+				if err != nil {
+					return fmt.Errorf("failed to create temp file: %w", err)
+				}
+				defer func() { _ = os.Remove(tmpfile.Name()) }()
+				if _, err := tmpfile.Write([]byte(prompt)); err != nil {
+					_ = tmpfile.Close()
+					return fmt.Errorf("failed to write prompt: %w", err)
+				}
+				_ = tmpfile.Close()
+				cmd = fmt.Sprintf("%s \"$(cat %s)\"", spec.Prefix, tmpfile.Name())
+			}
+		}
+	}
+
+	// Resolve working directory (always projectPath, see session.ResolveWorkingDir)
+	workDir := session.ResolveWorkingDir(projectPath, lastCwd)
+
+	// Show what we're doing
+	fmt.Fprintf(os.Stderr, "[ccrider] cd %s && %s\n", workDir, cmd)
+
+	// Set terminal title before launching
+	updatedTime, _ := time.Parse("2006-01-02 15:04:05", updatedAt)
+	if updatedTime.IsZero() {
+		updatedTime, _ = time.Parse(time.RFC3339, updatedAt)
+	}
+	if !updatedTime.IsZero() && summary != "" {
+		titleTime := updatedTime.Format("01/02 15:04")
+		title := fmt.Sprintf("[resumed %s] %s", titleTime, summary)
+		fmt.Fprintf(os.Stderr, "\033]0;%s\007", title)
+	}
+
+	// Start spinner (agents can take a few seconds to start)
+	spinner := session.NewSpinner(fmt.Sprintf("Starting %s (this may take a few seconds)...", spec.Binary))
+	spinner.Start()
+	defer spinner.Stop()
+	time.Sleep(100 * time.Millisecond)
+
+	// Change to working directory
+	if workDir != "" {
+		if err := os.Chdir(workDir); err != nil {
+			return fmt.Errorf("failed to cd to %s: %w", workDir, err)
+		}
+	}
+
+	// Find shell
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/bash"
+	}
+
+	// Pre-flight check: verify the agent binary is runnable from this directory
+	if err := session.ValidateRunnable(provider, workDir); err != nil {
+		spinner.Stop()
+		return err
+	}
+
+	// Exec shell with the resume command (replaces current process)
+	return syscall.Exec(shell, []string{shell, "-l", "-c", cmd}, os.Environ())
+}
+
+// renderResumePrompt renders the configured resume prompt template for a session.
+// Returns an empty string if rendering yields nothing useful.
+func renderResumePrompt(cfg *config.Config, projectPath, lastCwd, updatedAt string) string {
+	updatedTime, _ := time.Parse("2006-01-02 15:04:05", updatedAt)
+	if updatedTime.IsZero() {
+		updatedTime, _ = time.Parse(time.RFC3339, updatedAt)
+	}
+
+	timeSince := "unknown"
+	if !updatedTime.IsZero() {
+		timeSince = humanize.Time(updatedTime)
+	}
+
+	sameDir := (lastCwd == projectPath)
+	templateData := map[string]interface{}{
+		"last_updated":        updatedAt,
+		"last_cwd":            lastCwd,
+		"time_since":          timeSince,
+		"project_path":        projectPath,
+		"same_directory":      sameDir,
+		"different_directory": !sameDir,
+	}
+
+	prompt, err := mustache.Render(cfg.ResumePromptTemplate, templateData)
+	if err != nil {
+		return fmt.Sprintf("Resuming session. You were last in: %s", lastCwd)
+	}
+	prompt = strings.ReplaceAll(prompt, "\n", " ")
+	prompt = strings.ReplaceAll(prompt, "\r", " ")
+	return prompt
 }
 
 func execClaude(sessionID, projectPath, lastCwd, updatedAt, summary string, fork bool) error {

@@ -8,6 +8,7 @@ import (
 	"github.com/dustin/go-humanize"
 	"github.com/neilberkman/ccrider/internal/core/config"
 	"github.com/neilberkman/ccrider/internal/core/db"
+	coresession "github.com/neilberkman/ccrider/internal/core/session"
 	"github.com/spf13/cobra"
 )
 
@@ -87,7 +88,12 @@ func runDebugPrompt(cmd *cobra.Command, args []string) error {
 	fmt.Println(resumePrompt)
 	fmt.Println()
 	fmt.Println("=== COMMAND ===")
-	fmt.Printf("cd %s && claude --resume %s \"<prompt above>\"\n", projectPath, sessionID)
+	spec := coresession.BuildResumeSpec(session.Provider, sessionID, false, cfg.ClaudeFlags)
+	if spec.AcceptsPrompt {
+		fmt.Printf("cd %s && %s \"<prompt above>\"\n", projectPath, spec.Prefix)
+	} else {
+		fmt.Printf("cd %s && %s\n", projectPath, spec.Prefix)
+	}
 
 	return nil
 }
