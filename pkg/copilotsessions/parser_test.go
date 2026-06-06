@@ -173,3 +173,39 @@ func TestReadWorkspace(t *testing.T) {
 		t.Errorf("cwd = %q, want /tmp/x", cwd)
 	}
 }
+
+// TestParseAllSkipsMalformedLine ensures a corrupt line in the middle of
+// events.jsonl doesn't drop the rest of the session (matches the Claude parser).
+func TestParseAllSkipsMalformedLine(t *testing.T) {
+	stateDir := t.TempDir()
+	writeSession(t, stateDir, "sess-x", "Resilient",
+		evStart,
+		evUser0,
+		`{ this is not valid json at all `, // corrupt line mid-stream
+		evAsst0,
+		``, // blank line
+		evUser1,
+	)
+
+	sessions, err := ParseAll(stateDir)
+	if err != nil {
+		t.Fatalf("ParseAll: %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("got %d sessions, want 1", len(sessions))
+	}
+	// All three valid messages survive; the corrupt and blank lines are skipped.
+	got := make([]string, 0, len(sessions[0].Messages))
+	for _, m := range sessions[0].Messages {
+		got = append(got, m.TextContent)
+	}
+	want := []string{"make it build", "Done, build is green.", "thanks"}
+	if len(got) != len(want) {
+		t.Fatalf("got %d messages %v, want %v", len(got), got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("message[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
