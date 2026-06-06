@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.2.0] - 2026-06-06
+
+### Added
+
+- **GitHub Copilot CLI session support** — indexes Copilot CLI sessions from `~/.copilot/session-state/` (full `events.jsonl` transcripts) alongside Claude Code and Codex CLI in the same searchable database (thanks @dmd)
+- **Provider-aware resume** — resuming now builds the right command per provider (`claude --resume`, `codex resume`, `copilot --resume=`); previously resuming a Codex session incorrectly launched `claude`
+- **Copilot session parser** (`pkg/copilotsessions/`) — parses the Copilot CLI event log, using event IDs as stable message UUIDs
+- **`[copilot]` tags** in TUI and CLI output, `--provider copilot` filtering on CLI and MCP tools
+
+### Fixed
+
+- **Stale terms in search index** — the FTS sync triggers used plain UPDATE/DELETE on external-content FTS5 tables, which leaves old terms behind; fixed to the documented delete+insert form, with a one-time migration that rebuilds both indexes
+- **Resume prompt quoting** — a resume prompt containing a single quote no longer breaks the spawned terminal command
+- **Re-imported message edits** — re-syncing a session whose message text changed in place now refreshes the stored text and search index instead of keeping the old version
+- **TUI sync progress totals** — no longer counts subagent and edit-conflict files that the importer skips
+
 ## [1.1.9] - 2026-04-22
 
 ### Added
