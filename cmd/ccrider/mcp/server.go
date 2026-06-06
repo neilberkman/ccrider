@@ -22,7 +22,7 @@ type SearchSessionsArgs struct {
 	Query            string `json:"query" jsonschema:"description=Search term to match against message content,required"`
 	Limit            int    `json:"limit,omitempty" jsonschema:"description=Max number of sessions to return (default: 10)"`
 	Project          string `json:"project,omitempty" jsonschema:"description=Filter by project path"`
-	Provider         string `json:"provider,omitempty" jsonschema:"description=Filter by provider (claude or codex)"`
+	Provider         string `json:"provider,omitempty" jsonschema:"description=Filter by provider (claude, codex, or copilot)"`
 	CurrentSessionID string `json:"current_session_id,omitempty" jsonschema:"description=Current session ID to search within (searches only this session)"`
 	ExcludeCurrent   bool   `json:"exclude_current,omitempty" jsonschema:"description=Exclude current session from results (searches only other sessions)"`
 	AfterDate        string `json:"after_date,omitempty" jsonschema:"description=Only sessions updated after this date (ISO 8601 format, e.g. 2025-01-01)"`
@@ -35,7 +35,7 @@ type SearchSessionsArgs struct {
 type ListRecentSessionsArgs struct {
 	Limit    int    `json:"limit,omitempty" jsonschema:"description=Max sessions to return (default: 20)"`
 	Project  string `json:"project,omitempty" jsonschema:"description=Filter by project path"`
-	Provider string `json:"provider,omitempty" jsonschema:"description=Filter by provider (claude or codex)"`
+	Provider string `json:"provider,omitempty" jsonschema:"description=Filter by provider (claude, codex, or copilot)"`
 }
 
 // GetSessionMessagesArgs defines arguments for the get_session_messages tool
@@ -148,7 +148,7 @@ func StartServer(dbPath string) error {
 		mcp.WithBoolean("exact_match",
 			mcp.Description("If true, treats the query as an exact phrase match (auto-quoted). Use this instead of trying to add quotes yourself.")),
 		mcp.WithString("provider",
-			mcp.Description("Filter by provider (e.g. \"claude\" or \"codex\")")),
+			mcp.Description("Filter by provider (e.g. \"claude\", \"codex\", or \"copilot\")")),
 	)
 	s.AddTool(searchTool, makeSearchSessionsHandler(database))
 
@@ -164,7 +164,7 @@ func StartServer(dbPath string) error {
 		mcp.WithString("project",
 			mcp.Description("Filter by project path")),
 		mcp.WithString("provider",
-			mcp.Description("Filter by provider (e.g. \"claude\" or \"codex\")")),
+			mcp.Description("Filter by provider (e.g. \"claude\", \"codex\", or \"copilot\")")),
 	)
 	s.AddTool(listTool, makeListRecentSessionsHandler(database))
 
