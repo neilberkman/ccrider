@@ -100,20 +100,25 @@ func (db *DB) initSchema() error {
 		tokenize='unicode61'
 	);
 
-	-- Triggers to keep FTS in sync
+	-- Triggers to keep FTS in sync.
+	-- messages_fts/_code are external-content FTS5 tables, so delete/update must
+	-- use the special 'delete' command with the OLD row values; a plain DELETE or
+	-- UPDATE on the FTS table leaves stale terms in the index.
 	CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
 		INSERT INTO messages_fts(rowid, text_content) VALUES (new.id, new.text_content);
 		INSERT INTO messages_fts_code(rowid, text_content) VALUES (new.id, new.text_content);
 	END;
 
 	CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
-		DELETE FROM messages_fts WHERE rowid = old.id;
-		DELETE FROM messages_fts_code WHERE rowid = old.id;
+		INSERT INTO messages_fts(messages_fts, rowid, text_content) VALUES ('delete', old.id, old.text_content);
+		INSERT INTO messages_fts_code(messages_fts_code, rowid, text_content) VALUES ('delete', old.id, old.text_content);
 	END;
 
 	CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
-		UPDATE messages_fts SET text_content = new.text_content WHERE rowid = new.id;
-		UPDATE messages_fts_code SET text_content = new.text_content WHERE rowid = new.id;
+		INSERT INTO messages_fts(messages_fts, rowid, text_content) VALUES ('delete', old.id, old.text_content);
+		INSERT INTO messages_fts(rowid, text_content) VALUES (new.id, new.text_content);
+		INSERT INTO messages_fts_code(messages_fts_code, rowid, text_content) VALUES ('delete', old.id, old.text_content);
+		INSERT INTO messages_fts_code(rowid, text_content) VALUES (new.id, new.text_content);
 	END;
 	`
 

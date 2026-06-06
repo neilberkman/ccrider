@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/neilberkman/ccrider/internal/core/session"
 )
 
 func (m Model) updateTerminalFallback(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -11,6 +12,7 @@ func (m Model) updateTerminalFallback(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "r":
 		// Resume in current terminal
 		return m, launchClaudeSession(
+			m.fallbackProvider,
 			m.fallbackSessionID,
 			m.fallbackProjectPath,
 			m.fallbackLastCwd,
@@ -22,6 +24,7 @@ func (m Model) updateTerminalFallback(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "c":
 		// Copy command to clipboard - with fallback message
 		return m, copyResumeCommandWithContext(
+			m.fallbackProvider,
 			m.fallbackSessionID,
 			m.fallbackProjectPath,
 			m.fallbackLastCwd,
@@ -31,6 +34,7 @@ func (m Model) updateTerminalFallback(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "w":
 		// Write command to file
 		return m, writeCommandToFile(
+			m.fallbackProvider,
 			m.fallbackSessionID,
 			m.fallbackProjectPath,
 			m.fallbackLastCwd,
@@ -56,11 +60,12 @@ func (m Model) viewTerminalFallback() string {
 		workDir = m.fallbackLastCwd
 	}
 
+	resumeCmd := session.ResumeCommand(m.fallbackProvider, m.fallbackSessionID, "", false, nil)
 	var cmd string
 	if workDir != "" {
-		cmd = fmt.Sprintf("cd %s && claude --resume %s", workDir, m.fallbackSessionID)
+		cmd = fmt.Sprintf("cd %s && %s", workDir, resumeCmd)
 	} else {
-		cmd = fmt.Sprintf("claude --resume %s", m.fallbackSessionID)
+		cmd = resumeCmd
 	}
 
 	return fmt.Sprintf(`

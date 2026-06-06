@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/neilberkman/ccrider/internal/core/db"
 	"github.com/neilberkman/ccrider/internal/core/importer"
+	"github.com/neilberkman/ccrider/pkg/ccsessions"
 	"github.com/spf13/cobra"
 )
 
@@ -17,8 +17,10 @@ var (
 
 var syncCmd = &cobra.Command{
 	Use:   "sync [path]",
-	Short: "Import/sync Claude Code sessions",
-	Long: `Import sessions from ~/.claude/projects/ or a specified directory.
+	Short: "Import/sync coding agent sessions",
+	Long: `Import sessions from Claude Code (~/.claude/projects/), Codex CLI
+(~/.codex/sessions/), and GitHub Copilot CLI (~/.copilot/session-state/),
+or from a specified Claude Code directory.
 
 Performs incremental sync - only imports new or changed sessions.
 Use --force to re-import all sessions (fixes stale project_path values).`,
@@ -77,35 +79,44 @@ func runSync(cmd *cobra.Command, args []string) error {
 
 	imp := importer.New(database)
 
-	for _, src := range importer.DefaultSources() {
-		// When user specified a custom path, only import Claude from that path
-		if len(args) > 0 && src.Provider != "claude" {
-			continue
-		}
-		importPath := src.Path
-		if len(args) > 0 {
-			importPath = sourcePath
-		}
+	// When the user passes an explicit path, import only Claude sessions from it;
+	// otherwise import every auto-discovered provider.
+	var sources []importer.Source
+	if len(args) > 0 {
+		sources = []importer.Source{{
+			Path:          sourcePath,
+			ParseFn:       ccsessions.ParseFile,
+			Provider:      "claude",
+			SkipSubagents: true,
+		}}
+	} else {
+		sources = importer.DefaultSources()
+	}
 
-		total, err := countJSONLFiles(importPath)
+	for _, src := range sources {
+		prepared, err := imp.PrepareSource(src)
 		if err != nil {
-			return fmt.Errorf("failed to count %s files: %w", src.Provider, err)
+			return fmt.Errorf("failed to prepare %s sessions: %w", src.Provider, err)
 		}
-		if total == 0 {
+		if prepared.Total == 0 {
 			continue
 		}
 
-		fmt.Printf("Syncing %s sessions from: %s\n", src.Provider, importPath)
-		progress := importer.NewProgressReporter(os.Stdout, total)
-		skipped, err := imp.ImportDirectory(importPath, progress, syncForce, src.SkipSubagents, src.ParseFn, src.Provider)
+		fmt.Printf("Syncing %s sessions from: %s\n", prepared.Provider, prepared.Path)
+		progress := importer.NewProgressReporter(os.Stdout, prepared.Total)
+		skipped, err := prepared.Run(progress, syncForce)
 		if err != nil {
 			return fmt.Errorf("%s import failed: %w", src.Provider, err)
 		}
 		progress.Finish()
 
 		if skipped > 0 && !syncForce {
-			skipRate := float64(skipped) / float64(total) * 100
-			fmt.Printf("\nSkipped %d/%d %s files (%.1f%% unchanged)\n", skipped, total, src.Provider, skipRate)
+			skipRate := float64(skipped) / float64(prepared.Total) * 100
+			unit := "files"
+			if src.EnumerateFn != nil {
+				unit = "sessions"
+			}
+			fmt.Printf("\nSkipped %d/%d %s %s (%.1f%% unchanged)\n", skipped, prepared.Total, src.Provider, unit, skipRate)
 		}
 	}
 
@@ -118,25 +129,4 @@ func getDefaultClaudeDir() string {
 		return "~/.claude/projects"
 	}
 	return filepath.Join(home, ".claude", "projects")
-}
-
-func countJSONLFiles(dirPath string) (int, error) {
-	count := 0
-	err := filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if !info.IsDir() && filepath.Ext(path) == ".jsonl" {
-			basename := filepath.Base(path)
-			if strings.Contains(basename, "Edit conflict") {
-				return nil
-			}
-			if strings.Contains(path, "/subagents/") || strings.HasPrefix(basename, "agent-") {
-				return nil
-			}
-			count++
-		}
-		return nil
-	})
-	return count, err
 }
