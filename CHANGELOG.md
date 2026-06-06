@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.1] - 2026-06-06
+
+### Fixed
+
+- **Resume command shell quoting**: session IDs and shell `cd` working directories are now quoted across resume and terminal-spawn paths
+- **Copilot parser resilience**: malformed lines in `events.jsonl` are skipped instead of dropping the rest of the session transcript
+- **Enumerated sync change detection**: skip hashes now use message UUIDs and text content instead of file mtime, avoiding mtime churn while still detecting same-length text edits
+
 ## [1.2.0] - 2026-06-06
 
 ### Added
