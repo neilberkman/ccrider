@@ -17,7 +17,6 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -124,65 +123,68 @@ func parseSession(sessionDir, sessionID, eventsPath string, info os.FileInfo) (*
 	wsName, wsCWD := readWorkspace(filepath.Join(sessionDir, "workspace.yaml"))
 	cwd := wsCWD
 
+	// Read events line by line and skip any malformed line, so one corrupt
+	// line (e.g. a partially-flushed write on a live session) doesn't drop the
+	// rest of the transcript — matching the Claude/Codex parsers. ReadBytes
+	// grows to fit arbitrarily long event lines.
 	reader := bufio.NewReaderSize(file, 1024*1024)
-	dec := json.NewDecoder(reader)
 
 	var messages []ccsessions.ParsedMessage
 	sequence := 0
 
 	for {
-		var ev rawEvent
-		if err := dec.Decode(&ev); err != nil {
-			if err == io.EOF {
-				break
+		line, readErr := reader.ReadBytes('\n')
+
+		if len(line) > 0 {
+			var ev rawEvent
+			if json.Unmarshal(line, &ev) == nil {
+				switch ev.Type {
+				case "session.start", "session.resume":
+					// The event stream is authoritative for cwd; the
+					// workspace.yaml value is only a fallback for sessions
+					// whose start event lacks one.
+					var d sessionStartData
+					if json.Unmarshal(ev.Data, &d) == nil && d.Context.CWD != "" {
+						cwd = d.Context.CWD
+					}
+
+				case "user.message":
+					var d messageData
+					if json.Unmarshal(ev.Data, &d) == nil && strings.TrimSpace(d.Content) != "" {
+						sequence++
+						messages = append(messages, ccsessions.ParsedMessage{
+							UUID:        ev.ID,
+							ParentUUID:  ev.ParentID,
+							Type:        "user",
+							Sender:      "human",
+							TextContent: d.Content,
+							Timestamp:   parseTime(ev.Timestamp),
+							Sequence:    sequence,
+							CWD:         cwd,
+						})
+					}
+
+				case "assistant.message":
+					var d messageData
+					if json.Unmarshal(ev.Data, &d) == nil && strings.TrimSpace(d.Content) != "" {
+						sequence++
+						messages = append(messages, ccsessions.ParsedMessage{
+							UUID:        ev.ID,
+							ParentUUID:  ev.ParentID,
+							Type:        "assistant",
+							Sender:      "assistant",
+							TextContent: d.Content,
+							Timestamp:   parseTime(ev.Timestamp),
+							Sequence:    sequence,
+							CWD:         cwd,
+						})
+					}
+				}
 			}
-			// Malformed tail (e.g. a partially-written final line on a live
-			// session): keep what we parsed so far.
-			break
 		}
 
-		switch ev.Type {
-		case "session.start", "session.resume":
-			// The event stream is authoritative for cwd; the workspace.yaml value
-			// is only a fallback for sessions whose start event lacks one.
-			var d sessionStartData
-			if json.Unmarshal(ev.Data, &d) == nil && d.Context.CWD != "" {
-				cwd = d.Context.CWD
-			}
-
-		case "user.message":
-			var d messageData
-			if json.Unmarshal(ev.Data, &d) != nil || strings.TrimSpace(d.Content) == "" {
-				continue
-			}
-			sequence++
-			messages = append(messages, ccsessions.ParsedMessage{
-				UUID:        ev.ID,
-				ParentUUID:  ev.ParentID,
-				Type:        "user",
-				Sender:      "human",
-				TextContent: d.Content,
-				Timestamp:   parseTime(ev.Timestamp),
-				Sequence:    sequence,
-				CWD:         cwd,
-			})
-
-		case "assistant.message":
-			var d messageData
-			if json.Unmarshal(ev.Data, &d) != nil || strings.TrimSpace(d.Content) == "" {
-				continue
-			}
-			sequence++
-			messages = append(messages, ccsessions.ParsedMessage{
-				UUID:        ev.ID,
-				ParentUUID:  ev.ParentID,
-				Type:        "assistant",
-				Sender:      "assistant",
-				TextContent: d.Content,
-				Timestamp:   parseTime(ev.Timestamp),
-				Sequence:    sequence,
-				CWD:         cwd,
-			})
+		if readErr != nil {
+			break
 		}
 	}
 
