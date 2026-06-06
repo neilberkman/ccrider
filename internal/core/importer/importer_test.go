@@ -378,3 +378,37 @@ func TestImportEnumeratedRefreshesEditedText(t *testing.T) {
 		t.Errorf("FTS still matches stale text 'aardvark' after edit")
 	}
 }
+
+func TestEnumeratedSessionHash(t *testing.T) {
+	mk := func(mtime time.Time, msgs ...ccsessions.ParsedMessage) *ccsessions.ParsedSession {
+		return &ccsessions.ParsedSession{SessionID: "s", FilePath: "/x/s.copilot", FileMtime: mtime, Messages: msgs}
+	}
+	m := func(uuid, text string) ccsessions.ParsedMessage {
+		return ccsessions.ParsedMessage{UUID: uuid, TextContent: text}
+	}
+	t0 := time.Unix(1000, 0)
+	t1 := time.Unix(2000, 0)
+
+	base := enumeratedSessionHash("s", mk(t0, m("a", "hello"), m("b", "world")))
+
+	// Same content, different mtime -> same hash (mtime is no longer an input).
+	if h := enumeratedSessionHash("s", mk(t1, m("a", "hello"), m("b", "world"))); h != base {
+		t.Errorf("hash changed on mtime-only change: %s vs %s", h, base)
+	}
+	// Edited text with a different length -> different hash.
+	if h := enumeratedSessionHash("s", mk(t0, m("a", "hello!"), m("b", "world"))); h == base {
+		t.Error("hash unchanged after a text edit")
+	}
+	// Same-length in-place edit ("world" -> "WORLD") -> different hash.
+	if h := enumeratedSessionHash("s", mk(t0, m("a", "hello"), m("b", "WORLD"))); h == base {
+		t.Error("hash unchanged after a same-length text edit")
+	}
+	// Added message -> different hash.
+	if h := enumeratedSessionHash("s", mk(t0, m("a", "hello"), m("b", "world"), m("c", "!"))); h == base {
+		t.Error("hash unchanged after adding a message")
+	}
+	// Changed UUID -> different hash.
+	if h := enumeratedSessionHash("s", mk(t0, m("a", "hello"), m("z", "world"))); h == base {
+		t.Error("hash unchanged after a uuid change")
+	}
+}

@@ -448,12 +448,19 @@ func (i *Importer) ImportEnumerated(sessions []*ccsessions.ParsedSession, progre
 	return skipped, nil
 }
 
-// enumeratedSessionHash produces a change-detection hash for a database-backed
-// session. It changes whenever the session's last-updated time or message count
-// changes, which is sufficient to detect new turns on an existing session.
+// enumeratedSessionHash produces a change-detection hash for an enumerated
+// session from its message content rather than the file mtime. Hashing each
+// message's UUID and full text detects any add, remove, reorder, or in-place
+// edit (including a same-length rewrite), so it doesn't depend on the source
+// bumping a timestamp and won't churn if an unrelated mtime changes.
 func enumeratedSessionHash(sessionID string, session *ccsessions.ParsedSession) string {
 	h := blake3.New()
-	_, _ = fmt.Fprintf(h, "%s|%d|%d", sessionID, session.FileMtime.UnixNano(), len(session.Messages))
+	_, _ = fmt.Fprintf(h, "%s|%d", sessionID, len(session.Messages))
+	for _, m := range session.Messages {
+		// Length-frame each field so message/text boundaries are unambiguous.
+		_, _ = fmt.Fprintf(h, "|%s:%d:", m.UUID, len(m.TextContent))
+		_, _ = io.WriteString(h, m.TextContent)
+	}
 	return hex.EncodeToString(h.Sum(nil))
 }
 
