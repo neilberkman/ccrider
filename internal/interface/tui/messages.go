@@ -3,7 +3,6 @@ package tui
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -26,6 +25,7 @@ type sessionDetailLoadedMsg struct {
 }
 
 type sessionLaunchInfoMsg struct {
+	provider    string
 	sessionID   string
 	projectPath string
 	lastCwd     string
@@ -163,6 +163,7 @@ func loadSessionForLaunch(database *db.DB, sessionID string) tea.Cmd {
 		}
 
 		return sessionLaunchInfoMsg{
+			provider:    session.Provider,
 			sessionID:   session.SessionID,
 			projectPath: session.ProjectPath,
 			lastCwd:     lastCwd,
@@ -224,17 +225,21 @@ type syncProgressMsg struct {
 // StartSyncWithProgress initiates a sync and returns a command that listens for progress
 func startSyncWithProgress(database *db.DB, filterByProject bool, projectPath string) tea.Cmd {
 	return func() tea.Msg {
-		sources := importer.DefaultSources()
+		imp := importer.New(database)
 
-		// Count total files across all source directories
+		// Resolve each source (count work + import action) via core. Sources that
+		// fail to prepare (e.g. an unreadable Copilot store) are surfaced as a
+		// warning rather than silently dropped.
+		var prepared []importer.PreparedSource
 		var total int
-		for _, src := range sources {
-			_ = filepath.Walk(src.Path, func(path string, info os.FileInfo, err error) error {
-				if err == nil && !info.IsDir() && filepath.Ext(path) == ".jsonl" {
-					total++
-				}
-				return nil
-			})
+		for _, src := range importer.DefaultSources() {
+			p, err := imp.PrepareSource(src)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "WARN: %s sync skipped: %v\n", src.Provider, err)
+				continue
+			}
+			prepared = append(prepared, p)
+			total += p.Total
 		}
 
 		progressCh := make(chan syncProgressMsg, 100)
@@ -245,16 +250,15 @@ func startSyncWithProgress(database *db.DB, filterByProject bool, projectPath st
 		}
 
 		go func() {
-			imp := importer.New(database)
 			progress := &channelProgressReporter{
 				total:   total,
 				current: 0,
 				ch:      progressCh,
 			}
 
-			for _, src := range sources {
-				if _, err := imp.ImportDirectory(src.Path, progress, false, src.SkipSubagents, src.ParseFn, src.Provider); err != nil {
-					fmt.Fprintf(os.Stderr, "WARN: %s sync failed: %v\n", src.Provider, err)
+			for _, p := range prepared {
+				if _, err := p.Run(progress, false); err != nil {
+					fmt.Fprintf(os.Stderr, "WARN: %s sync failed: %v\n", p.Provider, err)
 				}
 			}
 

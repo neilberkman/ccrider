@@ -35,7 +35,7 @@ func init() {
 	rootCmd.AddCommand(listCmd)
 	listCmd.Flags().IntVar(&listLimit, "limit", 20, "Maximum number of sessions to display")
 	listCmd.Flags().StringVar(&listProject, "project", "", "Filter by project path")
-	listCmd.Flags().StringVar(&listProvider, "provider", "", "Filter by provider (claude, codex)")
+	listCmd.Flags().StringVar(&listProvider, "provider", "", "Filter by provider (claude, codex, copilot)")
 }
 
 func runList(cmd *cobra.Command, args []string) error {

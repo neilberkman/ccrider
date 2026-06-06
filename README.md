@@ -6,18 +6,18 @@
 [![Homebrew](https://img.shields.io/badge/homebrew-neilberkman%2Ftap-orange)](https://github.com/neilberkman/homebrew-tap)
 [![Show HN](https://img.shields.io/badge/Show%20HN-black?logo=ycombinator)](https://news.ycombinator.com/item?id=46512501)
 
-Search, browse, and resume your Claude Code and Codex CLI sessions, plus MCP server to remember past context.
+Search, browse, and resume your Claude Code, Codex CLI, and GitHub Copilot CLI sessions, plus MCP server to remember past context.
 
 When your coding agent forgets, tell it: _[see what you have done](#the-king)_.
 
 ## Why ccrider?
 
-You've got months of coding agent sessions sitting in `~/.claude/projects/` and `~/.codex/sessions/`. Finding that conversation where you fixed the authentication bug? Good luck grepping through nested JSON files.
+You've got months of coding agent sessions sitting in `~/.claude/projects/`, `~/.codex/sessions/`, and `~/.copilot/`. Finding that conversation where you fixed the authentication bug? Good luck grepping through nested JSON files.
 
-ccrider indexes Claude Code and Codex CLI sessions into a single searchable database, with a TUI browser, CLI search, and an MCP server so your agent can search past sessions too.
+ccrider indexes Claude Code, Codex CLI, and GitHub Copilot CLI sessions into a single searchable database, with a TUI browser, CLI search, and an MCP server so your agent can search past sessions too.
 
 ```bash
-# Import sessions from Claude Code and Codex CLI
+# Import sessions from Claude Code, Codex CLI, and Copilot CLI
 ccrider sync
 
 # Launch the TUI - browse, search, resume
@@ -27,7 +27,7 @@ ccrider tui
 ccrider search "authentication bug"
 ```
 
-Stay in your terminal. Find any conversation. Resume where you left off. Codex sessions are tagged with `[codex]` in the TUI for easy identification.
+Stay in your terminal. Find any conversation. Resume where you left off. Codex and Copilot sessions are tagged with `[codex]` and `[copilot]` in the TUI for easy identification.
 
 **Installation:**
 
@@ -96,7 +96,7 @@ ccrider sync         # Import new sessions from all providers
 ccrider sync --full  # Re-import everything
 ```
 
-Automatically discovers Claude Code (`~/.claude/projects/`) and Codex CLI (`~/.codex/sessions/`) sessions. Detects ongoing sessions and imports new messages without re-processing everything.
+Automatically discovers Claude Code (`~/.claude/projects/`), Codex CLI (`~/.codex/sessions/`), and GitHub Copilot CLI (`~/.copilot/session-state/`) sessions. Detects ongoing sessions and imports new messages without re-processing everything.
 
 ---
 
@@ -145,7 +145,7 @@ Add to your config (`~/Library/Application Support/Claude/claude_desktop_config.
 - **get_session_messages** - Get messages from a session (supports tail mode, context around search matches)
 - **generate_session_anchor** - Generate a unique phrase to tag your session for later retrieval
 
-All tools support a `provider` parameter to filter by `claude` or `codex`. The MCP server provides read-only access to your session database. Your conversations stay local.
+All tools support a `provider` parameter to filter by `claude`, `codex`, or `copilot`. The MCP server provides read-only access to your session database. Your conversations stay local.
 
 ---
 
@@ -201,7 +201,7 @@ Other coding agent session tools are broken:
 ccrider fixes this with:
 
 - 100% schema coverage - parses all message types correctly
-- Multi-provider - Claude Code and Codex CLI in one database
+- Multi-provider - Claude Code, Codex CLI, and GitHub Copilot CLI in one database
 - SQLite FTS5 search - fast, powerful full-text search
 - Single binary - no npm, no pip, no dependencies
 - Native resume - one keystroke to resume sessions
@@ -229,6 +229,7 @@ internal/
 pkg/
   ccsessions/         # Claude Code session parser (public API)
   codexsessions/      # Codex CLI session parser (public API)
+  copilotsessions/    # GitHub Copilot CLI session parser (public API)
 ```
 
 ### Quick Build

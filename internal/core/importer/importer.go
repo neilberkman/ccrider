@@ -157,7 +157,19 @@ func (i *Importer) ImportSession(session *ccsessions.ParsedSession, existingMess
 				content, text_content, timestamp, sequence,
 				is_sidechain, cwd, git_branch, version
 			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-			ON CONFLICT(uuid) DO UPDATE SET session_id = excluded.session_id
+			ON CONFLICT(uuid) DO UPDATE SET
+				session_id = excluded.session_id,
+				parent_uuid = excluded.parent_uuid,
+				type = excluded.type,
+				sender = excluded.sender,
+				content = excluded.content,
+				text_content = excluded.text_content,
+				timestamp = excluded.timestamp,
+				sequence = excluded.sequence,
+				is_sidechain = excluded.is_sidechain,
+				cwd = excluded.cwd,
+				git_branch = excluded.git_branch,
+				version = excluded.version
 		`,
 			msg.UUID,
 			sessionDBID,
@@ -368,6 +380,81 @@ func (i *Importer) ImportDirectory(dirPath string, progress ProgressCallback, fo
 	}
 
 	return skipped, nil
+}
+
+// ImportEnumerated imports a slice of already-parsed sessions from a
+// database-backed provider (e.g. Copilot) that has no per-session files to walk.
+//
+// Incremental sync uses a synthetic content hash (derived from the session's
+// last-updated time and message count) in place of a file hash: unchanged
+// sessions are skipped. Returns the number of skipped sessions.
+func (i *Importer) ImportEnumerated(sessions []*ccsessions.ParsedSession, progress ProgressCallback, force bool, provider string) (int, error) {
+	// Pre-load existing session hashes for fast skip checks.
+	existingHash := make(map[string]string)
+
+	rows, err := i.db.Query(`SELECT session_id, COALESCE(file_hash, '') FROM sessions`)
+	if err != nil {
+		return 0, fmt.Errorf("failed to load session metadata: %w", err)
+	}
+	for rows.Next() {
+		var sid, hash string
+		if err := rows.Scan(&sid, &hash); err != nil {
+			_ = rows.Close()
+			return 0, fmt.Errorf("failed to scan session metadata: %w", err)
+		}
+		existingHash[sid] = hash
+	}
+	_ = rows.Close()
+
+	var skipped, failed int
+
+	for _, session := range sessions {
+		sessionID := filepath.Base(session.FilePath)
+		sessionID = strings.TrimSuffix(sessionID, filepath.Ext(sessionID))
+
+		hash := enumeratedSessionHash(sessionID, session)
+
+		if !force && existingHash[sessionID] == hash {
+			skipped++
+			continue
+		}
+
+		// Pass existingMessageCount=0: messages carry stable, content-addressed
+		// UUIDs, so ImportSession's ON CONFLICT(uuid) dedups already-imported
+		// messages while still inserting real new ones without relying on
+		// append-only ordering (which breaks when an earlier turn is backfilled).
+		if err := i.ImportSession(session, 0, 0, 0, hash, provider); err != nil {
+			fmt.Fprintf(os.Stderr, "WARN: Cannot import session %s: %v\n", sessionID, err)
+			failed++
+			continue
+		}
+
+		if progress != nil {
+			firstMsg := ""
+			if len(session.Messages) > 0 {
+				firstMsg = session.Messages[0].TextContent
+				if len(firstMsg) > 100 {
+					firstMsg = firstMsg[:97] + "..."
+				}
+			}
+			progress.Update(session.Summary, firstMsg)
+		}
+	}
+
+	if failed > 0 {
+		fmt.Fprintf(os.Stderr, "\nImport completed with %d failures (see warnings above)\n", failed)
+	}
+
+	return skipped, nil
+}
+
+// enumeratedSessionHash produces a change-detection hash for a database-backed
+// session. It changes whenever the session's last-updated time or message count
+// changes, which is sufficient to detect new turns on an existing session.
+func enumeratedSessionHash(sessionID string, session *ccsessions.ParsedSession) string {
+	h := blake3.New()
+	_, _ = fmt.Fprintf(h, "%s|%d|%d", sessionID, session.FileMtime.UnixNano(), len(session.Messages))
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 func computeFileHash(path string) (string, error) {

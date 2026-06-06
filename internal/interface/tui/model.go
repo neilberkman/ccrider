@@ -57,6 +57,7 @@ type Model struct {
 	matchOccurrences        []matchOccurrenceInfo // line number + occurrence index for each match (for scrolling and highlighting)
 
 	// Launch state (for exec after quit)
+	LaunchProvider    string
 	LaunchSessionID   string
 	LaunchProjectPath string
 	LaunchLastCwd     string
@@ -65,6 +66,7 @@ type Model struct {
 	LaunchFork        bool
 
 	// Terminal fallback state (when can't spawn terminal)
+	fallbackProvider    string
 	fallbackSessionID   string
 	fallbackProjectPath string
 	fallbackLastCwd     string
@@ -340,6 +342,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case sessionLaunchInfoMsg:
 		// Got session info for quick launch (from list view 'o' key)
 		return m, openInNewTerminal(
+			msg.provider,
 			msg.sessionID,
 			msg.projectPath,
 			msg.lastCwd,
@@ -357,6 +360,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case sessionLaunchedMsg:
 		if msg.success {
 			// Store launch info for CLI to exec after quit
+			m.LaunchProvider = msg.provider
 			m.LaunchSessionID = msg.sessionID
 			m.LaunchProjectPath = msg.projectPath
 			m.LaunchLastCwd = msg.lastCwd
@@ -387,6 +391,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.err != nil && strings.Contains(msg.err.Error(), "could not detect supported terminal") {
 				// Switch to fallback view with options
 				m.mode = terminalFallbackView
+				m.fallbackProvider = msg.provider
 				m.fallbackSessionID = msg.sessionID
 				m.fallbackProjectPath = msg.projectPath
 				m.fallbackLastCwd = msg.lastCwd

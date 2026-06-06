@@ -1,5 +1,10 @@
 package db
 
+import (
+	"database/sql"
+	"strings"
+)
+
 // migrate runs any needed migrations for existing databases
 func (db *DB) migrate() error {
 	// Migration 1: Add llm_summary columns to sessions table
@@ -24,6 +29,11 @@ func (db *DB) migrate() error {
 
 	// Migration 5: Invalidate Codex sessions so they re-import with response_item parsing
 	if err := db.migration005ReimportCodexSessions(); err != nil {
+		return err
+	}
+
+	// Migration 6: Fix FTS sync triggers for external-content tables and rebuild
+	if err := db.migration006FixFTSTriggers(); err != nil {
 		return err
 	}
 
@@ -208,6 +218,57 @@ func (db *DB) migration005ReimportCodexSessions() error {
 	}
 
 	return tx.Commit()
+}
+
+// migration006FixFTSTriggers replaces the FTS sync triggers with the
+// external-content-correct form and rebuilds the FTS indexes.
+//
+// messages_fts/_code are external-content FTS5 tables. The original
+// messages_ad/messages_au triggers used a plain DELETE / UPDATE on the FTS
+// tables, which does not remove old terms from an external-content index —
+// stale terms linger. This was latent (nothing updated message text in place)
+// until enumerated providers (Copilot) began re-importing edited message text,
+// at which point search would match both the old and new text. The rebuild
+// clears any stale terms left behind by the old triggers.
+func (db *DB) migration006FixFTSTriggers() error {
+	var triggerSQL string
+	err := db.conn.QueryRow(`
+		SELECT COALESCE(sql, '') FROM sqlite_master
+		WHERE type='trigger' AND name='messages_au'
+	`).Scan(&triggerSQL)
+	if err == sql.ErrNoRows {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	// Fresh databases already have the corrected trigger from initSchema.
+	if !strings.Contains(triggerSQL, "UPDATE messages_fts") {
+		return nil
+	}
+
+	stmts := []string{
+		`DROP TRIGGER IF EXISTS messages_ad`,
+		`DROP TRIGGER IF EXISTS messages_au`,
+		`CREATE TRIGGER messages_ad AFTER DELETE ON messages BEGIN
+			INSERT INTO messages_fts(messages_fts, rowid, text_content) VALUES ('delete', old.id, old.text_content);
+			INSERT INTO messages_fts_code(messages_fts_code, rowid, text_content) VALUES ('delete', old.id, old.text_content);
+		END`,
+		`CREATE TRIGGER messages_au AFTER UPDATE ON messages BEGIN
+			INSERT INTO messages_fts(messages_fts, rowid, text_content) VALUES ('delete', old.id, old.text_content);
+			INSERT INTO messages_fts(rowid, text_content) VALUES (new.id, new.text_content);
+			INSERT INTO messages_fts_code(messages_fts_code, rowid, text_content) VALUES ('delete', old.id, old.text_content);
+			INSERT INTO messages_fts_code(rowid, text_content) VALUES (new.id, new.text_content);
+		END`,
+		`INSERT INTO messages_fts(messages_fts) VALUES('rebuild')`,
+		`INSERT INTO messages_fts_code(messages_fts_code) VALUES('rebuild')`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.conn.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (db *DB) migration004AddProviderColumn() error {

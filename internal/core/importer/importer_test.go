@@ -3,6 +3,7 @@ package importer
 import (
 	"os"
 	"testing"
+	"time"
 
 	"github.com/neilberkman/ccrider/internal/core/db"
 	"github.com/neilberkman/ccrider/pkg/ccsessions"
@@ -292,5 +293,88 @@ func TestImportSession_ProviderStoredForClaude(t *testing.T) {
 	}
 	if provider != "claude" {
 		t.Errorf("Expected provider 'claude', got %q", provider)
+	}
+}
+
+// TestImportEnumeratedRefreshesEditedText verifies that when an enumerated
+// provider (e.g. Copilot) rewrites a message's text in place — same UUID, new
+// content — a re-sync updates both the stored text and the FTS index, rather
+// than discarding the new text at the ON CONFLICT(uuid) clause.
+func TestImportEnumeratedRefreshesEditedText(t *testing.T) {
+	tmpfile, err := os.CreateTemp("", "test-edit-*.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Remove(tmpfile.Name()) }()
+	_ = tmpfile.Close()
+
+	database, err := db.New(tmpfile.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+
+	imp := New(database)
+
+	makeSession := func(text string, mtime time.Time) *ccsessions.ParsedSession {
+		return &ccsessions.ParsedSession{
+			SessionID: "copilot-session",
+			Summary:   "edit test",
+			FilePath:  "/tmp/copilot/copilot-session.copilot",
+			FileMtime: mtime,
+			Messages: []ccsessions.ParsedMessage{{
+				UUID:        "msg-stable-uuid",
+				Type:        "assistant",
+				Sender:      "assistant",
+				TextContent: text,
+				Timestamp:   mtime,
+				Sequence:    1,
+			}},
+		}
+	}
+
+	// Initial import.
+	t0 := time.Date(2026, 6, 3, 10, 0, 0, 0, time.UTC)
+	if _, err := imp.ImportEnumerated([]*ccsessions.ParsedSession{makeSession("aardvark original", t0)}, nil, false, "copilot"); err != nil {
+		t.Fatalf("initial import: %v", err)
+	}
+
+	textContent := func() string {
+		var got string
+		if err := database.QueryRow(`SELECT text_content FROM messages WHERE uuid = ?`, "msg-stable-uuid").Scan(&got); err != nil {
+			t.Fatalf("query text: %v", err)
+		}
+		return got
+	}
+	ftsMatches := func(term string) int {
+		var n int
+		if err := database.QueryRow(`SELECT count(*) FROM messages_fts WHERE messages_fts MATCH ?`, term).Scan(&n); err != nil {
+			t.Fatalf("query fts %q: %v", term, err)
+		}
+		return n
+	}
+
+	if got := textContent(); got != "aardvark original" {
+		t.Fatalf("after initial import text = %q", got)
+	}
+	if ftsMatches("aardvark") != 1 || ftsMatches("beluga") != 0 {
+		t.Fatalf("initial FTS state wrong: aardvark=%d beluga=%d", ftsMatches("aardvark"), ftsMatches("beluga"))
+	}
+
+	// Re-import the same UUID with rewritten text and a newer mtime (so the
+	// session's change-detection hash differs and the import actually runs).
+	t1 := t0.Add(time.Hour)
+	if _, err := imp.ImportEnumerated([]*ccsessions.ParsedSession{makeSession("beluga rewritten", t1)}, nil, false, "copilot"); err != nil {
+		t.Fatalf("re-import: %v", err)
+	}
+
+	if got := textContent(); got != "beluga rewritten" {
+		t.Errorf("after re-import text = %q, want %q (edit was discarded)", got, "beluga rewritten")
+	}
+	if ftsMatches("beluga") != 1 {
+		t.Errorf("FTS does not match new text 'beluga' after edit")
+	}
+	if ftsMatches("aardvark") != 0 {
+		t.Errorf("FTS still matches stale text 'aardvark' after edit")
 	}
 }
