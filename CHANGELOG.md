@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.0] - 2026-06-07
+
+### Added
+
+- **Per-provider resume flags: `codex_flags` and `copilot_flags`** — `config.toml` can now bake extra flags into Codex and Copilot resume commands the same way `claude_flags` already does for Claude (e.g. `codex_flags = ["--dangerously-bypass-approvals-and-sandbox"]`). Each provider's flags go where its CLI expects global options: `codex <flags> resume <id>` (before the subcommand — codex rejects them after), `copilot <flags> --resume=<id>`. Applies everywhere commands are built: TUI launch/copy/write/new-terminal/fallback, `debug-prompt`, and the MCP `resume_command` field
+
+### Fixed
+
+- **TUI resume launch for Codex/Copilot ignored configured flags** — the exec path passed no flags for non-Claude providers
+- **`docs/CONFIGURATION.md` documented a `dangerously_skip_permissions` boolean that was never implemented** — replaced with the real `claude_flags` / `codex_flags` / `copilot_flags` keys
+
 ## [1.2.2] - 2026-06-07
 
 ### Added
