@@ -56,37 +56,45 @@ type ResumeSpec struct {
 	AcceptsPrompt bool
 }
 
+// joinFlags renders configured flags as a command fragment with a leading
+// space, or "" when there are none.
+func joinFlags(flags []string) string {
+	if len(flags) == 0 {
+		return ""
+	}
+	return " " + strings.Join(flags, " ")
+}
+
 // BuildResumeSpec returns provider-specific resume invocation details.
-// claudeFlags are only applied for the Claude CLI.
-func BuildResumeSpec(provider, sessionID string, fork bool, claudeFlags []string) ResumeSpec {
+// flags are the user-configured extra flags for this provider's CLI
+// (claude_flags / codex_flags / copilot_flags — see ConfiguredFlags), injected
+// at the position each CLI expects its global options.
+func BuildResumeSpec(provider, sessionID string, fork bool, flags []string) ResumeSpec {
 	// Session IDs come from the database and are normally UUID/rollout-shaped,
 	// but shell-quote them anyway so an unexpected value can never break out of
 	// the command (defense-in-depth, since this string is run by a shell).
 	switch provider {
 	case ProviderCodex:
-		// codex resume <id> [prompt]; forking uses `codex fork <id> [prompt]`.
+		// codex [OPTIONS] resume <id> [prompt]; forking uses `codex fork`.
+		// Global options go BEFORE the subcommand (codex rejects them after).
 		verb := "resume"
 		if fork {
 			verb = "fork"
 		}
 		return ResumeSpec{
 			Binary:        "codex",
-			Prefix:        fmt.Sprintf("codex %s %s", verb, ShellQuote(codexResumeID(sessionID))),
+			Prefix:        fmt.Sprintf("codex%s %s %s", joinFlags(flags), verb, ShellQuote(codexResumeID(sessionID))),
 			AcceptsPrompt: true,
 		}
 	case ProviderCopilot:
-		// copilot --resume=<id>; interactive resume has no positional prompt.
+		// copilot [flags] --resume=<id>; interactive resume has no positional prompt.
 		return ResumeSpec{
 			Binary:        "copilot",
-			Prefix:        fmt.Sprintf("copilot --resume=%s", ShellQuote(sessionID)),
+			Prefix:        fmt.Sprintf("copilot%s --resume=%s", joinFlags(flags), ShellQuote(sessionID)),
 			AcceptsPrompt: false,
 		}
 	default:
-		flags := ""
-		if len(claudeFlags) > 0 {
-			flags = " " + strings.Join(claudeFlags, " ")
-		}
-		prefix := fmt.Sprintf("claude%s --resume %s", flags, ShellQuote(sessionID))
+		prefix := fmt.Sprintf("claude%s --resume %s", joinFlags(flags), ShellQuote(sessionID))
 		if fork {
 			prefix += " --fork-session"
 		}
@@ -101,8 +109,8 @@ func BuildResumeSpec(provider, sessionID string, fork bool, claudeFlags []string
 // ResumeCommand builds a one-line resume command for display or clipboard, with
 // the prompt (if any) appended as a single-quoted argument. The prompt is
 // dropped for providers that do not accept one.
-func ResumeCommand(provider, sessionID, prompt string, fork bool, claudeFlags []string) string {
-	spec := BuildResumeSpec(provider, sessionID, fork, claudeFlags)
+func ResumeCommand(provider, sessionID, prompt string, fork bool, flags []string) string {
+	spec := BuildResumeSpec(provider, sessionID, fork, flags)
 	if prompt == "" || !spec.AcceptsPrompt {
 		return spec.Prefix
 	}
@@ -118,8 +126,8 @@ func ResumeCommand(provider, sessionID, prompt string, fork bool, claudeFlags []
 //
 // If projectPath is empty (missing in the DB), the bare command is returned
 // with a trailing comment noting the gap rather than erroring.
-func ResumeCommandIn(projectPath, provider, sessionID, prompt string, fork bool, claudeFlags []string) string {
-	cmd := ResumeCommand(provider, sessionID, prompt, fork, claudeFlags)
+func ResumeCommandIn(projectPath, provider, sessionID, prompt string, fork bool, flags []string) string {
+	cmd := ResumeCommand(provider, sessionID, prompt, fork, flags)
 	if projectPath == "" {
 		return fmt.Sprintf("%s # project path missing in DB for session %s", cmd, sessionID)
 	}

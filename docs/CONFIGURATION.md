@@ -13,9 +13,15 @@ Main configuration file for global settings.
 **Example**:
 
 ```toml
-# Skip all permission prompts
-# WARNING: This disables safety checks. Use only in trusted environments.
-dangerously_skip_permissions = true
+# Additional flags to pass to every claude --resume command
+claude_flags = ["--dangerously-skip-permissions"]
+
+# Additional flags to pass to every codex resume command
+# (placed before the subcommand: codex <flags> resume <id>)
+# codex_flags = ["--dangerously-bypass-approvals-and-sandbox"]
+
+# Additional flags to pass to every copilot --resume command
+# copilot_flags = []
 ```
 
 ### resume_prompt.txt
@@ -45,33 +51,33 @@ Template variables:
 
 ## Configuration Options
 
-### dangerously_skip_permissions
+### claude_flags / codex_flags / copilot_flags
 
-**Type**: boolean
-**Default**: `false`
+**Type**: array of strings
+**Default**: `[]`
 **File**: `config.toml`
 
-Skips all permission prompts when running MCP server tools or other operations that might require confirmation.
+Extra flags injected into every resume command ccrider builds for that provider — the TUI launch (`r`), copy-to-clipboard (`c`), write-to-file (`w`), new-terminal (`o`), `debug-prompt`, and the `resume_command` field in MCP tool responses.
 
-**WARNING**: This setting bypasses safety checks. Only enable in trusted, personal environments where you fully control the data and operations.
+Each provider's flags go where its CLI expects global options:
 
-**Use cases**:
+| Key             | Resulting command                  |
+| --------------- | ---------------------------------- |
+| `claude_flags`  | `claude <flags> --resume <id>`     |
+| `codex_flags`   | `codex <flags> resume <id>`        |
+| `copilot_flags` | `copilot <flags> --resume=<id>`    |
 
-- Personal development machine where you trust all operations
-- Automated workflows that need non-interactive operation
-- Testing and development
+Codex flags are placed **before** the subcommand (`codex [OPTIONS] <COMMAND>`); codex rejects global options after it. Forking keeps the same placement (`codex <flags> fork <id>`, `claude <flags> --resume <id> --fork-session`).
 
-**Not recommended for**:
-
-- Shared machines
-- Production environments
-- When working with untrusted session data
+**WARNING**: Flags like `--dangerously-skip-permissions` (Claude) and `--dangerously-bypass-approvals-and-sandbox` (Codex) bypass safety checks. Only configure them in trusted, personal environments.
 
 **Example config**:
 
 ```toml
 # ~/.config/ccrider/config.toml
-dangerously_skip_permissions = true
+claude_flags = ["--dangerously-skip-permissions"]
+codex_flags = ["--dangerously-bypass-approvals-and-sandbox"]
+# copilot_flags = []
 ```
 
 ## Configuration Loading Order
@@ -107,11 +113,12 @@ Started in: {{last_cwd}}
 Check git status before continuing.
 ```
 
-### Personal Dev Machine (skip permissions)
+### Personal Dev Machine (skip permission prompts on resume)
 
 ```toml
 # ~/.config/ccrider/config.toml
-dangerously_skip_permissions = true
+claude_flags = ["--dangerously-skip-permissions"]
+codex_flags = ["--dangerously-bypass-approvals-and-sandbox"]
 ```
 
 ### Custom Terminal (iTerm2)

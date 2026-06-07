@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/neilberkman/ccrider/internal/core/config"
 	"github.com/neilberkman/ccrider/internal/core/db"
 	"github.com/neilberkman/ccrider/internal/core/search"
 )
@@ -16,28 +17,44 @@ import (
 
 func TestToSessionMatchResumeCommand(t *testing.T) {
 	tests := []struct {
-		name        string
-		provider    string
-		sessionID   string
-		project     string
-		claudeFlags []string
-		want        string
+		name      string
+		provider  string
+		sessionID string
+		project   string
+		cfg       *config.Config
+		want      string
 	}{
 		{
-			name:        "claude with configured flags",
-			provider:    "claude",
-			sessionID:   "sess-1",
-			project:     "/Users/neil/bin",
-			claudeFlags: []string{"--dangerously-skip-permissions"},
-			want:        "cd '/Users/neil/bin' && claude --dangerously-skip-permissions --resume 'sess-1'",
+			name:      "claude with configured flags",
+			provider:  "claude",
+			sessionID: "sess-1",
+			project:   "/Users/neil/bin",
+			cfg:       &config.Config{ClaudeFlags: []string{"--dangerously-skip-permissions"}},
+			want:      "cd '/Users/neil/bin' && claude --dangerously-skip-permissions --resume 'sess-1'",
 		},
 		{
-			name:        "codex ignores claude flags",
-			provider:    "codex",
-			sessionID:   "sess-1",
-			project:     "/Users/neil/bin",
-			claudeFlags: []string{"--dangerously-skip-permissions"},
-			want:        "cd '/Users/neil/bin' && codex resume 'sess-1'",
+			name:      "codex ignores claude flags",
+			provider:  "codex",
+			sessionID: "sess-1",
+			project:   "/Users/neil/bin",
+			cfg:       &config.Config{ClaudeFlags: []string{"--dangerously-skip-permissions"}},
+			want:      "cd '/Users/neil/bin' && codex resume 'sess-1'",
+		},
+		{
+			name:      "codex with configured flags before subcommand",
+			provider:  "codex",
+			sessionID: "rollout-2026-06-04T14-40-56-019e93f0-3efe-7742-9598-bb06b36fb25a",
+			project:   "/Users/neil/bin",
+			cfg:       &config.Config{CodexFlags: []string{"--dangerously-bypass-approvals-and-sandbox"}},
+			want:      "cd '/Users/neil/bin' && codex --dangerously-bypass-approvals-and-sandbox resume '019e93f0-3efe-7742-9598-bb06b36fb25a'",
+		},
+		{
+			name:      "copilot with configured flags",
+			provider:  "copilot",
+			sessionID: "sess-1",
+			project:   "/Users/neil/bin",
+			cfg:       &config.Config{CopilotFlags: []string{"--allow-all-tools"}},
+			want:      "cd '/Users/neil/bin' && copilot --allow-all-tools --resume='sess-1'",
 		},
 		{
 			name:      "claude",
@@ -74,7 +91,7 @@ func TestToSessionMatchResumeCommand(t *testing.T) {
 				SessionID:   tt.sessionID,
 				ProjectPath: tt.project,
 				Provider:    tt.provider,
-			}, tt.claudeFlags)
+			}, tt.cfg)
 			if got.ResumeCommand != tt.want {
 				t.Errorf("ResumeCommand = %q, want %q", got.ResumeCommand, tt.want)
 			}
@@ -84,20 +101,36 @@ func TestToSessionMatchResumeCommand(t *testing.T) {
 
 func TestToSessionSummaryResumeCommand(t *testing.T) {
 	tests := []struct {
-		name        string
-		provider    string
-		sessionID   string
-		project     string
-		claudeFlags []string
-		want        string
+		name      string
+		provider  string
+		sessionID string
+		project   string
+		cfg       *config.Config
+		want      string
 	}{
 		{
-			name:        "claude with configured flags",
-			provider:    "claude",
-			sessionID:   "sess-1",
-			project:     "/Users/neil/bin",
-			claudeFlags: []string{"--dangerously-skip-permissions"},
-			want:        "cd '/Users/neil/bin' && claude --dangerously-skip-permissions --resume 'sess-1'",
+			name:      "claude with configured flags",
+			provider:  "claude",
+			sessionID: "sess-1",
+			project:   "/Users/neil/bin",
+			cfg:       &config.Config{ClaudeFlags: []string{"--dangerously-skip-permissions"}},
+			want:      "cd '/Users/neil/bin' && claude --dangerously-skip-permissions --resume 'sess-1'",
+		},
+		{
+			name:      "codex with configured flags before subcommand",
+			provider:  "codex",
+			sessionID: "sess-1",
+			project:   "/Users/neil/bin",
+			cfg:       &config.Config{CodexFlags: []string{"--dangerously-bypass-approvals-and-sandbox"}},
+			want:      "cd '/Users/neil/bin' && codex --dangerously-bypass-approvals-and-sandbox resume 'sess-1'",
+		},
+		{
+			name:      "copilot with configured flags",
+			provider:  "copilot",
+			sessionID: "sess-1",
+			project:   "/Users/neil/bin",
+			cfg:       &config.Config{CopilotFlags: []string{"--allow-all-tools"}},
+			want:      "cd '/Users/neil/bin' && copilot --allow-all-tools --resume='sess-1'",
 		},
 		{
 			name:      "claude",
@@ -135,7 +168,7 @@ func TestToSessionSummaryResumeCommand(t *testing.T) {
 				ProjectPath: tt.project,
 				Provider:    tt.provider,
 				UpdatedAt:   time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC),
-			}, tt.claudeFlags)
+			}, tt.cfg)
 			if got.ResumeCommand != tt.want {
 				t.Errorf("ResumeCommand = %q, want %q", got.ResumeCommand, tt.want)
 			}

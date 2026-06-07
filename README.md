@@ -156,8 +156,10 @@ All tools support a `provider` parameter to filter by `claude`, `codex`, or `cop
 ccrider looks for config in `~/.config/ccrider/`:
 
 ```toml
-# config.toml - pass additional flags to claude --resume
+# config.toml - pass additional flags to each provider's resume command
 claude_flags = ["--dangerously-skip-permissions"]
+# codex_flags = ["--dangerously-bypass-approvals-and-sandbox"]
+# copilot_flags = []
 ```
 
 ```txt

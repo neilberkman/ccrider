@@ -590,7 +590,7 @@ func copyResumeCommand(provider, sessionID, projectPath, lastCwd string) tea.Cmd
 func copyResumeCommandWithContext(provider, sessionID, projectPath, lastCwd string, fromFallbackView bool) tea.Cmd {
 	return func() tea.Msg {
 		// Core builds the full command: cd prefix, working dir resolution,
-		// configured claude flags (see session.DisplayResumeCommand).
+		// per-provider configured flags (see session.DisplayResumeCommand).
 		cmd := session.DisplayResumeCommand(provider, sessionID, projectPath, lastCwd, false)
 
 		// Use cross-platform clipboard library
@@ -619,7 +619,7 @@ func copyResumeCommandWithContext(provider, sessionID, projectPath, lastCwd stri
 
 func writeCommandToFile(provider, sessionID, projectPath, lastCwd string) tea.Cmd {
 	return func() tea.Msg {
-		// Core builds the full command (cd prefix, working dir, claude flags)
+		// Core builds the full command (cd prefix, working dir, per-provider flags)
 		cmd := session.DisplayResumeCommand(provider, sessionID, projectPath, lastCwd, false)
 
 		// Write to file
@@ -667,10 +667,10 @@ func openInNewTerminal(provider, sessionID, projectPath, lastCwd, updatedAt, sum
 
 		// Build the full command that will run in the new terminal. Core renders
 		// the resume prompt and quotes it; ResumeCommand drops the prompt for
-		// providers that don't accept one (Copilot) and applies the configured
-		// claude flags.
+		// providers that don't accept one (Copilot) and applies the provider's
+		// configured flags.
 		resumePrompt := session.RenderResumePromptOneLine(cfg.ResumePromptTemplate, projectPath, lastCwd, updatedAt)
-		shellCmd := session.ResumeCommand(provider, sessionID, resumePrompt, false, cfg.ClaudeFlags)
+		shellCmd := session.ResumeCommand(provider, sessionID, resumePrompt, false, session.ProviderFlags(cfg, provider))
 
 		// Resolve working directory (always projectPath, see session.ResolveWorkingDir)
 		workDir := session.ResolveWorkingDir(projectPath, lastCwd)

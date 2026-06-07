@@ -81,13 +81,20 @@ func execResume(provider, sessionID, projectPath, lastCwd, updatedAt, summary st
 // execAgent resumes a non-Claude agent session (Codex, Copilot) by exec'ing the
 // provider's resume command, replacing the current process.
 func execAgent(provider, sessionID, projectPath, lastCwd, updatedAt, summary string, fork bool) error {
-	spec := session.BuildResumeSpec(provider, sessionID, fork, nil)
+	// Config errors fall back to defaults (no flags, default prompt template);
+	// a resume without optional extras is still correct.
+	cfg, cfgErr := config.Load()
+	var flags []string
+	if cfgErr == nil {
+		flags = session.ProviderFlags(cfg, provider)
+	}
+	spec := session.BuildResumeSpec(provider, sessionID, fork, flags)
 	cmd := spec.Prefix
 
 	// Providers that accept an initial prompt (Codex) get the rendered resume
 	// prompt, passed via a temp file to avoid shell escaping issues.
 	if spec.AcceptsPrompt {
-		if cfg, err := config.Load(); err == nil {
+		if cfgErr == nil {
 			if prompt := session.RenderResumePromptOneLine(cfg.ResumePromptTemplate, projectPath, lastCwd, updatedAt); prompt != "" {
 				tmpfile, err := os.CreateTemp("", "ccrider-prompt-*.txt")
 				if err != nil {
