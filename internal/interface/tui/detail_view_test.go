@@ -9,8 +9,17 @@ import (
 // Every resume command the TUI emits must include the `cd <project> && `
 // prefix: providers scope session storage by the directory the session was
 // created in, so a bare resume command fails from any other cwd.
+//
+// isolateConfig points HOME at an empty temp dir so the commands built via
+// session.DisplayResumeCommand don't pick up the developer's real
+// ~/.config/ccrider (e.g. configured claude flags).
+func isolateConfig(t *testing.T) {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+}
 
 func TestLaunchClaudeSessionMessageHasCdPrefix(t *testing.T) {
+	isolateConfig(t)
 	msg := launchClaudeSession("claude", "sess-1", "/Users/x/proj", "/Users/x/elsewhere", "", "", false)()
 	lm, ok := msg.(sessionLaunchedMsg)
 	if !ok {
@@ -23,6 +32,7 @@ func TestLaunchClaudeSessionMessageHasCdPrefix(t *testing.T) {
 }
 
 func TestWriteCommandToFileHasCdPrefix(t *testing.T) {
+	isolateConfig(t)
 	msg := writeCommandToFile("codex", "rollout-2026-06-04T14-40-56-019e93f0-3efe-7742-9598-bb06b36fb25a", "/Users/x/proj", "/Users/x/elsewhere")()
 	lm, ok := msg.(sessionLaunchedMsg)
 	if !ok {
@@ -43,6 +53,7 @@ func TestWriteCommandToFileHasCdPrefix(t *testing.T) {
 }
 
 func TestViewTerminalFallbackShowsCdPrefix(t *testing.T) {
+	isolateConfig(t)
 	// lastCwd differs from projectPath: the displayed command must cd to the
 	// PROJECT path — resuming from lastCwd would not find the session.
 	m := Model{
@@ -62,6 +73,7 @@ func TestViewTerminalFallbackShowsCdPrefix(t *testing.T) {
 }
 
 func TestViewTerminalFallbackMissingProjectPath(t *testing.T) {
+	isolateConfig(t)
 	m := Model{
 		fallbackProvider:  "claude",
 		fallbackSessionID: "sess-1",
