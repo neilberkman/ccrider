@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.2.2] - 2026-06-07
+
+### Added
+
+- **`resume_command` in MCP session payloads** — `search_sessions`, `list_recent_sessions`, and `get_session_messages` now return a ready-to-run command (`cd '<project>' && claude --resume '<id>'`) so consuming agents never stitch a bare resume command from `project` + `session_id`, which fails outside the project directory. Codex commands use the bare rollout UUID, Copilot the `--resume=` form
+
+### Fixed
+
+- **Every emitted resume command includes the `cd <project>` prefix** — copy (`c`), write-to-file (`w`), and the terminal-fallback view could show commands that fail with "No conversation found" when run from another directory; the fallback view also incorrectly cd'd to the last working directory instead of the project path
+- **Configured `claude_flags` apply to every emitted command** — TUI copy/write/fallback commands and MCP `resume_command` now include flags from `config.toml`, matching what resume actually runs; previously only the exec path applied them
+- **`debug-prompt` shows the real resume prompt** — it rendered the template without the `same_directory`/`different_directory` variables, so conditional sections were silently dropped
+
+### Changed
+
+- **Resume command and prompt assembly consolidated in core** (`internal/core/session`) — command building, working-dir resolution, claude-flag application, and resume-prompt rendering now have a single implementation shared by CLI, TUI, and MCP. A session with no stored project path yields the bare command with a `# project path missing in DB` comment instead of erroring
+
 ## [1.2.1] - 2026-06-06
 
 ### Fixed
