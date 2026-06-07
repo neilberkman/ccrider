@@ -16,12 +16,29 @@ import (
 
 func TestToSessionMatchResumeCommand(t *testing.T) {
 	tests := []struct {
-		name      string
-		provider  string
-		sessionID string
-		project   string
-		want      string
+		name        string
+		provider    string
+		sessionID   string
+		project     string
+		claudeFlags []string
+		want        string
 	}{
+		{
+			name:        "claude with configured flags",
+			provider:    "claude",
+			sessionID:   "sess-1",
+			project:     "/Users/neil/bin",
+			claudeFlags: []string{"--dangerously-skip-permissions"},
+			want:        "cd '/Users/neil/bin' && claude --dangerously-skip-permissions --resume 'sess-1'",
+		},
+		{
+			name:        "codex ignores claude flags",
+			provider:    "codex",
+			sessionID:   "sess-1",
+			project:     "/Users/neil/bin",
+			claudeFlags: []string{"--dangerously-skip-permissions"},
+			want:        "cd '/Users/neil/bin' && codex resume 'sess-1'",
+		},
 		{
 			name:      "claude",
 			provider:  "claude",
@@ -57,7 +74,7 @@ func TestToSessionMatchResumeCommand(t *testing.T) {
 				SessionID:   tt.sessionID,
 				ProjectPath: tt.project,
 				Provider:    tt.provider,
-			})
+			}, tt.claudeFlags)
 			if got.ResumeCommand != tt.want {
 				t.Errorf("ResumeCommand = %q, want %q", got.ResumeCommand, tt.want)
 			}
@@ -67,12 +84,21 @@ func TestToSessionMatchResumeCommand(t *testing.T) {
 
 func TestToSessionSummaryResumeCommand(t *testing.T) {
 	tests := []struct {
-		name      string
-		provider  string
-		sessionID string
-		project   string
-		want      string
+		name        string
+		provider    string
+		sessionID   string
+		project     string
+		claudeFlags []string
+		want        string
 	}{
+		{
+			name:        "claude with configured flags",
+			provider:    "claude",
+			sessionID:   "sess-1",
+			project:     "/Users/neil/bin",
+			claudeFlags: []string{"--dangerously-skip-permissions"},
+			want:        "cd '/Users/neil/bin' && claude --dangerously-skip-permissions --resume 'sess-1'",
+		},
 		{
 			name:      "claude",
 			provider:  "claude",
@@ -109,7 +135,7 @@ func TestToSessionSummaryResumeCommand(t *testing.T) {
 				ProjectPath: tt.project,
 				Provider:    tt.provider,
 				UpdatedAt:   time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC),
-			})
+			}, tt.claudeFlags)
 			if got.ResumeCommand != tt.want {
 				t.Errorf("ResumeCommand = %q, want %q", got.ResumeCommand, tt.want)
 			}
@@ -120,8 +146,8 @@ func TestToSessionSummaryResumeCommand(t *testing.T) {
 // The field must serialize as "resume_command" in every payload an agent sees.
 func TestResumeCommandJSONFieldName(t *testing.T) {
 	payloads := []interface{}{
-		toSessionMatch(search.SessionSearchResult{SessionID: "s", ProjectPath: "/p", Provider: "claude"}),
-		toSessionSummary(db.Session{SessionID: "s", ProjectPath: "/p", Provider: "claude"}),
+		toSessionMatch(search.SessionSearchResult{SessionID: "s", ProjectPath: "/p", Provider: "claude"}, nil),
+		toSessionSummary(db.Session{SessionID: "s", ProjectPath: "/p", Provider: "claude"}, nil),
 		SessionMessagesResponse{SessionID: "s", ResumeCommand: "cd '/p' && claude --resume 's'"},
 	}
 	for _, p := range payloads {
