@@ -37,6 +37,7 @@ Search across all sessions for a query string. Supports current session awarenes
       "summary": "Fix authentication bug",
       "project": "/Users/neil/xuku/myapp",
       "updated_at": "2025-01-08T10:30:00Z",
+      "resume_command": "cd '/Users/neil/xuku/myapp' && claude --resume 'abc123...'",
       "match_count": 3,
       "matches": [
         {
@@ -101,6 +102,7 @@ Get recent sessions, optionally filtered by project.
       "summary": "Fix authentication bug",
       "project": "/Users/neil/xuku/myapp",
       "updated_at": "2025-01-08T10:30:00Z",
+      "resume_command": "cd '/Users/neil/xuku/myapp' && claude --resume 'abc123...'",
       "message_count": 42
     }
   ]

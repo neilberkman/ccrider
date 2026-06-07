@@ -14,6 +14,7 @@ import (
 	"github.com/neilberkman/ccrider/internal/core/db"
 	"github.com/neilberkman/ccrider/internal/core/importer"
 	"github.com/neilberkman/ccrider/internal/core/search"
+	"github.com/neilberkman/ccrider/internal/core/session"
 	"github.com/sethvargo/go-diceware/diceware"
 )
 
@@ -57,13 +58,14 @@ func maxResponseBytes() int { return MaxResponseTokens * 4 }
 
 // SessionMatch represents a session search result
 type SessionMatch struct {
-	SessionID  string         `json:"session_id"`
-	Summary    string         `json:"summary"`
-	Project    string         `json:"project"`
-	UpdatedAt  string         `json:"updated_at"`
-	Provider   string         `json:"provider"`
-	MatchCount int            `json:"match_count"`
-	Matches    []MatchSnippet `json:"matches"`
+	SessionID     string         `json:"session_id"`
+	Summary       string         `json:"summary"`
+	Project       string         `json:"project"`
+	UpdatedAt     string         `json:"updated_at"`
+	Provider      string         `json:"provider"`
+	ResumeCommand string         `json:"resume_command"`
+	MatchCount    int            `json:"match_count"`
+	Matches       []MatchSnippet `json:"matches"`
 }
 
 // MatchSnippet represents a message match within a session
@@ -83,23 +85,54 @@ type MessageDetail struct {
 
 // SessionSummary represents a session in the list view
 type SessionSummary struct {
-	SessionID    string `json:"session_id"`
-	Summary      string `json:"summary"`
-	Project      string `json:"project"`
-	UpdatedAt    string `json:"updated_at"`
-	Provider     string `json:"provider"`
-	MessageCount int    `json:"message_count"`
+	SessionID     string `json:"session_id"`
+	Summary       string `json:"summary"`
+	Project       string `json:"project"`
+	UpdatedAt     string `json:"updated_at"`
+	Provider      string `json:"provider"`
+	ResumeCommand string `json:"resume_command"`
+	MessageCount  int    `json:"message_count"`
 }
 
 // SessionMessagesResponse represents the response from get_session_messages
 type SessionMessagesResponse struct {
 	SessionID        string          `json:"session_id"`
+	ResumeCommand    string          `json:"resume_command"`
 	TotalCount       int             `json:"total_count"`
 	ReturnedFrom     int             `json:"returned_from"` // First sequence in response
 	ReturnedTo       int             `json:"returned_to"`   // Last sequence in response
 	Messages         []MessageDetail `json:"messages"`
 	Truncated        bool            `json:"truncated,omitempty"`         // True if response was truncated
 	TruncatedMessage string          `json:"truncated_message,omitempty"` // Explanation when truncated
+}
+
+// toSessionMatch converts a core search result to the MCP payload shape.
+// resume_command is pre-built (cd prefix included) so consuming agents never
+// stitch a bare resume command from project + session_id themselves.
+func toSessionMatch(cs search.SessionSearchResult) SessionMatch {
+	return SessionMatch{
+		SessionID:     cs.SessionID,
+		Summary:       cs.SessionSummary,
+		Project:       cs.ProjectPath,
+		UpdatedAt:     cs.UpdatedAt,
+		Provider:      cs.Provider,
+		ResumeCommand: session.ResumeCommandIn(cs.ProjectPath, cs.Provider, cs.SessionID, "", false, nil),
+		Matches:       []MatchSnippet{},
+	}
+}
+
+// toSessionSummary converts a core session to the MCP payload shape, including
+// the pre-built resume_command (see toSessionMatch).
+func toSessionSummary(cs db.Session) SessionSummary {
+	return SessionSummary{
+		SessionID:     cs.SessionID,
+		Summary:       cs.Summary,
+		Project:       cs.ProjectPath,
+		UpdatedAt:     cs.UpdatedAt.Format("2006-01-02 15:04:05"),
+		Provider:      cs.Provider,
+		ResumeCommand: session.ResumeCommandIn(cs.ProjectPath, cs.Provider, cs.SessionID, "", false, nil),
+		MessageCount:  cs.MessageCount,
+	}
 }
 
 // StartServer starts the MCP server
@@ -330,14 +363,7 @@ func makeSearchSessionsHandler(database *db.DB) func(context.Context, mcp.CallTo
 				continue
 			}
 
-			result := SessionMatch{
-				SessionID: coreSession.SessionID,
-				Summary:   coreSession.SessionSummary,
-				Project:   coreSession.ProjectPath,
-				UpdatedAt: coreSession.UpdatedAt,
-				Provider:  coreSession.Provider,
-				Matches:   []MatchSnippet{},
-			}
+			result := toSessionMatch(coreSession)
 
 			// Limit to 3 matches per session for display (interface concern)
 			matchLimit := 3
@@ -413,14 +439,7 @@ func makeListRecentSessionsHandler(database *db.DB) func(context.Context, mcp.Ca
 		// Convert core types to MCP types (interface concern - presentation)
 		var sessions []SessionSummary
 		for _, cs := range coreSessions {
-			sessions = append(sessions, SessionSummary{
-				SessionID:    cs.SessionID,
-				Summary:      cs.Summary,
-				Project:      cs.ProjectPath,
-				UpdatedAt:    cs.UpdatedAt.Format("2006-01-02 15:04:05"),
-				Provider:     cs.Provider,
-				MessageCount: cs.MessageCount,
-			})
+			sessions = append(sessions, toSessionSummary(cs))
 		}
 
 		// Trim to fit token budget
@@ -467,6 +486,16 @@ func makeGetSessionMessagesHandler(database *db.DB) func(context.Context, mcp.Ca
 			return mcp.NewToolResultError(fmt.Sprintf("failed to get messages: %v", err)), nil
 		}
 
+		// Build the pre-baked resume command (cd prefix included). If launch
+		// info can't be loaded, fall back to the bare command + comment rather
+		// than failing the whole request.
+		resumeCmd := ""
+		if info, _, infoErr := database.GetSessionLaunchInfo(args.SessionID); infoErr == nil {
+			resumeCmd = session.ResumeCommandIn(info.ProjectPath, info.Provider, args.SessionID, "", false, nil)
+		} else {
+			resumeCmd = session.ResumeCommandIn("", "", args.SessionID, "", false, nil)
+		}
+
 		// Convert to MCP format
 		var mcpMessages []MessageDetail
 		for _, msg := range messages {
@@ -489,11 +518,12 @@ func makeGetSessionMessagesHandler(database *db.DB) func(context.Context, mcp.Ca
 		}
 
 		response := SessionMessagesResponse{
-			SessionID:    args.SessionID,
-			TotalCount:   totalCount,
-			ReturnedFrom: returnedFrom,
-			ReturnedTo:   returnedTo,
-			Messages:     mcpMessages,
+			SessionID:     args.SessionID,
+			ResumeCommand: resumeCmd,
+			TotalCount:    totalCount,
+			ReturnedFrom:  returnedFrom,
+			ReturnedTo:    returnedTo,
+			Messages:      mcpMessages,
 		}
 
 		if truncated {
