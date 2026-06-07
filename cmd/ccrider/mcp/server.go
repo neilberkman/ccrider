@@ -11,7 +11,6 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
-	"github.com/neilberkman/ccrider/internal/core/config"
 	"github.com/neilberkman/ccrider/internal/core/db"
 	"github.com/neilberkman/ccrider/internal/core/importer"
 	"github.com/neilberkman/ccrider/internal/core/search"
@@ -105,18 +104,6 @@ type SessionMessagesResponse struct {
 	Messages         []MessageDetail `json:"messages"`
 	Truncated        bool            `json:"truncated,omitempty"`         // True if response was truncated
 	TruncatedMessage string          `json:"truncated_message,omitempty"` // Explanation when truncated
-}
-
-// loadClaudeFlags returns the configured extra flags for the Claude CLI
-// (e.g. --dangerously-skip-permissions), so emitted resume commands match
-// how the user actually invokes claude. Config errors yield no flags rather
-// than failing the request.
-func loadClaudeFlags() []string {
-	cfg, err := config.Load()
-	if err != nil {
-		return nil
-	}
-	return cfg.ClaudeFlags
 }
 
 // toSessionMatch converts a core search result to the MCP payload shape.
@@ -368,8 +355,9 @@ func makeSearchSessionsHandler(database *db.DB) func(context.Context, mcp.CallTo
 			return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil
 		}
 
-		// Convert core types to MCP types (interface concern - presentation)
-		claudeFlags := loadClaudeFlags()
+		// Convert core types to MCP types (interface concern - presentation).
+		// Flags loaded once per request, applied per session by the converter.
+		claudeFlags := session.ConfiguredClaudeFlags()
 		var results []SessionMatch
 		for _, coreSession := range coreResults {
 			// If anchor_phrase was used, filter to only sessions that contained it
@@ -451,7 +439,7 @@ func makeListRecentSessionsHandler(database *db.DB) func(context.Context, mcp.Ca
 		}
 
 		// Convert core types to MCP types (interface concern - presentation)
-		claudeFlags := loadClaudeFlags()
+		claudeFlags := session.ConfiguredClaudeFlags()
 		var sessions []SessionSummary
 		for _, cs := range coreSessions {
 			sessions = append(sessions, toSessionSummary(cs, claudeFlags))
@@ -501,16 +489,9 @@ func makeGetSessionMessagesHandler(database *db.DB) func(context.Context, mcp.Ca
 			return mcp.NewToolResultError(fmt.Sprintf("failed to get messages: %v", err)), nil
 		}
 
-		// Build the pre-baked resume command (cd prefix included). If launch
-		// info can't be loaded, fall back to the bare command + comment rather
-		// than failing the whole request.
-		claudeFlags := loadClaudeFlags()
-		resumeCmd := ""
-		if info, _, infoErr := database.GetSessionLaunchInfo(args.SessionID); infoErr == nil {
-			resumeCmd = session.ResumeCommandIn(info.ProjectPath, info.Provider, args.SessionID, "", false, claudeFlags)
-		} else {
-			resumeCmd = session.ResumeCommandIn("", "", args.SessionID, "", false, claudeFlags)
-		}
+		// Pre-baked resume command. Core decides the fallback when launch info
+		// can't be loaded (see session.DisplayResumeCommandFor).
+		resumeCmd := session.DisplayResumeCommandFor(database, args.SessionID)
 
 		// Convert to MCP format
 		var mcpMessages []MessageDetail

@@ -2,9 +2,7 @@ package cli
 
 import (
 	"fmt"
-	"time"
 
-	"github.com/cbroglie/mustache"
 	"github.com/dustin/go-humanize"
 	"github.com/neilberkman/ccrider/internal/core/config"
 	"github.com/neilberkman/ccrider/internal/core/db"
@@ -47,29 +45,27 @@ func runDebugPrompt(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	// Build template data
-	updatedTime, _ := time.Parse("2006-01-02 15:04:05", updatedAt)
-	if updatedTime.IsZero() {
-		updatedTime, _ = time.Parse(time.RFC3339, updatedAt)
-	}
+	// Build template data (display only — the render below goes through core
+	// so this command shows exactly what a real resume would send)
+	updatedTime := coresession.ParseSessionTime(updatedAt)
 
 	timeSince := "unknown"
 	if !updatedTime.IsZero() {
 		timeSince = humanize.Time(updatedTime)
 	}
 
-	templateData := map[string]string{
-		"last_updated": updatedAt,
-		"last_cwd":     lastCwd,
-		"time_since":   timeSince,
-		"project_path": projectPath,
+	sameDir := lastCwd == projectPath
+	templateData := map[string]interface{}{
+		"last_updated":        updatedAt,
+		"last_cwd":            lastCwd,
+		"time_since":          timeSince,
+		"project_path":        projectPath,
+		"same_directory":      sameDir,
+		"different_directory": !sameDir,
 	}
 
-	// Render prompt
-	resumePrompt, err := mustache.Render(cfg.ResumePromptTemplate, templateData)
-	if err != nil {
-		return fmt.Errorf("failed to render template: %w", err)
-	}
+	// Render prompt via the same core path every interface uses
+	resumePrompt := coresession.RenderResumePrompt(cfg.ResumePromptTemplate, projectPath, lastCwd, updatedAt)
 
 	// Output
 	fmt.Println("=== SESSION INFO ===")
@@ -81,7 +77,7 @@ func runDebugPrompt(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 	fmt.Println("=== TEMPLATE DATA ===")
 	for k, v := range templateData {
-		fmt.Printf("%s: %s\n", k, v)
+		fmt.Printf("%s: %v\n", k, v)
 	}
 	fmt.Println()
 	fmt.Println("=== RESUME PROMPT ===")
@@ -89,10 +85,11 @@ func runDebugPrompt(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 	fmt.Println("=== COMMAND ===")
 	spec := coresession.BuildResumeSpec(session.Provider, sessionID, false, cfg.ClaudeFlags)
+	command := coresession.ResumeCommandIn(projectPath, session.Provider, sessionID, "", false, cfg.ClaudeFlags)
 	if spec.AcceptsPrompt {
-		fmt.Printf("cd %s && %s \"<prompt above>\"\n", coresession.ShellQuote(projectPath), spec.Prefix)
+		fmt.Printf("%s \"<prompt above>\"\n", command)
 	} else {
-		fmt.Printf("cd %s && %s\n", coresession.ShellQuote(projectPath), spec.Prefix)
+		fmt.Println(command)
 	}
 
 	return nil

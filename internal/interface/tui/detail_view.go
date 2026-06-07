@@ -4,14 +4,11 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/atotto/clipboard"
-	"github.com/cbroglie/mustache"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/dustin/go-humanize"
 	"github.com/muesli/reflow/wordwrap"
 	"github.com/neilberkman/ccrider/internal/core/config"
 	"github.com/neilberkman/ccrider/internal/core/session"
@@ -574,7 +571,7 @@ func launchClaudeSession(provider, sessionID, projectPath, lastCwd, updatedAt, s
 		// then the CLI layer will exec the agent's resume command.
 		return sessionLaunchedMsg{
 			success:     true,
-			message:     session.ResumeCommandIn(projectPath, provider, sessionID, "", fork, nil),
+			message:     session.DisplayResumeCommand(provider, sessionID, projectPath, lastCwd, fork),
 			provider:    provider,
 			sessionID:   sessionID,
 			projectPath: projectPath,
@@ -592,11 +589,9 @@ func copyResumeCommand(provider, sessionID, projectPath, lastCwd string) tea.Cmd
 
 func copyResumeCommandWithContext(provider, sessionID, projectPath, lastCwd string, fromFallbackView bool) tea.Cmd {
 	return func() tea.Msg {
-		// Resolve working directory (always projectPath, see session.ResolveWorkingDir)
-		workDir := session.ResolveWorkingDir(projectPath, lastCwd)
-
-		// Create a command that cd's to the working directory and runs the agent
-		cmd := session.ResumeCommandIn(workDir, provider, sessionID, "", false, nil)
+		// Core builds the full command: cd prefix, working dir resolution,
+		// configured claude flags (see session.DisplayResumeCommand).
+		cmd := session.DisplayResumeCommand(provider, sessionID, projectPath, lastCwd, false)
 
 		// Use cross-platform clipboard library
 		err := clipboard.WriteAll(cmd)
@@ -624,11 +619,8 @@ func copyResumeCommandWithContext(provider, sessionID, projectPath, lastCwd stri
 
 func writeCommandToFile(provider, sessionID, projectPath, lastCwd string) tea.Cmd {
 	return func() tea.Msg {
-		// Resolve working directory
-		workDir := session.ResolveWorkingDir(projectPath, lastCwd)
-
-		// Create command
-		cmd := session.ResumeCommandIn(workDir, provider, sessionID, "", false, nil)
+		// Core builds the full command (cd prefix, working dir, claude flags)
+		cmd := session.DisplayResumeCommand(provider, sessionID, projectPath, lastCwd, false)
 
 		// Write to file
 		filePath := "/tmp/ccrider-cmd.sh"
@@ -673,52 +665,12 @@ func openInNewTerminal(provider, sessionID, projectPath, lastCwd, updatedAt, sum
 			}
 		}
 
-		// Build the resume invocation for this provider.
-		spec := session.BuildResumeSpec(provider, sessionID, false, nil)
-
-		// Build template data for resume prompt
-		updatedTime, _ := time.Parse("2006-01-02 15:04:05", updatedAt)
-		if updatedTime.IsZero() {
-			updatedTime, _ = time.Parse(time.RFC3339, updatedAt)
-		}
-
-		timeSince := "unknown"
-		if !updatedTime.IsZero() {
-			timeSince = humanize.Time(updatedTime)
-		}
-
-		// Check if we're already in the right directory
-		sameDir := (lastCwd == projectPath)
-
-		// Build the full command that will run in the new terminal. Providers
-		// that accept an initial prompt (Claude, Codex) get the rendered resume
-		// prompt; others (Copilot) resume without one.
-		shellCmd := spec.Prefix
-		if spec.AcceptsPrompt {
-			templateData := map[string]interface{}{
-				"last_updated":        updatedAt,
-				"last_cwd":            lastCwd,
-				"time_since":          timeSince,
-				"project_path":        projectPath,
-				"same_directory":      sameDir,
-				"different_directory": !sameDir,
-			}
-
-			// Render the resume prompt
-			resumePrompt, err := mustache.Render(cfg.ResumePromptTemplate, templateData)
-			if err != nil {
-				// Fall back to simple prompt if template fails
-				resumePrompt = fmt.Sprintf("Resuming session. You were last in: %s", lastCwd)
-			}
-
-			// Replace newlines with spaces for shell command
-			resumePrompt = strings.ReplaceAll(resumePrompt, "\n", " ")
-			resumePrompt = strings.ReplaceAll(resumePrompt, "\r", " ")
-
-			// Build via ResumeCommand so the prompt is safely shell-quoted
-			// (a prompt or cwd containing a single quote must not break the command).
-			shellCmd = session.ResumeCommand(provider, sessionID, resumePrompt, false, nil)
-		}
+		// Build the full command that will run in the new terminal. Core renders
+		// the resume prompt and quotes it; ResumeCommand drops the prompt for
+		// providers that don't accept one (Copilot) and applies the configured
+		// claude flags.
+		resumePrompt := session.RenderResumePromptOneLine(cfg.ResumePromptTemplate, projectPath, lastCwd, updatedAt)
+		shellCmd := session.ResumeCommand(provider, sessionID, resumePrompt, false, cfg.ClaudeFlags)
 
 		// Resolve working directory (always projectPath, see session.ResolveWorkingDir)
 		workDir := session.ResolveWorkingDir(projectPath, lastCwd)

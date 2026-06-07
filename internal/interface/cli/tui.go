@@ -7,7 +7,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/cbroglie/mustache"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/dustin/go-humanize"
 	"github.com/neilberkman/ccrider/internal/core/config"
@@ -89,7 +88,7 @@ func execAgent(provider, sessionID, projectPath, lastCwd, updatedAt, summary str
 	// prompt, passed via a temp file to avoid shell escaping issues.
 	if spec.AcceptsPrompt {
 		if cfg, err := config.Load(); err == nil {
-			if prompt := renderResumePrompt(cfg, projectPath, lastCwd, updatedAt); prompt != "" {
+			if prompt := session.RenderResumePromptOneLine(cfg.ResumePromptTemplate, projectPath, lastCwd, updatedAt); prompt != "" {
 				tmpfile, err := os.CreateTemp("", "ccrider-prompt-*.txt")
 				if err != nil {
 					return fmt.Errorf("failed to create temp file: %w", err)
@@ -112,10 +111,7 @@ func execAgent(provider, sessionID, projectPath, lastCwd, updatedAt, summary str
 	fmt.Fprintf(os.Stderr, "[ccrider] cd %s && %s\n", session.ShellQuote(workDir), cmd)
 
 	// Set terminal title before launching
-	updatedTime, _ := time.Parse("2006-01-02 15:04:05", updatedAt)
-	if updatedTime.IsZero() {
-		updatedTime, _ = time.Parse(time.RFC3339, updatedAt)
-	}
+	updatedTime := session.ParseSessionTime(updatedAt)
 	if !updatedTime.IsZero() && summary != "" {
 		titleTime := updatedTime.Format("01/02 15:04")
 		title := fmt.Sprintf("[resumed %s] %s", titleTime, summary)
@@ -151,38 +147,6 @@ func execAgent(provider, sessionID, projectPath, lastCwd, updatedAt, summary str
 	return syscall.Exec(shell, []string{shell, "-l", "-c", cmd}, os.Environ())
 }
 
-// renderResumePrompt renders the configured resume prompt template for a session.
-// Returns an empty string if rendering yields nothing useful.
-func renderResumePrompt(cfg *config.Config, projectPath, lastCwd, updatedAt string) string {
-	updatedTime, _ := time.Parse("2006-01-02 15:04:05", updatedAt)
-	if updatedTime.IsZero() {
-		updatedTime, _ = time.Parse(time.RFC3339, updatedAt)
-	}
-
-	timeSince := "unknown"
-	if !updatedTime.IsZero() {
-		timeSince = humanize.Time(updatedTime)
-	}
-
-	sameDir := (lastCwd == projectPath)
-	templateData := map[string]interface{}{
-		"last_updated":        updatedAt,
-		"last_cwd":            lastCwd,
-		"time_since":          timeSince,
-		"project_path":        projectPath,
-		"same_directory":      sameDir,
-		"different_directory": !sameDir,
-	}
-
-	prompt, err := mustache.Render(cfg.ResumePromptTemplate, templateData)
-	if err != nil {
-		return fmt.Sprintf("Resuming session. You were last in: %s", lastCwd)
-	}
-	prompt = strings.ReplaceAll(prompt, "\n", " ")
-	prompt = strings.ReplaceAll(prompt, "\r", " ")
-	return prompt
-}
-
 func execClaude(sessionID, projectPath, lastCwd, updatedAt, summary string, fork bool) error {
 	// Check if session file exists - if not, use recovery mode
 	if !session.SessionFileExists(sessionID, projectPath) {
@@ -195,35 +159,9 @@ func execClaude(sessionID, projectPath, lastCwd, updatedAt, summary string, fork
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	// Build template data
-	updatedTime, _ := time.Parse("2006-01-02 15:04:05", updatedAt)
-	if updatedTime.IsZero() {
-		updatedTime, _ = time.Parse(time.RFC3339, updatedAt)
-	}
-
-	timeSince := "unknown"
-	if !updatedTime.IsZero() {
-		timeSince = humanize.Time(updatedTime)
-	}
-
-	// Check if we're already in the right directory
-	sameDir := (lastCwd == projectPath)
-
-	templateData := map[string]interface{}{
-		"last_updated":        updatedAt,
-		"last_cwd":            lastCwd,
-		"time_since":          timeSince,
-		"project_path":        projectPath,
-		"same_directory":      sameDir,
-		"different_directory": !sameDir,
-	}
-
-	// Render the resume prompt
-	resumePrompt, err := mustache.Render(cfg.ResumePromptTemplate, templateData)
-	if err != nil {
-		// Fall back to simple prompt if template fails
-		resumePrompt = fmt.Sprintf("Resuming session. You were last in: %s", lastCwd)
-	}
+	// Render the resume prompt (core renders; raw multi-line is fine here
+	// since the prompt is passed via a temp file, not inline)
+	resumePrompt := session.RenderResumePrompt(cfg.ResumePromptTemplate, projectPath, lastCwd, updatedAt)
 
 	// Write prompt to temp file and pass via command substitution
 	// This avoids all shell escaping issues
@@ -239,17 +177,10 @@ func execClaude(sessionID, projectPath, lastCwd, updatedAt, summary string, fork
 	}
 	_ = tmpfile.Close()
 
-	// Build claude command with prompt from file
-	var cmd string
-	flags := ""
-	if len(cfg.ClaudeFlags) > 0 {
-		flags = " " + strings.Join(cfg.ClaudeFlags, " ")
-	}
-	if fork {
-		cmd = fmt.Sprintf("claude%s --resume %s --fork-session \"$(cat %s)\"", flags, session.ShellQuote(sessionID), tmpfile.Name())
-	} else {
-		cmd = fmt.Sprintf("claude%s --resume %s \"$(cat %s)\"", flags, session.ShellQuote(sessionID), tmpfile.Name())
-	}
+	// Build claude command with prompt from file (core builds the invocation;
+	// the temp-file substitution is a shell concern that stays here)
+	spec := session.BuildResumeSpec(session.ProviderClaude, sessionID, fork, cfg.ClaudeFlags)
+	cmd := fmt.Sprintf("%s \"$(cat %s)\"", spec.Prefix, tmpfile.Name())
 
 	// Resolve working directory (always projectPath, see session.ResolveWorkingDir)
 	workDir := session.ResolveWorkingDir(projectPath, lastCwd)
@@ -258,6 +189,7 @@ func execClaude(sessionID, projectPath, lastCwd, updatedAt, summary string, fork
 	fmt.Fprintf(os.Stderr, "[ccrider] cd %s && %s\n", session.ShellQuote(workDir), cmd)
 
 	// Set terminal title before launching
+	updatedTime := session.ParseSessionTime(updatedAt)
 	if !updatedTime.IsZero() && summary != "" {
 		// Format: [resumed MM/DD HH:MM] summary
 		titleTime := updatedTime.Format("01/02 15:04")

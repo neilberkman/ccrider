@@ -54,11 +54,9 @@ func (m Model) updateTerminalFallback(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) viewTerminalFallback() string {
-	// Build the command here so we can show it. The working directory must be
-	// the project path (NOT lastCwd) — providers only find sessions from the
-	// directory they were created in (see session.ResolveWorkingDir).
-	workDir := session.ResolveWorkingDir(m.fallbackProjectPath, m.fallbackLastCwd)
-	cmd := session.ResumeCommandIn(workDir, m.fallbackProvider, m.fallbackSessionID, "", false, nil)
+	// Build the command here so we can show it. Core handles the cd prefix,
+	// working dir resolution (project path, NOT lastCwd), and claude flags.
+	cmd := session.DisplayResumeCommand(m.fallbackProvider, m.fallbackSessionID, m.fallbackProjectPath, m.fallbackLastCwd, false)
 
 	return fmt.Sprintf(`
 %s
