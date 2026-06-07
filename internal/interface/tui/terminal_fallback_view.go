@@ -54,19 +54,11 @@ func (m Model) updateTerminalFallback(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) viewTerminalFallback() string {
-	// Build the command here so we can show it
-	workDir := m.fallbackProjectPath
-	if m.fallbackLastCwd != "" && m.fallbackLastCwd != m.fallbackProjectPath {
-		workDir = m.fallbackLastCwd
-	}
-
-	resumeCmd := session.ResumeCommand(m.fallbackProvider, m.fallbackSessionID, "", false, nil)
-	var cmd string
-	if workDir != "" {
-		cmd = fmt.Sprintf("cd %s && %s", session.ShellQuote(workDir), resumeCmd)
-	} else {
-		cmd = resumeCmd
-	}
+	// Build the command here so we can show it. The working directory must be
+	// the project path (NOT lastCwd) — providers only find sessions from the
+	// directory they were created in (see session.ResolveWorkingDir).
+	workDir := session.ResolveWorkingDir(m.fallbackProjectPath, m.fallbackLastCwd)
+	cmd := session.ResumeCommandIn(workDir, m.fallbackProvider, m.fallbackSessionID, "", false, nil)
 
 	return fmt.Sprintf(`
 %s

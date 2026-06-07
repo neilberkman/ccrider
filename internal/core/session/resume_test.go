@@ -139,6 +139,78 @@ func TestBuildResumeSpec(t *testing.T) {
 	}
 }
 
+func TestResumeCommandIn(t *testing.T) {
+	tests := []struct {
+		name        string
+		projectPath string
+		provider    string
+		sessionID   string
+		prompt      string
+		fork        bool
+		want        string
+	}{
+		{
+			name:        "claude has cd prefix",
+			projectPath: "/Users/x/proj",
+			provider:    ProviderClaude,
+			sessionID:   "sess-1",
+			want:        "cd '/Users/x/proj' && claude --resume 'sess-1'",
+		},
+		{
+			name:        "codex rollout id has cd prefix and bare uuid",
+			projectPath: "/Users/x/proj",
+			provider:    ProviderCodex,
+			sessionID:   "rollout-2026-06-04T14-40-56-019e93f0-3efe-7742-9598-bb06b36fb25a",
+			want:        "cd '/Users/x/proj' && codex resume '019e93f0-3efe-7742-9598-bb06b36fb25a'",
+		},
+		{
+			name:        "copilot has cd prefix",
+			projectPath: "/Users/x/proj",
+			provider:    ProviderCopilot,
+			sessionID:   "sess-1",
+			want:        "cd '/Users/x/proj' && copilot --resume='sess-1'",
+		},
+		{
+			name:        "prompt appended after cd prefix",
+			projectPath: "/Users/x/proj",
+			provider:    ProviderClaude,
+			sessionID:   "sess-1",
+			prompt:      "keep going",
+			want:        "cd '/Users/x/proj' && claude --resume 'sess-1' 'keep going'",
+		},
+		{
+			name:        "fork keeps cd prefix",
+			projectPath: "/Users/x/proj",
+			provider:    ProviderClaude,
+			sessionID:   "sess-1",
+			fork:        true,
+			want:        "cd '/Users/x/proj' && claude --resume 'sess-1' --fork-session",
+		},
+		{
+			name:        "project path with single quote is escaped",
+			projectPath: "/Users/x/it's",
+			provider:    ProviderClaude,
+			sessionID:   "sess-1",
+			want:        `cd '/Users/x/it'\''s' && claude --resume 'sess-1'`,
+		},
+		{
+			name:      "empty project path falls back to bare command with comment",
+			provider:  ProviderClaude,
+			sessionID: "sess-1",
+			want:      "claude --resume 'sess-1' # project path missing in DB for session sess-1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ResumeCommandIn(tt.projectPath, tt.provider, tt.sessionID, tt.prompt, tt.fork, nil)
+			if got != tt.want {
+				t.Errorf("ResumeCommandIn = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestResumeCommand(t *testing.T) {
 	tests := []struct {
 		name     string
