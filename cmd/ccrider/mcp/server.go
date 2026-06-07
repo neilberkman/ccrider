@@ -11,6 +11,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/neilberkman/ccrider/internal/core/config"
 	"github.com/neilberkman/ccrider/internal/core/db"
 	"github.com/neilberkman/ccrider/internal/core/importer"
 	"github.com/neilberkman/ccrider/internal/core/search"
@@ -106,31 +107,43 @@ type SessionMessagesResponse struct {
 	TruncatedMessage string          `json:"truncated_message,omitempty"` // Explanation when truncated
 }
 
+// loadClaudeFlags returns the configured extra flags for the Claude CLI
+// (e.g. --dangerously-skip-permissions), so emitted resume commands match
+// how the user actually invokes claude. Config errors yield no flags rather
+// than failing the request.
+func loadClaudeFlags() []string {
+	cfg, err := config.Load()
+	if err != nil {
+		return nil
+	}
+	return cfg.ClaudeFlags
+}
+
 // toSessionMatch converts a core search result to the MCP payload shape.
 // resume_command is pre-built (cd prefix included) so consuming agents never
 // stitch a bare resume command from project + session_id themselves.
-func toSessionMatch(cs search.SessionSearchResult) SessionMatch {
+func toSessionMatch(cs search.SessionSearchResult, claudeFlags []string) SessionMatch {
 	return SessionMatch{
 		SessionID:     cs.SessionID,
 		Summary:       cs.SessionSummary,
 		Project:       cs.ProjectPath,
 		UpdatedAt:     cs.UpdatedAt,
 		Provider:      cs.Provider,
-		ResumeCommand: session.ResumeCommandIn(cs.ProjectPath, cs.Provider, cs.SessionID, "", false, nil),
+		ResumeCommand: session.ResumeCommandIn(cs.ProjectPath, cs.Provider, cs.SessionID, "", false, claudeFlags),
 		Matches:       []MatchSnippet{},
 	}
 }
 
 // toSessionSummary converts a core session to the MCP payload shape, including
 // the pre-built resume_command (see toSessionMatch).
-func toSessionSummary(cs db.Session) SessionSummary {
+func toSessionSummary(cs db.Session, claudeFlags []string) SessionSummary {
 	return SessionSummary{
 		SessionID:     cs.SessionID,
 		Summary:       cs.Summary,
 		Project:       cs.ProjectPath,
 		UpdatedAt:     cs.UpdatedAt.Format("2006-01-02 15:04:05"),
 		Provider:      cs.Provider,
-		ResumeCommand: session.ResumeCommandIn(cs.ProjectPath, cs.Provider, cs.SessionID, "", false, nil),
+		ResumeCommand: session.ResumeCommandIn(cs.ProjectPath, cs.Provider, cs.SessionID, "", false, claudeFlags),
 		MessageCount:  cs.MessageCount,
 	}
 }
@@ -356,6 +369,7 @@ func makeSearchSessionsHandler(database *db.DB) func(context.Context, mcp.CallTo
 		}
 
 		// Convert core types to MCP types (interface concern - presentation)
+		claudeFlags := loadClaudeFlags()
 		var results []SessionMatch
 		for _, coreSession := range coreResults {
 			// If anchor_phrase was used, filter to only sessions that contained it
@@ -363,7 +377,7 @@ func makeSearchSessionsHandler(database *db.DB) func(context.Context, mcp.CallTo
 				continue
 			}
 
-			result := toSessionMatch(coreSession)
+			result := toSessionMatch(coreSession, claudeFlags)
 
 			// Limit to 3 matches per session for display (interface concern)
 			matchLimit := 3
@@ -437,9 +451,10 @@ func makeListRecentSessionsHandler(database *db.DB) func(context.Context, mcp.Ca
 		}
 
 		// Convert core types to MCP types (interface concern - presentation)
+		claudeFlags := loadClaudeFlags()
 		var sessions []SessionSummary
 		for _, cs := range coreSessions {
-			sessions = append(sessions, toSessionSummary(cs))
+			sessions = append(sessions, toSessionSummary(cs, claudeFlags))
 		}
 
 		// Trim to fit token budget
@@ -489,11 +504,12 @@ func makeGetSessionMessagesHandler(database *db.DB) func(context.Context, mcp.Ca
 		// Build the pre-baked resume command (cd prefix included). If launch
 		// info can't be loaded, fall back to the bare command + comment rather
 		// than failing the whole request.
+		claudeFlags := loadClaudeFlags()
 		resumeCmd := ""
 		if info, _, infoErr := database.GetSessionLaunchInfo(args.SessionID); infoErr == nil {
-			resumeCmd = session.ResumeCommandIn(info.ProjectPath, info.Provider, args.SessionID, "", false, nil)
+			resumeCmd = session.ResumeCommandIn(info.ProjectPath, info.Provider, args.SessionID, "", false, claudeFlags)
 		} else {
-			resumeCmd = session.ResumeCommandIn("", "", args.SessionID, "", false, nil)
+			resumeCmd = session.ResumeCommandIn("", "", args.SessionID, "", false, claudeFlags)
 		}
 
 		// Convert to MCP format
