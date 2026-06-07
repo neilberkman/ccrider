@@ -17,15 +17,19 @@ IMPORTANT: This session has been inactive for {{time_since}}. Before proceeding:
 
 type Config struct {
 	ResumePromptTemplate string
-	TerminalCommand      string   // Custom command to spawn terminal (optional)
-	ClaudeFlags          []string // Additional flags to pass to claude --resume
-	LLMProvider          string   // LLM provider for summarization: "anthropic" or "bedrock"
+	TerminalCommand      string            // Custom command to spawn terminal (optional)
+	ClaudeFlags          []string          // Additional flags to pass to claude --resume
+	CodexFlags           []string          // Additional flags to pass to codex resume (placed before the subcommand)
+	CopilotFlags         []string          // Additional flags to pass to copilot --resume
+	LLMProvider          string            // LLM provider for summarization: "anthropic" or "bedrock"
 	LastExportDir        string            // Last manually chosen export directory (global)
 	RepoExportDirs       map[string]string // Last chosen export directory per repo root
 }
 
 type tomlConfig struct {
 	ClaudeFlags    []string          `toml:"claude_flags"`
+	CodexFlags     []string          `toml:"codex_flags"`
+	CopilotFlags   []string          `toml:"copilot_flags"`
 	LLMProvider    string            `toml:"llm_provider"`
 	LastExportDir  string            `toml:"last_export_dir,omitempty"`
 	RepoExportDirs map[string]string `toml:"repo_export_dirs,omitempty"`
@@ -52,6 +56,8 @@ func Load() (*Config, error) {
 		var tc tomlConfig
 		if _, err := toml.DecodeFile(tomlPath, &tc); err == nil {
 			cfg.ClaudeFlags = tc.ClaudeFlags
+			cfg.CodexFlags = tc.CodexFlags
+			cfg.CopilotFlags = tc.CopilotFlags
 			cfg.LLMProvider = tc.LLMProvider
 			cfg.LastExportDir = tc.LastExportDir
 			cfg.RepoExportDirs = tc.RepoExportDirs
@@ -86,6 +92,8 @@ func Save(cfg *Config) error {
 
 	tc := tomlConfig{
 		ClaudeFlags:    cfg.ClaudeFlags,
+		CodexFlags:     cfg.CodexFlags,
+		CopilotFlags:   cfg.CopilotFlags,
 		LLMProvider:    cfg.LLMProvider,
 		LastExportDir:  cfg.LastExportDir,
 		RepoExportDirs: cfg.RepoExportDirs,

@@ -11,6 +11,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/neilberkman/ccrider/internal/core/config"
 	"github.com/neilberkman/ccrider/internal/core/db"
 	"github.com/neilberkman/ccrider/internal/core/importer"
 	"github.com/neilberkman/ccrider/internal/core/search"
@@ -108,29 +109,31 @@ type SessionMessagesResponse struct {
 
 // toSessionMatch converts a core search result to the MCP payload shape.
 // resume_command is pre-built (cd prefix included) so consuming agents never
-// stitch a bare resume command from project + session_id themselves.
-func toSessionMatch(cs search.SessionSearchResult, claudeFlags []string) SessionMatch {
+// stitch a bare resume command from project + session_id themselves. cfg
+// supplies the per-provider configured flags (claude_flags / codex_flags /
+// copilot_flags), selected per session since one response can mix providers.
+func toSessionMatch(cs search.SessionSearchResult, cfg *config.Config) SessionMatch {
 	return SessionMatch{
 		SessionID:     cs.SessionID,
 		Summary:       cs.SessionSummary,
 		Project:       cs.ProjectPath,
 		UpdatedAt:     cs.UpdatedAt,
 		Provider:      cs.Provider,
-		ResumeCommand: session.ResumeCommandIn(cs.ProjectPath, cs.Provider, cs.SessionID, "", false, claudeFlags),
+		ResumeCommand: session.ResumeCommandIn(cs.ProjectPath, cs.Provider, cs.SessionID, "", false, session.ProviderFlags(cfg, cs.Provider)),
 		Matches:       []MatchSnippet{},
 	}
 }
 
 // toSessionSummary converts a core session to the MCP payload shape, including
 // the pre-built resume_command (see toSessionMatch).
-func toSessionSummary(cs db.Session, claudeFlags []string) SessionSummary {
+func toSessionSummary(cs db.Session, cfg *config.Config) SessionSummary {
 	return SessionSummary{
 		SessionID:     cs.SessionID,
 		Summary:       cs.Summary,
 		Project:       cs.ProjectPath,
 		UpdatedAt:     cs.UpdatedAt.Format("2006-01-02 15:04:05"),
 		Provider:      cs.Provider,
-		ResumeCommand: session.ResumeCommandIn(cs.ProjectPath, cs.Provider, cs.SessionID, "", false, claudeFlags),
+		ResumeCommand: session.ResumeCommandIn(cs.ProjectPath, cs.Provider, cs.SessionID, "", false, session.ProviderFlags(cfg, cs.Provider)),
 		MessageCount:  cs.MessageCount,
 	}
 }
@@ -356,8 +359,9 @@ func makeSearchSessionsHandler(database *db.DB) func(context.Context, mcp.CallTo
 		}
 
 		// Convert core types to MCP types (interface concern - presentation).
-		// Flags loaded once per request, applied per session by the converter.
-		claudeFlags := session.ConfiguredClaudeFlags()
+		// Config loaded once per request, per-provider flags applied per
+		// session by the converter. Config errors fall back to no flags.
+		cfg, _ := config.Load()
 		var results []SessionMatch
 		for _, coreSession := range coreResults {
 			// If anchor_phrase was used, filter to only sessions that contained it
@@ -365,7 +369,7 @@ func makeSearchSessionsHandler(database *db.DB) func(context.Context, mcp.CallTo
 				continue
 			}
 
-			result := toSessionMatch(coreSession, claudeFlags)
+			result := toSessionMatch(coreSession, cfg)
 
 			// Limit to 3 matches per session for display (interface concern)
 			matchLimit := 3
@@ -438,11 +442,12 @@ func makeListRecentSessionsHandler(database *db.DB) func(context.Context, mcp.Ca
 			coreSessions = coreSessions[:limit]
 		}
 
-		// Convert core types to MCP types (interface concern - presentation)
-		claudeFlags := session.ConfiguredClaudeFlags()
+		// Convert core types to MCP types (interface concern - presentation).
+		// Config loaded once per request; converter selects per-provider flags.
+		cfg, _ := config.Load()
 		var sessions []SessionSummary
 		for _, cs := range coreSessions {
-			sessions = append(sessions, toSessionSummary(cs, claudeFlags))
+			sessions = append(sessions, toSessionSummary(cs, cfg))
 		}
 
 		// Trim to fit token budget

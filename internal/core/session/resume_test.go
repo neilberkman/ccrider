@@ -37,13 +37,13 @@ func TestShellQuote(t *testing.T) {
 
 func TestBuildResumeSpec(t *testing.T) {
 	tests := []struct {
-		name        string
-		provider    string
-		fork        bool
-		claudeFlags []string
-		wantPrefix  string
-		wantPrompt  bool
-		wantBinary  string
+		name       string
+		provider   string
+		fork       bool
+		flags      []string
+		wantPrefix string
+		wantPrompt bool
+		wantBinary string
 	}{
 		{
 			name:       "claude default",
@@ -53,12 +53,12 @@ func TestBuildResumeSpec(t *testing.T) {
 			wantBinary: "claude",
 		},
 		{
-			name:        "claude with flags",
-			provider:    ProviderClaude,
-			claudeFlags: []string{"--dangerously-skip-permissions"},
-			wantPrefix:  "claude --dangerously-skip-permissions --resume 'sess-1'",
-			wantPrompt:  true,
-			wantBinary:  "claude",
+			name:       "claude with flags",
+			provider:   ProviderClaude,
+			flags:      []string{"--dangerously-skip-permissions"},
+			wantPrefix: "claude --dangerously-skip-permissions --resume 'sess-1'",
+			wantPrompt: true,
+			wantBinary: "claude",
 		},
 		{
 			name:       "claude fork",
@@ -69,9 +69,28 @@ func TestBuildResumeSpec(t *testing.T) {
 			wantBinary: "claude",
 		},
 		{
+			name:       "claude fork with flags",
+			provider:   ProviderClaude,
+			fork:       true,
+			flags:      []string{"--dangerously-skip-permissions"},
+			wantPrefix: "claude --dangerously-skip-permissions --resume 'sess-1' --fork-session",
+			wantPrompt: true,
+			wantBinary: "claude",
+		},
+		{
 			name:       "codex resume",
 			provider:   ProviderCodex,
 			wantPrefix: "codex resume 'sess-1'",
+			wantPrompt: true,
+			wantBinary: "codex",
+		},
+		{
+			// Codex global options must come BEFORE the subcommand
+			// (codex [OPTIONS] <COMMAND>); after it they are rejected.
+			name:       "codex flags placed before subcommand",
+			provider:   ProviderCodex,
+			flags:      []string{"--dangerously-bypass-approvals-and-sandbox"},
+			wantPrefix: "codex --dangerously-bypass-approvals-and-sandbox resume 'sess-1'",
 			wantPrompt: true,
 			wantBinary: "codex",
 		},
@@ -84,6 +103,15 @@ func TestBuildResumeSpec(t *testing.T) {
 			wantBinary: "codex",
 		},
 		{
+			name:       "codex fork keeps flags before subcommand",
+			provider:   ProviderCodex,
+			fork:       true,
+			flags:      []string{"--dangerously-bypass-approvals-and-sandbox"},
+			wantPrefix: "codex --dangerously-bypass-approvals-and-sandbox fork 'sess-1'",
+			wantPrompt: true,
+			wantBinary: "codex",
+		},
+		{
 			name:       "copilot resume",
 			provider:   ProviderCopilot,
 			wantPrefix: "copilot --resume='sess-1'",
@@ -91,12 +119,20 @@ func TestBuildResumeSpec(t *testing.T) {
 			wantBinary: "copilot",
 		},
 		{
-			name:        "codex ignores claude flags",
-			provider:    ProviderCodex,
-			claudeFlags: []string{"--dangerously-skip-permissions"},
-			wantPrefix:  "codex resume 'sess-1'",
-			wantPrompt:  true,
-			wantBinary:  "codex",
+			name:       "copilot flags placed before --resume",
+			provider:   ProviderCopilot,
+			flags:      []string{"--allow-all-tools"},
+			wantPrefix: "copilot --allow-all-tools --resume='sess-1'",
+			wantPrompt: false,
+			wantBinary: "copilot",
+		},
+		{
+			name:       "multiple flags joined in order",
+			provider:   ProviderCodex,
+			flags:      []string{"--dangerously-bypass-approvals-and-sandbox", "--search"},
+			wantPrefix: "codex --dangerously-bypass-approvals-and-sandbox --search resume 'sess-1'",
+			wantPrompt: true,
+			wantBinary: "codex",
 		},
 	}
 
@@ -108,6 +144,13 @@ func TestBuildResumeSpec(t *testing.T) {
 		want := "codex resume '019e93f0-3efe-7742-9598-bb06b36fb25a'"
 		if spec.Prefix != want {
 			t.Errorf("Prefix = %q, want %q", spec.Prefix, want)
+		}
+
+		// UUID stripping and flag placement compose.
+		spec = BuildResumeSpec(ProviderCodex, id, false, []string{"--dangerously-bypass-approvals-and-sandbox"})
+		want = "codex --dangerously-bypass-approvals-and-sandbox resume '019e93f0-3efe-7742-9598-bb06b36fb25a'"
+		if spec.Prefix != want {
+			t.Errorf("Prefix with flags = %q, want %q", spec.Prefix, want)
 		}
 	})
 
@@ -125,7 +168,7 @@ func TestBuildResumeSpec(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			spec := BuildResumeSpec(tt.provider, "sess-1", tt.fork, tt.claudeFlags)
+			spec := BuildResumeSpec(tt.provider, "sess-1", tt.fork, tt.flags)
 			if spec.Prefix != tt.wantPrefix {
 				t.Errorf("Prefix = %q, want %q", spec.Prefix, tt.wantPrefix)
 			}
