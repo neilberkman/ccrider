@@ -572,10 +572,9 @@ func launchClaudeSession(provider, sessionID, projectPath, lastCwd, updatedAt, s
 		// We need to exec() to replace the process, but bubbletea makes this tricky
 		// Instead, we'll return a special message telling the TUI to quit,
 		// then the CLI layer will exec the agent's resume command.
-		spec := session.BuildResumeSpec(provider, sessionID, fork, nil)
 		return sessionLaunchedMsg{
 			success:     true,
-			message:     fmt.Sprintf("cd %s && %s", session.ShellQuote(projectPath), spec.Prefix),
+			message:     session.ResumeCommandIn(projectPath, provider, sessionID, "", fork, nil),
 			provider:    provider,
 			sessionID:   sessionID,
 			projectPath: projectPath,
@@ -597,13 +596,7 @@ func copyResumeCommandWithContext(provider, sessionID, projectPath, lastCwd stri
 		workDir := session.ResolveWorkingDir(projectPath, lastCwd)
 
 		// Create a command that cd's to the working directory and runs the agent
-		resumeCmd := session.ResumeCommand(provider, sessionID, "", false, nil)
-		var cmd string
-		if workDir != "" {
-			cmd = fmt.Sprintf("cd %s && %s", session.ShellQuote(workDir), resumeCmd)
-		} else {
-			cmd = resumeCmd
-		}
+		cmd := session.ResumeCommandIn(workDir, provider, sessionID, "", false, nil)
 
 		// Use cross-platform clipboard library
 		err := clipboard.WriteAll(cmd)
@@ -635,13 +628,7 @@ func writeCommandToFile(provider, sessionID, projectPath, lastCwd string) tea.Cm
 		workDir := session.ResolveWorkingDir(projectPath, lastCwd)
 
 		// Create command
-		resumeCmd := session.ResumeCommand(provider, sessionID, "", false, nil)
-		var cmd string
-		if workDir != "" {
-			cmd = fmt.Sprintf("cd %s && %s", session.ShellQuote(workDir), resumeCmd)
-		} else {
-			cmd = resumeCmd
-		}
+		cmd := session.ResumeCommandIn(workDir, provider, sessionID, "", false, nil)
 
 		// Write to file
 		filePath := "/tmp/ccrider-cmd.sh"
