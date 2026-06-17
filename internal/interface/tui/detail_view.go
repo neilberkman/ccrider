@@ -201,9 +201,11 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 
-			case "j", "down", "k", "up":
-				// Manual scrolling
-				if msg.String() == "j" || msg.String() == "down" {
+			case "down", "up":
+				// Manual scrolling with arrow keys only. j/k are intentionally
+				// NOT bound here: while typing a query they are ordinary search
+				// characters and must fall through to the text input below.
+				if msg.String() == "down" {
 					m.viewport.ScrollDown(1)
 				} else {
 					m.viewport.ScrollUp(1)
