@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.1] - 2026-06-18
+
+### Fixed
+
+- **In-session search accepts `j` and `k` while typing** — fixed a TUI regression where search queries silently dropped those letters because they were intercepted as viewport scroll keys before reaching the search input. Arrow keys still scroll while search is active, and `j`/`k` still scroll after entering search navigation mode
+
 ## [1.3.0] - 2026-06-07
 
 ### Added
