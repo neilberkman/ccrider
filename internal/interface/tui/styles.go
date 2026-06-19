@@ -59,7 +59,19 @@ var (
 				Foreground(lipgloss.AdaptiveColor{Light: "90", Dark: "170"}).
 				Bold(true)
 
-	// Help view styles
-	helpStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.AdaptiveColor{Light: "244", Dark: "240"})
+	// Help view styles.
+	// Body uses the terminal's DEFAULT foreground (no explicit color) so it
+	// always contrasts with the background on any theme — a hardcoded gray
+	// can wash out on dark, light, or low-contrast color schemes alike.
+	helpStyle = lipgloss.NewStyle()
+
+	// Title and section headings get a bold accent for hierarchy. The accent
+	// is adaptive (light/dark) and bold, so it reads on any background.
+	helpTitleStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.AdaptiveColor{Light: "127", Dark: "205"})
+
+	helpHeadingStyle = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.AdaptiveColor{Light: "30", Dark: "cyan"})
 )

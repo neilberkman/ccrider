@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"strings"
+
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -55,5 +57,40 @@ SEARCH VIEW
 Press any key to return to session list
 `
 
-	return helpStyle.Render(help)
+	// Accent the title and section headings; render key/description lines at
+	// the terminal's default foreground so they stay readable on any theme.
+	var b strings.Builder
+	for _, line := range strings.Split(help, "\n") {
+		switch {
+		case line == "Claude Code Session Manager - Help" || isRule(line, '═'):
+			b.WriteString(helpTitleStyle.Render(line))
+		case isHeading(line) || isRule(line, '─'):
+			b.WriteString(helpHeadingStyle.Render(line))
+		default:
+			b.WriteString(helpStyle.Render(line))
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// isHeading reports whether a line is an all-caps section header (e.g.
+// "SESSION LIST VIEW") rather than a key/description row, which is indented.
+func isHeading(line string) bool {
+	return line != "" && line == strings.ToUpper(line) &&
+		!strings.HasPrefix(line, " ") && strings.ToUpper(line) != strings.ToLower(line)
+}
+
+// isRule reports whether a line is composed solely of the given box-drawing
+// rule character (the ═══ / ─── underlines).
+func isRule(line string, r rune) bool {
+	if line == "" {
+		return false
+	}
+	for _, c := range line {
+		if c != r {
+			return false
+		}
+	}
+	return true
 }

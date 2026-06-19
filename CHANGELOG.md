@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.2] - 2026-06-19
+
+### Fixed
+
+- **Session sort no longer counts non-message events as activity** — `updated_at` was computed as the max timestamp across *every* parsed transcript line, including `pr-link`, `file-history-snapshot`, `queue-operation`, and `summary` entries that carry a timestamp but aren't conversation. A PR-link stamped days after the last real message would float a stale session to the top of the last-active sort (this affected ~35% of a large session corpus). `created_at`/`updated_at` are now derived only from `user`/`assistant` turns. Run `ccrider sync --force` once to recompute existing rows
+- **Help screen (`?`) is readable on any terminal theme** — the help text rendered through a single dim-gray style (`240`/`244`) that washed out on dark backgrounds. The body now uses the terminal's default foreground (guaranteed to contrast on light, dark, and low-contrast schemes), with bold adaptive accents on the title and section headings for hierarchy
+
 ## [1.3.1] - 2026-06-18
 
 ### Fixed

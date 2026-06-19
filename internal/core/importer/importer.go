@@ -67,7 +67,18 @@ func (i *Importer) ImportSession(session *ccsessions.ParsedSession, existingMess
 	// Normalize to UTC so the DB is consistent regardless of local timezone
 	var createdAt, updatedAt time.Time
 	for _, msg := range session.Messages {
-		if createdAt.IsZero() && !msg.Timestamp.IsZero() {
+		// Only real conversation turns count toward created/updated time.
+		// Non-message events (pr-link, file-history-snapshot, queue-operation,
+		// summary, system) carry timestamps but aren't "activity" — counting
+		// them floats stale sessions to the top of last-active sorts (e.g. a
+		// PR-link annotation stamped days after the last actual message).
+		if msg.Type != "user" && msg.Type != "assistant" {
+			continue
+		}
+		if msg.Timestamp.IsZero() {
+			continue
+		}
+		if createdAt.IsZero() {
 			createdAt = msg.Timestamp
 		}
 		if msg.Timestamp.After(updatedAt) {
