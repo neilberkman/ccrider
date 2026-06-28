@@ -19,8 +19,9 @@ var syncCmd = &cobra.Command{
 	Use:   "sync [path]",
 	Short: "Import/sync coding agent sessions",
 	Long: `Import sessions from Claude Code (~/.claude/projects/), Codex CLI
-(~/.codex/sessions/), and GitHub Copilot CLI (~/.copilot/session-state/),
-or from a specified Claude Code directory.
+(~/.codex/sessions/), GitHub Copilot CLI (~/.copilot/session-state/), and
+OpenCode (~/.local/share/opencode/opencode*.db), or from a specified Claude Code
+directory.
 
 Performs incremental sync - only imports new or changed sessions.
 Use --force to re-import all sessions (fixes stale project_path values).`,
@@ -97,6 +98,10 @@ func runSync(cmd *cobra.Command, args []string) error {
 		prepared, err := imp.PrepareSource(src)
 		if err != nil {
 			return fmt.Errorf("failed to prepare %s sessions: %w", src.Provider, err)
+		}
+		if prepared.Warning != nil {
+			fmt.Fprintf(os.Stderr, "WARN: %s sync skipped: %v\n", prepared.Provider, prepared.Warning)
+			continue
 		}
 		if prepared.Total == 0 {
 			continue

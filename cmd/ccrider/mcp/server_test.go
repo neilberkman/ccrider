@@ -57,6 +57,14 @@ func TestToSessionMatchResumeCommand(t *testing.T) {
 			want:      "cd '/Users/neil/bin' && copilot --allow-all-tools --resume='sess-1'",
 		},
 		{
+			name:      "opencode with configured flags",
+			provider:  "opencode",
+			sessionID: "ses_1",
+			project:   "/Users/neil/bin",
+			cfg:       &config.Config{OpenCodeFlags: []string{"--model", "anthropic/claude-sonnet-4"}},
+			want:      "cd '/Users/neil/bin' && opencode --model anthropic/claude-sonnet-4 --session 'ses_1'",
+		},
+		{
 			name:      "claude",
 			provider:  "claude",
 			sessionID: "2d0a5a2d-1111-2222-3333-444455556666",
@@ -76,6 +84,13 @@ func TestToSessionMatchResumeCommand(t *testing.T) {
 			sessionID: "sess-1",
 			project:   "/Users/neil/bin",
 			want:      "cd '/Users/neil/bin' && copilot --resume='sess-1'",
+		},
+		{
+			name:      "opencode",
+			provider:  "opencode",
+			sessionID: "ses_1",
+			project:   "/Users/neil/bin",
+			want:      "cd '/Users/neil/bin' && opencode --session 'ses_1'",
 		},
 		{
 			name:      "empty project falls back with comment",
@@ -133,6 +148,14 @@ func TestToSessionSummaryResumeCommand(t *testing.T) {
 			want:      "cd '/Users/neil/bin' && copilot --allow-all-tools --resume='sess-1'",
 		},
 		{
+			name:      "opencode with configured flags",
+			provider:  "opencode",
+			sessionID: "ses_1",
+			project:   "/Users/neil/bin",
+			cfg:       &config.Config{OpenCodeFlags: []string{"--model", "anthropic/claude-sonnet-4"}},
+			want:      "cd '/Users/neil/bin' && opencode --model anthropic/claude-sonnet-4 --session 'ses_1'",
+		},
+		{
 			name:      "claude",
 			provider:  "claude",
 			sessionID: "sess-1",
@@ -152,6 +175,13 @@ func TestToSessionSummaryResumeCommand(t *testing.T) {
 			sessionID: "sess-1",
 			project:   "/Users/neil/bin",
 			want:      "cd '/Users/neil/bin' && copilot --resume='sess-1'",
+		},
+		{
+			name:      "opencode",
+			provider:  "opencode",
+			sessionID: "ses_1",
+			project:   "/Users/neil/bin",
+			want:      "cd '/Users/neil/bin' && opencode --session 'ses_1'",
 		},
 		{
 			name:      "empty project falls back with comment",

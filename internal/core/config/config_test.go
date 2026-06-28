@@ -25,6 +25,7 @@ func TestLoadPerProviderFlags(t *testing.T) {
 	writeConfigToml(t, `claude_flags = ["--dangerously-skip-permissions"]
 codex_flags = ["--dangerously-bypass-approvals-and-sandbox"]
 copilot_flags = ["--allow-all-tools"]
+opencode_flags = ["--model", "anthropic/claude-sonnet-4"]
 `)
 	cfg, err := Load()
 	if err != nil {
@@ -39,6 +40,9 @@ copilot_flags = ["--allow-all-tools"]
 	if want := []string{"--allow-all-tools"}; !reflect.DeepEqual(cfg.CopilotFlags, want) {
 		t.Errorf("CopilotFlags = %v, want %v", cfg.CopilotFlags, want)
 	}
+	if want := []string{"--model", "anthropic/claude-sonnet-4"}; !reflect.DeepEqual(cfg.OpenCodeFlags, want) {
+		t.Errorf("OpenCodeFlags = %v, want %v", cfg.OpenCodeFlags, want)
+	}
 }
 
 func TestSaveRoundTripsPerProviderFlags(t *testing.T) {
@@ -46,9 +50,10 @@ func TestSaveRoundTripsPerProviderFlags(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	in := &Config{
-		ClaudeFlags:  []string{"--claude-only"},
-		CodexFlags:   []string{"--codex-only"},
-		CopilotFlags: []string{"--copilot-only"},
+		ClaudeFlags:   []string{"--claude-only"},
+		CodexFlags:    []string{"--codex-only"},
+		CopilotFlags:  []string{"--copilot-only"},
+		OpenCodeFlags: []string{"--opencode-only"},
 	}
 	if err := Save(in); err != nil {
 		t.Fatal(err)
@@ -66,5 +71,8 @@ func TestSaveRoundTripsPerProviderFlags(t *testing.T) {
 	}
 	if !reflect.DeepEqual(out.CopilotFlags, in.CopilotFlags) {
 		t.Errorf("CopilotFlags = %v, want %v", out.CopilotFlags, in.CopilotFlags)
+	}
+	if !reflect.DeepEqual(out.OpenCodeFlags, in.OpenCodeFlags) {
+		t.Errorf("OpenCodeFlags = %v, want %v", out.OpenCodeFlags, in.OpenCodeFlags)
 	}
 }

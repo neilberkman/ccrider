@@ -73,12 +73,22 @@ func TestDisplayResumeCommand(t *testing.T) {
 		}
 	})
 
+	t.Run("configured opencode flags are applied", func(t *testing.T) {
+		withTempConfig(t, "opencode_flags = [\"--model\", \"anthropic/claude-sonnet-4\"]\n")
+		got := DisplayResumeCommand("opencode", "sess-1", "/Users/x/proj", "", false)
+		want := "cd '/Users/x/proj' && opencode --model anthropic/claude-sonnet-4 --session 'sess-1'"
+		if got != want {
+			t.Errorf("DisplayResumeCommand = %q, want %q", got, want)
+		}
+	})
+
 	t.Run("each provider gets only its own flags", func(t *testing.T) {
-		withTempConfig(t, "claude_flags = [\"--claude-only\"]\ncodex_flags = [\"--codex-only\"]\ncopilot_flags = [\"--copilot-only\"]\n")
+		withTempConfig(t, "claude_flags = [\"--claude-only\"]\ncodex_flags = [\"--codex-only\"]\ncopilot_flags = [\"--copilot-only\"]\nopencode_flags = [\"--opencode-only\"]\n")
 		cases := map[string]string{
-			"claude":  "cd '/Users/x/proj' && claude --claude-only --resume 'sess-1'",
-			"codex":   "cd '/Users/x/proj' && codex --codex-only resume 'sess-1'",
-			"copilot": "cd '/Users/x/proj' && copilot --copilot-only --resume='sess-1'",
+			"claude":   "cd '/Users/x/proj' && claude --claude-only --resume 'sess-1'",
+			"codex":    "cd '/Users/x/proj' && codex --codex-only resume 'sess-1'",
+			"copilot":  "cd '/Users/x/proj' && copilot --copilot-only --resume='sess-1'",
+			"opencode": "cd '/Users/x/proj' && opencode --opencode-only --session 'sess-1'",
 		}
 		for provider, want := range cases {
 			if got := DisplayResumeCommand(provider, "sess-1", "/Users/x/proj", "", false); got != want {
@@ -90,9 +100,10 @@ func TestDisplayResumeCommand(t *testing.T) {
 	t.Run("no flags configured yields bare command per provider", func(t *testing.T) {
 		withTempConfig(t, "")
 		cases := map[string]string{
-			"claude":  "cd '/Users/x/proj' && claude --resume 'sess-1'",
-			"codex":   "cd '/Users/x/proj' && codex resume 'sess-1'",
-			"copilot": "cd '/Users/x/proj' && copilot --resume='sess-1'",
+			"claude":   "cd '/Users/x/proj' && claude --resume 'sess-1'",
+			"codex":    "cd '/Users/x/proj' && codex resume 'sess-1'",
+			"copilot":  "cd '/Users/x/proj' && copilot --resume='sess-1'",
+			"opencode": "cd '/Users/x/proj' && opencode --session 'sess-1'",
 		}
 		for provider, want := range cases {
 			if got := DisplayResumeCommand(provider, "sess-1", "/Users/x/proj", "", false); got != want {
@@ -122,14 +133,16 @@ func TestDisplayResumeCommand(t *testing.T) {
 
 func TestProviderFlags(t *testing.T) {
 	cfg := &config.Config{
-		ClaudeFlags:  []string{"--claude-only"},
-		CodexFlags:   []string{"--codex-only"},
-		CopilotFlags: []string{"--copilot-only"},
+		ClaudeFlags:   []string{"--claude-only"},
+		CodexFlags:    []string{"--codex-only"},
+		CopilotFlags:  []string{"--copilot-only"},
+		OpenCodeFlags: []string{"--opencode-only"},
 	}
 	cases := map[string]string{
-		ProviderClaude:  "--claude-only",
-		ProviderCodex:   "--codex-only",
-		ProviderCopilot: "--copilot-only",
+		ProviderClaude:   "--claude-only",
+		ProviderCodex:    "--codex-only",
+		ProviderCopilot:  "--copilot-only",
+		ProviderOpenCode: "--opencode-only",
 		// Unknown/empty providers resume via claude (see BuildResumeSpec), so
 		// they get the claude flags.
 		"":        "--claude-only",

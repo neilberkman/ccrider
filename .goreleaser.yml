@@ -25,10 +25,12 @@ builds:
 archives:
   - id: ccrider
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    format: tar.gz
+    formats:
+      - tar.gz
     format_overrides:
       - goos: windows
-        format: zip
+        formats:
+          - zip
     files:
       - README.md
 
@@ -57,7 +59,7 @@ release:
   header: |
     ## ccrider {{.Tag}}
 
-    Search, browse, and resume your Claude Code sessions.
+    Search, browse, and resume your coding agent sessions.
 
     ### 📦 Installation
 
@@ -94,7 +96,7 @@ brews:
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     directory: Formula
     name: ccrider
-    description: "Search, browse, and resume your Claude Code sessions"
+    description: "Search, browse, and resume your coding agent sessions"
     homepage: "https://github.com/neilberkman/ccrider"
     license: "MIT"
     commit_author:
@@ -113,7 +115,7 @@ scoops:
       name: scoop-ccrider
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: "https://github.com/neilberkman/ccrider"
-    description: "Search, browse, and resume your Claude Code sessions"
+    description: "Search, browse, and resume your coding agent sessions"
     license: MIT
 
 nfpms:
@@ -122,7 +124,7 @@ nfpms:
     vendor: Neil Berkman
     homepage: "https://github.com/neilberkman/ccrider"
     maintainer: "Neil Berkman <neil@xuku.com>"
-    description: "Search, browse, and resume your Claude Code sessions"
+    description: "Search, browse, and resume your coding agent sessions"
     license: MIT
     section: utils
     priority: optional

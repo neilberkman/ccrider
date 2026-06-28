@@ -99,6 +99,8 @@ func providerDisplayName(provider string) string {
 		return "Codex CLI"
 	case ProviderCopilot:
 		return "GitHub Copilot CLI"
+	case ProviderOpenCode:
+		return "OpenCode CLI"
 	default:
 		return "Claude Code (npm install -g @anthropic-ai/claude-code)"
 	}

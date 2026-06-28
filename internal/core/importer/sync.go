@@ -8,28 +8,30 @@ import (
 	"github.com/neilberkman/ccrider/pkg/ccsessions"
 	"github.com/neilberkman/ccrider/pkg/codexsessions"
 	"github.com/neilberkman/ccrider/pkg/copilotsessions"
+	"github.com/neilberkman/ccrider/pkg/opencodesessions"
 )
 
 // EnumerateFunc returns all parsed sessions for a database/event-log-backed
-// provider (e.g. Copilot) that does not store one JSONL file per session in a
-// flat, walkable directory.
+// provider (e.g. Copilot, OpenCode) that does not store one JSONL file per
+// session in a flat, walkable directory.
 type EnumerateFunc func() ([]*ccsessions.ParsedSession, error)
 
 // Source describes a session source to import.
 //
 // File-based providers (Claude, Codex) set Path + ParseFn and are imported by
-// walking a directory of JSONL files. Enumerated providers (Copilot) set
-// EnumerateFn instead, which yields all sessions in one call.
+// walking a directory of JSONL files. Enumerated providers set EnumerateFn
+// instead, which yields all sessions in one call.
 type Source struct {
 	Path          string
 	ParseFn       ParseFunc
 	EnumerateFn   EnumerateFunc
 	Provider      string
 	SkipSubagents bool
+	Optional      bool
 }
 
-// DefaultSources returns the standard import sources (Claude + Codex + Copilot).
-// Codex and Copilot are only included if their data exists on disk.
+// DefaultSources returns the standard import sources (Claude + Codex + Copilot + OpenCode).
+// Optional providers are only included when their data exists on disk.
 func DefaultSources() []Source {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -68,6 +70,18 @@ func DefaultSources() []Source {
 		}
 	}
 
+	for _, dbPath := range opencodesessions.DefaultDBPaths() {
+		path := dbPath
+		sources = append(sources, Source{
+			Path:     path,
+			Provider: opencodesessions.Provider,
+			Optional: true,
+			EnumerateFn: func() ([]*ccsessions.ParsedSession, error) {
+				return opencodesessions.ParseAll(path)
+			},
+		})
+	}
+
 	return sources
 }
 
@@ -79,6 +93,7 @@ type PreparedSource struct {
 	Provider string
 	Path     string
 	Total    int
+	Warning  error
 	run      func(progress ProgressCallback, force bool) (skipped int, err error)
 }
 
@@ -95,6 +110,9 @@ func (i *Importer) PrepareSource(src Source) (PreparedSource, error) {
 	if src.EnumerateFn != nil {
 		sessions, err := src.EnumerateFn()
 		if err != nil {
+			if src.Optional {
+				return skippedPreparedSource(src, err), nil
+			}
 			return PreparedSource{}, err
 		}
 		return PreparedSource{
@@ -109,6 +127,9 @@ func (i *Importer) PrepareSource(src Source) (PreparedSource, error) {
 
 	total, err := CountJSONLFiles(src.Path, src.SkipSubagents)
 	if err != nil {
+		if src.Optional {
+			return skippedPreparedSource(src, err), nil
+		}
 		return PreparedSource{}, err
 	}
 	return PreparedSource{
@@ -119,6 +140,17 @@ func (i *Importer) PrepareSource(src Source) (PreparedSource, error) {
 			return i.ImportDirectory(src.Path, progress, force, src.SkipSubagents, src.ParseFn, src.Provider)
 		},
 	}, nil
+}
+
+func skippedPreparedSource(src Source, warning error) PreparedSource {
+	return PreparedSource{
+		Provider: src.Provider,
+		Path:     src.Path,
+		Warning:  warning,
+		run: func(ProgressCallback, bool) (int, error) {
+			return 0, nil
+		},
+	}
 }
 
 // CountJSONLFiles counts importable .jsonl files under dirPath, applying the
@@ -151,6 +183,9 @@ func (i *Importer) SyncAll(force bool) error {
 		prepared, err := i.PrepareSource(src)
 		if err != nil {
 			return err
+		}
+		if prepared.Warning != nil {
+			continue
 		}
 		if _, err := prepared.Run(nil, force); err != nil {
 			return err

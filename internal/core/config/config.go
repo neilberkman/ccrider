@@ -21,6 +21,7 @@ type Config struct {
 	ClaudeFlags          []string          // Additional flags to pass to claude --resume
 	CodexFlags           []string          // Additional flags to pass to codex resume (placed before the subcommand)
 	CopilotFlags         []string          // Additional flags to pass to copilot --resume
+	OpenCodeFlags        []string          // Additional flags to pass to opencode --session
 	LLMProvider          string            // LLM provider for summarization: "anthropic" or "bedrock"
 	LastExportDir        string            // Last manually chosen export directory (global)
 	RepoExportDirs       map[string]string // Last chosen export directory per repo root
@@ -30,6 +31,7 @@ type tomlConfig struct {
 	ClaudeFlags    []string          `toml:"claude_flags"`
 	CodexFlags     []string          `toml:"codex_flags"`
 	CopilotFlags   []string          `toml:"copilot_flags"`
+	OpenCodeFlags  []string          `toml:"opencode_flags"`
 	LLMProvider    string            `toml:"llm_provider"`
 	LastExportDir  string            `toml:"last_export_dir,omitempty"`
 	RepoExportDirs map[string]string `toml:"repo_export_dirs,omitempty"`
@@ -58,6 +60,7 @@ func Load() (*Config, error) {
 			cfg.ClaudeFlags = tc.ClaudeFlags
 			cfg.CodexFlags = tc.CodexFlags
 			cfg.CopilotFlags = tc.CopilotFlags
+			cfg.OpenCodeFlags = tc.OpenCodeFlags
 			cfg.LLMProvider = tc.LLMProvider
 			cfg.LastExportDir = tc.LastExportDir
 			cfg.RepoExportDirs = tc.RepoExportDirs
@@ -94,6 +97,7 @@ func Save(cfg *Config) error {
 		ClaudeFlags:    cfg.ClaudeFlags,
 		CodexFlags:     cfg.CodexFlags,
 		CopilotFlags:   cfg.CopilotFlags,
+		OpenCodeFlags:  cfg.OpenCodeFlags,
 		LLMProvider:    cfg.LLMProvider,
 		LastExportDir:  cfg.LastExportDir,
 		RepoExportDirs: cfg.RepoExportDirs,

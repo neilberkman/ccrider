@@ -2,7 +2,7 @@
 
 ## Overview
 
-An MCP (Model Context Protocol) server that allows Claude Code to search and retrieve information from other Claude Code sessions. This enables Claude to reference past conversations, solutions, and context from the user's session history.
+An MCP (Model Context Protocol) server that allows coding agents to search and retrieve information from imported session history. This enables agents to reference past conversations, solutions, and context from the user's local database.
 
 ## Use Cases
 
@@ -237,7 +237,7 @@ func StartServer() error {
     // Register tools
     s.AddTool(mcp.Tool{
         Name: "search_sessions",
-        Description: "Search Claude Code sessions",
+        Description: "Search coding agent sessions",
         InputSchema: mcp.ToolInputSchema{
             Type: "object",
             Properties: map[string]interface{}{

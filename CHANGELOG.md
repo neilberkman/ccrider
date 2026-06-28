@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.4.0] - 2026-06-28
+
+### Added
+
+- **OpenCode session support** — indexes OpenCode sessions from `~/.local/share/opencode/opencode*.db` alongside Claude Code, Codex CLI, and GitHub Copilot CLI. OpenCode sessions participate in normal sync, search, list, TUI, and MCP workflows, with `[opencode]` provider tags and `--provider opencode` filtering
+- **OpenCode resume support** — ccrider can now resume OpenCode sessions with `opencode --session <id>`, including forked resumes via `--fork` and prompt prefill via `--prompt`. `opencode_flags` in `config.toml` works the same way as the existing per-provider resume flags
+- **OpenCode SQLite parser** — new `pkg/opencodesessions` parser reads the current OpenCode DB schema directly, handles text/tool/subtask/file parts, and uses content hashes for incremental sync instead of shared DB mtimes
+
+### Fixed
+
+- **Optional provider failures no longer abort full sync** — OpenCode schema/read errors are reported as warnings and skipped, so a future upstream DB change cannot block Claude/Codex/Copilot imports
+- **Resume prompt shell quoting is shared across provider launch paths** — temp-file prompt substitution is now quoted consistently for Claude and generic agent commands
+
 ## [1.3.2] - 2026-06-19
 
 ### Fixed

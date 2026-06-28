@@ -1,6 +1,7 @@
 package importer
 
 import (
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -9,6 +10,51 @@ import (
 	"github.com/neilberkman/ccrider/pkg/ccsessions"
 	"github.com/neilberkman/ccrider/pkg/codexsessions"
 )
+
+func TestPrepareSourceOptionalEnumerateErrorSkips(t *testing.T) {
+	boom := errors.New("schema changed")
+	imp := New(nil)
+
+	prepared, err := imp.PrepareSource(Source{
+		Path:     "/tmp/opencode.db",
+		Provider: "opencode",
+		Optional: true,
+		EnumerateFn: func() ([]*ccsessions.ParsedSession, error) {
+			return nil, boom
+		},
+	})
+	if err != nil {
+		t.Fatalf("PrepareSource() error = %v, want nil", err)
+	}
+	if prepared.Provider != "opencode" {
+		t.Fatalf("Provider = %q, want opencode", prepared.Provider)
+	}
+	if !errors.Is(prepared.Warning, boom) {
+		t.Fatalf("Warning = %v, want %v", prepared.Warning, boom)
+	}
+	if prepared.Total != 0 {
+		t.Fatalf("Total = %d, want 0", prepared.Total)
+	}
+	if skipped, err := prepared.Run(nil, false); err != nil || skipped != 0 {
+		t.Fatalf("Run() = (%d, %v), want (0, nil)", skipped, err)
+	}
+}
+
+func TestPrepareSourceEnumerateErrorFatalByDefault(t *testing.T) {
+	boom := errors.New("schema changed")
+	imp := New(nil)
+
+	_, err := imp.PrepareSource(Source{
+		Path:     "/tmp/copilot",
+		Provider: "copilot",
+		EnumerateFn: func() ([]*ccsessions.ParsedSession, error) {
+			return nil, boom
+		},
+	})
+	if !errors.Is(err, boom) {
+		t.Fatalf("PrepareSource() error = %v, want %v", err, boom)
+	}
+}
 
 func TestImportSession(t *testing.T) {
 	// Setup test database

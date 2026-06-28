@@ -238,6 +238,10 @@ func startSyncWithProgress(database *db.DB, filterByProject bool, projectPath st
 				fmt.Fprintf(os.Stderr, "WARN: %s sync skipped: %v\n", src.Provider, err)
 				continue
 			}
+			if p.Warning != nil {
+				fmt.Fprintf(os.Stderr, "WARN: %s sync skipped: %v\n", p.Provider, p.Warning)
+				continue
+			}
 			prepared = append(prepared, p)
 			total += p.Total
 		}
@@ -307,4 +311,3 @@ func syncSubscribe(progressCh chan syncProgressMsg, database *db.DB, filterByPro
 func syncSessions(database *db.DB, filterByProject bool, projectPath string) tea.Cmd {
 	return startSyncWithProgress(database, filterByProject, projectPath)
 }
-

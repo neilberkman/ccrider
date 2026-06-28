@@ -24,7 +24,7 @@ type SearchSessionsArgs struct {
 	Query            string `json:"query" jsonschema:"description=Search term to match against message content,required"`
 	Limit            int    `json:"limit,omitempty" jsonschema:"description=Max number of sessions to return (default: 10)"`
 	Project          string `json:"project,omitempty" jsonschema:"description=Filter by project path"`
-	Provider         string `json:"provider,omitempty" jsonschema:"description=Filter by provider (claude, codex, or copilot)"`
+	Provider         string `json:"provider,omitempty" jsonschema:"description=Filter by provider (claude, codex, copilot, or opencode)"`
 	CurrentSessionID string `json:"current_session_id,omitempty" jsonschema:"description=Current session ID to search within (searches only this session)"`
 	ExcludeCurrent   bool   `json:"exclude_current,omitempty" jsonschema:"description=Exclude current session from results (searches only other sessions)"`
 	AfterDate        string `json:"after_date,omitempty" jsonschema:"description=Only sessions updated after this date (ISO 8601 format, e.g. 2025-01-01)"`
@@ -37,7 +37,7 @@ type SearchSessionsArgs struct {
 type ListRecentSessionsArgs struct {
 	Limit    int    `json:"limit,omitempty" jsonschema:"description=Max sessions to return (default: 20)"`
 	Project  string `json:"project,omitempty" jsonschema:"description=Filter by project path"`
-	Provider string `json:"provider,omitempty" jsonschema:"description=Filter by provider (claude, codex, or copilot)"`
+	Provider string `json:"provider,omitempty" jsonschema:"description=Filter by provider (claude, codex, copilot, or opencode)"`
 }
 
 // GetSessionMessagesArgs defines arguments for the get_session_messages tool
@@ -110,8 +110,8 @@ type SessionMessagesResponse struct {
 // toSessionMatch converts a core search result to the MCP payload shape.
 // resume_command is pre-built (cd prefix included) so consuming agents never
 // stitch a bare resume command from project + session_id themselves. cfg
-// supplies the per-provider configured flags (claude_flags / codex_flags /
-// copilot_flags), selected per session since one response can mix providers.
+// supplies the per-provider configured flags, selected per session since one
+// response can mix providers.
 func toSessionMatch(cs search.SessionSearchResult, cfg *config.Config) SessionMatch {
 	return SessionMatch{
 		SessionID:     cs.SessionID,
@@ -163,7 +163,7 @@ func StartServer(dbPath string) error {
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithOpenWorldHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
-		mcp.WithDescription("Search Claude Code sessions for a query string across all message content. Can search current session only, exclude current session, or search all sessions. Supports date and project filtering.\n\nTO FIND EARLIER CONTEXT IN YOUR CURRENT SESSION (disappeared due to context compaction): Use anchor_phrase with a unique phrase you just said or saw - this identifies your session. Then query searches only within that session. The database syncs before every search so even recent messages are searchable."),
+		mcp.WithDescription("Search coding agent sessions for a query string across all message content. Can search current session only, exclude current session, or search all sessions. Supports date, project, and provider filtering.\n\nTO FIND EARLIER CONTEXT IN YOUR CURRENT SESSION (disappeared due to context compaction): Use anchor_phrase with a unique phrase you just said or saw - this identifies your session. Then query searches only within that session. The database syncs before every search so even recent messages are searchable."),
 		mcp.WithString("query",
 			mcp.Required(),
 			mcp.Description("Search term to match against message content")),
@@ -184,7 +184,7 @@ func StartServer(dbPath string) error {
 		mcp.WithBoolean("exact_match",
 			mcp.Description("If true, treats the query as an exact phrase match (auto-quoted). Use this instead of trying to add quotes yourself.")),
 		mcp.WithString("provider",
-			mcp.Description("Filter by provider (e.g. \"claude\", \"codex\", or \"copilot\")")),
+			mcp.Description("Filter by provider (e.g. \"claude\", \"codex\", \"copilot\", or \"opencode\")")),
 	)
 	s.AddTool(searchTool, makeSearchSessionsHandler(database))
 
@@ -194,13 +194,13 @@ func StartServer(dbPath string) error {
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithOpenWorldHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
-		mcp.WithDescription("Get recent Claude Code and Codex CLI sessions, optionally filtered by project or provider"),
+		mcp.WithDescription("Get recent coding agent sessions, optionally filtered by project or provider"),
 		mcp.WithNumber("limit",
 			mcp.Description("Max sessions to return (default: 20)")),
 		mcp.WithString("project",
 			mcp.Description("Filter by project path")),
 		mcp.WithString("provider",
-			mcp.Description("Filter by provider (e.g. \"claude\", \"codex\", or \"copilot\")")),
+			mcp.Description("Filter by provider (e.g. \"claude\", \"codex\", \"copilot\", or \"opencode\")")),
 	)
 	s.AddTool(listTool, makeListRecentSessionsHandler(database))
 
@@ -210,7 +210,7 @@ func StartServer(dbPath string) error {
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithOpenWorldHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
-		mcp.WithDescription("Get messages from a Claude Code session. Use last_n for tail (e.g., 'where were we'), around_sequence for context around a search match, or neither for full transcript."),
+		mcp.WithDescription("Get messages from a coding agent session. Use last_n for tail (e.g., 'where were we'), around_sequence for context around a search match, or neither for full transcript."),
 		mcp.WithString("session_id",
 			mcp.Required(),
 			mcp.Description("Session UUID to retrieve messages from")),

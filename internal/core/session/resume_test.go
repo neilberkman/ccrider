@@ -7,11 +7,12 @@ import (
 
 func TestResumeBinary(t *testing.T) {
 	cases := map[string]string{
-		ProviderClaude:  "claude",
-		ProviderCodex:   "codex",
-		ProviderCopilot: "copilot",
-		"":              "claude",
-		"unknown":       "claude",
+		ProviderClaude:   "claude",
+		ProviderCodex:    "codex",
+		ProviderCopilot:  "copilot",
+		ProviderOpenCode: "opencode",
+		"":               "claude",
+		"unknown":        "claude",
 	}
 	for provider, want := range cases {
 		if got := ResumeBinary(provider); got != want {
@@ -127,6 +128,29 @@ func TestBuildResumeSpec(t *testing.T) {
 			wantBinary: "copilot",
 		},
 		{
+			name:       "opencode resume",
+			provider:   ProviderOpenCode,
+			wantPrefix: "opencode --session 'sess-1'",
+			wantPrompt: true,
+			wantBinary: "opencode",
+		},
+		{
+			name:       "opencode flags placed before --session",
+			provider:   ProviderOpenCode,
+			flags:      []string{"--model", "anthropic/claude-sonnet-4"},
+			wantPrefix: "opencode --model anthropic/claude-sonnet-4 --session 'sess-1'",
+			wantPrompt: true,
+			wantBinary: "opencode",
+		},
+		{
+			name:       "opencode fork",
+			provider:   ProviderOpenCode,
+			fork:       true,
+			wantPrefix: "opencode --session 'sess-1' --fork",
+			wantPrompt: true,
+			wantBinary: "opencode",
+		},
+		{
 			name:       "multiple flags joined in order",
 			provider:   ProviderCodex,
 			flags:      []string{"--dangerously-bypass-approvals-and-sandbox", "--search"},
@@ -158,7 +182,7 @@ func TestBuildResumeSpec(t *testing.T) {
 	// quoting so it cannot break out of the command.
 	t.Run("malicious id is quoted", func(t *testing.T) {
 		id := "x'; rm -rf /; '"
-		for _, provider := range []string{ProviderClaude, ProviderCodex, ProviderCopilot} {
+		for _, provider := range []string{ProviderClaude, ProviderCodex, ProviderCopilot, ProviderOpenCode} {
 			spec := BuildResumeSpec(provider, id, false, nil)
 			if !strings.Contains(spec.Prefix, ShellQuote(id)) {
 				t.Errorf("%s prefix = %q, want it to contain the quoted id %q", provider, spec.Prefix, ShellQuote(id))
@@ -212,6 +236,13 @@ func TestResumeCommandIn(t *testing.T) {
 			provider:    ProviderCopilot,
 			sessionID:   "sess-1",
 			want:        "cd '/Users/x/proj' && copilot --resume='sess-1'",
+		},
+		{
+			name:        "opencode has cd prefix",
+			projectPath: "/Users/x/proj",
+			provider:    ProviderOpenCode,
+			sessionID:   "sess-1",
+			want:        "cd '/Users/x/proj' && opencode --session 'sess-1'",
 		},
 		{
 			name:        "prompt appended after cd prefix",
@@ -284,6 +315,12 @@ func TestResumeCommand(t *testing.T) {
 			provider: ProviderCopilot,
 			prompt:   "keep going",
 			want:     "copilot --resume='sess-1'",
+		},
+		{
+			name:     "opencode uses prompt flag",
+			provider: ProviderOpenCode,
+			prompt:   "keep going",
+			want:     "opencode --session 'sess-1' --prompt 'keep going'",
 		},
 		{
 			name:     "prompt with single quote is escaped",

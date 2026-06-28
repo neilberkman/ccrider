@@ -22,6 +22,9 @@ claude_flags = ["--dangerously-skip-permissions"]
 
 # Additional flags to pass to every copilot --resume command
 # copilot_flags = []
+
+# Additional flags to pass to every opencode --session command
+# opencode_flags = []
 ```
 
 ### resume_prompt.txt
@@ -51,7 +54,7 @@ Template variables:
 
 ## Configuration Options
 
-### claude_flags / codex_flags / copilot_flags
+### claude_flags / codex_flags / copilot_flags / opencode_flags
 
 **Type**: array of strings
 **Default**: `[]`
@@ -61,13 +64,14 @@ Extra flags injected into every resume command ccrider builds for that provider 
 
 Each provider's flags go where its CLI expects global options:
 
-| Key             | Resulting command                  |
-| --------------- | ---------------------------------- |
-| `claude_flags`  | `claude <flags> --resume <id>`     |
-| `codex_flags`   | `codex <flags> resume <id>`        |
-| `copilot_flags` | `copilot <flags> --resume=<id>`    |
+| Key              | Resulting command                   |
+| ---------------- | ----------------------------------- |
+| `claude_flags`   | `claude <flags> --resume <id>`      |
+| `codex_flags`    | `codex <flags> resume <id>`         |
+| `copilot_flags`  | `copilot <flags> --resume=<id>`     |
+| `opencode_flags` | `opencode <flags> --session <id>`   |
 
-Codex flags are placed **before** the subcommand (`codex [OPTIONS] <COMMAND>`); codex rejects global options after it. Forking keeps the same placement (`codex <flags> fork <id>`, `claude <flags> --resume <id> --fork-session`).
+Codex flags are placed **before** the subcommand (`codex [OPTIONS] <COMMAND>`); codex rejects global options after it. Forking keeps the same placement (`codex <flags> fork <id>`, `claude <flags> --resume <id> --fork-session`, `opencode <flags> --session <id> --fork`).
 
 **WARNING**: Flags like `--dangerously-skip-permissions` (Claude) and `--dangerously-bypass-approvals-and-sandbox` (Codex) bypass safety checks. Only configure them in trusted, personal environments.
 
@@ -78,6 +82,7 @@ Codex flags are placed **before** the subcommand (`codex [OPTIONS] <COMMAND>`); 
 claude_flags = ["--dangerously-skip-permissions"]
 codex_flags = ["--dangerously-bypass-approvals-and-sandbox"]
 # copilot_flags = []
+# opencode_flags = []
 ```
 
 ## Configuration Loading Order

@@ -24,9 +24,10 @@ func codexResumeID(sessionID string) string {
 // Provider identifiers. These match the values stored in the sessions.provider
 // column by the importer.
 const (
-	ProviderClaude  = "claude"
-	ProviderCodex   = "codex"
-	ProviderCopilot = "copilot"
+	ProviderClaude   = "claude"
+	ProviderCodex    = "codex"
+	ProviderCopilot  = "copilot"
+	ProviderOpenCode = "opencode"
 )
 
 // ResumeBinary returns the CLI executable used to resume a session for the
@@ -37,6 +38,8 @@ func ResumeBinary(provider string) string {
 		return "codex"
 	case ProviderCopilot:
 		return "copilot"
+	case ProviderOpenCode:
+		return "opencode"
 	default:
 		return "claude"
 	}
@@ -49,10 +52,12 @@ func ResumeBinary(provider string) string {
 // (a shell concern) stays at the call site, e.g. a single-quoted literal or a
 // "$(cat tmpfile)" command substitution.
 type ResumeSpec struct {
-	Binary string
-	Prefix string
+	Binary     string
+	Prefix     string
+	PromptFlag string
 	// AcceptsPrompt reports whether an initial prompt may be appended to Prefix
-	// as a positional argument. Copilot's interactive resume takes no prompt.
+	// using PromptFlag or, when PromptFlag is empty, as a positional argument.
+	// Copilot's interactive resume takes no prompt.
 	AcceptsPrompt bool
 }
 
@@ -67,8 +72,8 @@ func joinFlags(flags []string) string {
 
 // BuildResumeSpec returns provider-specific resume invocation details.
 // flags are the user-configured extra flags for this provider's CLI
-// (claude_flags / codex_flags / copilot_flags — see ConfiguredFlags), injected
-// at the position each CLI expects its global options.
+// (claude_flags / codex_flags / copilot_flags / opencode_flags), injected at
+// the position each CLI expects its global options.
 func BuildResumeSpec(provider, sessionID string, fork bool, flags []string) ResumeSpec {
 	// Session IDs come from the database and are normally UUID/rollout-shaped,
 	// but shell-quote them anyway so an unexpected value can never break out of
@@ -93,6 +98,18 @@ func BuildResumeSpec(provider, sessionID string, fork bool, flags []string) Resu
 			Prefix:        fmt.Sprintf("copilot%s --resume=%s", joinFlags(flags), ShellQuote(sessionID)),
 			AcceptsPrompt: false,
 		}
+	case ProviderOpenCode:
+		// opencode [flags] --session <id> [--fork] [--prompt <prompt>].
+		prefix := fmt.Sprintf("opencode%s --session %s", joinFlags(flags), ShellQuote(sessionID))
+		if fork {
+			prefix += " --fork"
+		}
+		return ResumeSpec{
+			Binary:        "opencode",
+			Prefix:        prefix,
+			PromptFlag:    "--prompt",
+			AcceptsPrompt: true,
+		}
 	default:
 		prefix := fmt.Sprintf("claude%s --resume %s", joinFlags(flags), ShellQuote(sessionID))
 		if fork {
@@ -106,15 +123,27 @@ func BuildResumeSpec(provider, sessionID string, fork bool, flags []string) Resu
 	}
 }
 
+// AppendPromptArg appends an already shell-safe prompt argument to a resume
+// command according to the provider's CLI contract.
+func AppendPromptArg(cmd string, spec ResumeSpec, promptArg string) string {
+	if promptArg == "" || !spec.AcceptsPrompt {
+		return cmd
+	}
+	if spec.PromptFlag != "" {
+		return cmd + " " + spec.PromptFlag + " " + promptArg
+	}
+	return cmd + " " + promptArg
+}
+
 // ResumeCommand builds a one-line resume command for display or clipboard, with
-// the prompt (if any) appended as a single-quoted argument. The prompt is
-// dropped for providers that do not accept one.
+// the prompt (if any) appended in the form required by the provider. The prompt
+// is dropped for providers that do not accept one.
 func ResumeCommand(provider, sessionID, prompt string, fork bool, flags []string) string {
 	spec := BuildResumeSpec(provider, sessionID, fork, flags)
 	if prompt == "" || !spec.AcceptsPrompt {
 		return spec.Prefix
 	}
-	return spec.Prefix + " " + ShellQuote(prompt)
+	return AppendPromptArg(spec.Prefix, spec, ShellQuote(prompt))
 }
 
 // ResumeCommandIn builds the full one-line resume command for display or

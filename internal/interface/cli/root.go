@@ -29,11 +29,12 @@ func Execute() {
 
 var rootCmd = &cobra.Command{
 	Use:   "ccrider",
-	Short: "Claude Code session manager",
-	Long: `ccrider - search, browse, and resume your Claude Code sessions
+	Short: "Coding agent session manager",
+	Long: `ccrider - search, browse, and resume your coding agent sessions
 
-A fast, reliable tool for managing Claude Code sessions with full-text search,
-incremental sync, and native resume integration.`,
+A fast, reliable tool for managing Claude Code, Codex CLI, GitHub Copilot CLI,
+and OpenCode sessions with full-text search, incremental sync, and native resume
+integration.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Default to TUI if no subcommand specified
 		return tuiCmd.RunE(cmd, args)

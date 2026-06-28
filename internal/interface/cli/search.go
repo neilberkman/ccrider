@@ -17,8 +17,8 @@ var (
 
 var searchCmd = &cobra.Command{
 	Use:   "search <query>",
-	Short: "Search Claude Code sessions using full-text search",
-	Long: `Search through all imported Claude Code sessions.
+	Short: "Search coding agent sessions using full-text search",
+	Long: `Search through all imported coding agent sessions.
 
 Uses FTS5 full-text search with porter stemming for natural language.
 Results are grouped by session and show matching message snippets.

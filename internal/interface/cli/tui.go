@@ -19,7 +19,7 @@ import (
 var tuiCmd = &cobra.Command{
 	Use:   "tui",
 	Short: "Launch interactive TUI browser",
-	Long:  "Launch an interactive terminal UI for browsing and viewing Claude Code sessions",
+	Long:  "Launch an interactive terminal UI for browsing and viewing coding agent sessions",
 	RunE:  runTUI,
 }
 
@@ -68,17 +68,17 @@ func runTUI(cmd *cobra.Command, args []string) error {
 
 // execResume dispatches to the right resume path for the session's provider.
 // Claude keeps its dedicated path (session-file recovery, prompt handling);
-// other agents (Codex, Copilot) use the generic execAgent path.
+// other agents use the generic execAgent path.
 func execResume(provider, sessionID, projectPath, lastCwd, updatedAt, summary string, fork bool) error {
 	switch provider {
-	case session.ProviderCodex, session.ProviderCopilot:
+	case session.ProviderCodex, session.ProviderCopilot, session.ProviderOpenCode:
 		return execAgent(provider, sessionID, projectPath, lastCwd, updatedAt, summary, fork)
 	default:
 		return execClaude(sessionID, projectPath, lastCwd, updatedAt, summary, fork)
 	}
 }
 
-// execAgent resumes a non-Claude agent session (Codex, Copilot) by exec'ing the
+// execAgent resumes a non-Claude agent session by exec'ing the
 // provider's resume command, replacing the current process.
 func execAgent(provider, sessionID, projectPath, lastCwd, updatedAt, summary string, fork bool) error {
 	// Config errors fall back to defaults (no flags, default prompt template);
@@ -91,8 +91,8 @@ func execAgent(provider, sessionID, projectPath, lastCwd, updatedAt, summary str
 	spec := session.BuildResumeSpec(provider, sessionID, fork, flags)
 	cmd := spec.Prefix
 
-	// Providers that accept an initial prompt (Codex) get the rendered resume
-	// prompt, passed via a temp file to avoid shell escaping issues.
+	// Providers that accept an initial prompt get the rendered resume prompt,
+	// passed via a temp file to avoid shell escaping issues.
 	if spec.AcceptsPrompt {
 		if cfgErr == nil {
 			if prompt := session.RenderResumePromptOneLine(cfg.ResumePromptTemplate, projectPath, lastCwd, updatedAt); prompt != "" {
@@ -106,7 +106,8 @@ func execAgent(provider, sessionID, projectPath, lastCwd, updatedAt, summary str
 					return fmt.Errorf("failed to write prompt: %w", err)
 				}
 				_ = tmpfile.Close()
-				cmd = fmt.Sprintf("%s \"$(cat %s)\"", spec.Prefix, tmpfile.Name())
+				promptArg := fmt.Sprintf("\"$(cat %s)\"", session.ShellQuote(tmpfile.Name()))
+				cmd = session.AppendPromptArg(spec.Prefix, spec, promptArg)
 			}
 		}
 	}
@@ -187,7 +188,8 @@ func execClaude(sessionID, projectPath, lastCwd, updatedAt, summary string, fork
 	// Build claude command with prompt from file (core builds the invocation;
 	// the temp-file substitution is a shell concern that stays here)
 	spec := session.BuildResumeSpec(session.ProviderClaude, sessionID, fork, cfg.ClaudeFlags)
-	cmd := fmt.Sprintf("%s \"$(cat %s)\"", spec.Prefix, tmpfile.Name())
+	promptArg := fmt.Sprintf("\"$(cat %s)\"", session.ShellQuote(tmpfile.Name()))
+	cmd := session.AppendPromptArg(spec.Prefix, spec, promptArg)
 
 	// Resolve working directory (always projectPath, see session.ResolveWorkingDir)
 	workDir := session.ResolveWorkingDir(projectPath, lastCwd)
