@@ -199,13 +199,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Update list dimensions if it's been created
 		if m.list.Paginator.TotalPages > 0 {
-			m.list.SetSize(m.width, m.height-4)
+			m.list.SetSize(m.width, m.height-1)
 		}
 
 		// Update viewport dimensions if it's been created
 		if m.viewport.Height > 0 {
 			m.viewport.Width = m.width
-			m.viewport.Height = m.height - 8
+			m.viewport.Height = m.height - 4
 		}
 
 		return m, nil

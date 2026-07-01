@@ -16,7 +16,7 @@ import (
 )
 
 func createViewport(detail sessionDetail, width, height int) viewport.Model {
-	vp := viewport.New(width, height-8)
+	vp := viewport.New(width, height-4)
 	result := renderConversation(detail, "", nil, -1, width, nil)
 	vp.SetContent(result.content)
 	return vp
