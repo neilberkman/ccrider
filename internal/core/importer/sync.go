@@ -9,6 +9,7 @@ import (
 	"github.com/neilberkman/ccrider/pkg/codexsessions"
 	"github.com/neilberkman/ccrider/pkg/copilotsessions"
 	"github.com/neilberkman/ccrider/pkg/opencodesessions"
+	"github.com/neilberkman/ccrider/pkg/pisessions"
 )
 
 // EnumerateFunc returns all parsed sessions for a database/event-log-backed
@@ -53,6 +54,16 @@ func DefaultSources() []Source {
 			Path:          codexPath,
 			ParseFn:       codexsessions.ParseFile,
 			Provider:      "codex",
+			SkipSubagents: false,
+		})
+	}
+
+	piPath := filepath.Join(home, ".pi", "agent", "sessions")
+	if _, err := os.Stat(piPath); err == nil {
+		sources = append(sources, Source{
+			Path:          piPath,
+			ParseFn:       pisessions.ParseFile,
+			Provider:      pisessions.Provider,
 			SkipSubagents: false,
 		})
 	}

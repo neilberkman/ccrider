@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Pi session support** — indexes Pi sessions from `~/.pi/agent/sessions/` alongside Claude Code, Codex CLI, GitHub Copilot CLI, and OpenCode. Pi sessions participate in sync, search, list, TUI, MCP, and resume workflows with `[pi]` provider tags and `--provider pi` filtering
+
+### Changed
+
+- **Pi resume contract** — ccrider now resumes Pi sessions with `pi --session <id>`, forks with `pi --fork <id>`, appends resume prompts positionally, and supports optional `pi_flags` in `config.toml`
+
 ## [1.4.0] - 2026-06-28
 
 ### Added

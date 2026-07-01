@@ -71,7 +71,7 @@ func runTUI(cmd *cobra.Command, args []string) error {
 // other agents use the generic execAgent path.
 func execResume(provider, sessionID, projectPath, lastCwd, updatedAt, summary string, fork bool) error {
 	switch provider {
-	case session.ProviderCodex, session.ProviderCopilot, session.ProviderOpenCode:
+	case session.ProviderCodex, session.ProviderCopilot, session.ProviderOpenCode, session.ProviderPi:
 		return execAgent(provider, sessionID, projectPath, lastCwd, updatedAt, summary, fork)
 	default:
 		return execClaude(sessionID, projectPath, lastCwd, updatedAt, summary, fork)

@@ -28,7 +28,7 @@ type SearchResult struct {
 type SearchFilters struct {
 	Query            string // The search query text
 	ProjectPath      string // Filter by project path (substring match)
-	Provider         string // Filter by provider (claude, codex)
+	Provider         string // Filter by provider (claude, codex, copilot, opencode, pi)
 	CurrentSessionID string // If set, only search within this session
 	ExcludeCurrent   bool   // If true with CurrentSessionID set, exclude that session
 	AfterDate        string // Only results after this timestamp (ISO 8601)

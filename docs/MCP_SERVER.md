@@ -22,6 +22,7 @@ Search across all sessions for a query string. Supports current session awarenes
 - `query` (required): Search term to match against message content
 - `limit` (optional): Max number of sessions to return (default: 10)
 - `project` (optional): Filter by project path
+- `provider` (optional): Filter by provider (`claude`, `codex`, `copilot`, `opencode`, or `pi`)
 - `current_session_id` (optional): Current session ID - if provided, searches ONLY within this session (useful for finding earlier parts of current conversation)
 - `exclude_current` (optional): If true, excludes current session from results (searches only other sessions). Requires current_session_id to be set.
 - `after_date` (optional): Only sessions updated after this date (ISO 8601 format, e.g. '2025-01-01' or '2025-01-08T10:00:00Z')
@@ -84,12 +85,13 @@ Retrieve full conversation for a specific session.
 
 ### `list_recent_sessions`
 
-Get recent sessions, optionally filtered by project.
+Get recent sessions, optionally filtered by project or provider.
 
 **Arguments:**
 
 - `limit` (optional): Max sessions to return (default: 20)
 - `project` (optional): Filter by project path
+- `provider` (optional): Filter by provider (`claude`, `codex`, `copilot`, `opencode`, or `pi`)
 - `since` (optional): Only sessions updated since this timestamp
 
 **Returns:**

@@ -7,8 +7,8 @@ import (
 
 // ProviderFlags selects the configured extra-flags slice for the given
 // provider's CLI (claude_flags / codex_flags / copilot_flags /
-// opencode_flags). A nil cfg yields no flags. Unknown/empty providers map to
-// Claude, matching BuildResumeSpec.
+// opencode_flags / pi_flags). A nil cfg yields no flags. Unknown/empty
+// providers map to Claude, matching BuildResumeSpec.
 func ProviderFlags(cfg *config.Config, provider string) []string {
 	if cfg == nil {
 		return nil
@@ -20,6 +20,8 @@ func ProviderFlags(cfg *config.Config, provider string) []string {
 		return cfg.CopilotFlags
 	case ProviderOpenCode:
 		return cfg.OpenCodeFlags
+	case ProviderPi:
+		return cfg.PiFlags
 	default:
 		return cfg.ClaudeFlags
 	}

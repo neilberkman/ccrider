@@ -10,12 +10,27 @@ import (
 // "rollout-2026-06-04T14-40-56-019e93f0-3efe-7742-9598-bb06b36fb25a".
 var codexRolloutUUID = regexp.MustCompile(`[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
+// piFilenameUUID matches the UUID suffix in Pi filenames, e.g.
+// "2026-06-18T13-47-19-786Z_019edafc-796a-79ce-a42b-f1d986bd3e8c".
+var piFilenameUUID = regexp.MustCompile(`[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
 // codexResumeID returns the id that `codex resume` expects. ccrider stores Codex
 // sessions under their rollout filename (e.g. "rollout-<timestamp>-<uuid>"), but
 // codex resumes by the bare session UUID. If the stored id carries a trailing
 // UUID, extract it; otherwise pass it through unchanged.
 func codexResumeID(sessionID string) string {
 	if m := codexRolloutUUID.FindString(sessionID); m != "" {
+		return m
+	}
+	return sessionID
+}
+
+// piResumeID returns the id that `pi --session` expects. New imports store the
+// Pi session metadata id, but older/local databases may still contain the JSONL
+// filename stem ("<timestamp>_<uuid>"). Pi resolves the bare UUID, not that
+// timestamp-prefixed stem, so strip a trailing UUID when present.
+func piResumeID(sessionID string) string {
+	if m := piFilenameUUID.FindString(sessionID); m != "" {
 		return m
 	}
 	return sessionID
@@ -28,6 +43,7 @@ const (
 	ProviderCodex    = "codex"
 	ProviderCopilot  = "copilot"
 	ProviderOpenCode = "opencode"
+	ProviderPi       = "pi"
 )
 
 // ResumeBinary returns the CLI executable used to resume a session for the
@@ -40,6 +56,8 @@ func ResumeBinary(provider string) string {
 		return "copilot"
 	case ProviderOpenCode:
 		return "opencode"
+	case ProviderPi:
+		return "pi"
 	default:
 		return "claude"
 	}
@@ -59,6 +77,10 @@ type ResumeSpec struct {
 	// using PromptFlag or, when PromptFlag is empty, as a positional argument.
 	// Copilot's interactive resume takes no prompt.
 	AcceptsPrompt bool
+	// Supported is false for providers ccrider can index/search but cannot
+	// safely resume yet. Callers must not shell out a spec with Supported=false.
+	Supported         bool
+	UnsupportedReason string
 }
 
 // joinFlags renders configured flags as a command fragment with a leading
@@ -72,8 +94,8 @@ func joinFlags(flags []string) string {
 
 // BuildResumeSpec returns provider-specific resume invocation details.
 // flags are the user-configured extra flags for this provider's CLI
-// (claude_flags / codex_flags / copilot_flags / opencode_flags), injected at
-// the position each CLI expects its global options.
+// (claude_flags / codex_flags / copilot_flags / opencode_flags / pi_flags),
+// injected at the position each CLI expects its global options.
 func BuildResumeSpec(provider, sessionID string, fork bool, flags []string) ResumeSpec {
 	// Session IDs come from the database and are normally UUID/rollout-shaped,
 	// but shell-quote them anyway so an unexpected value can never break out of
@@ -90,6 +112,7 @@ func BuildResumeSpec(provider, sessionID string, fork bool, flags []string) Resu
 			Binary:        "codex",
 			Prefix:        fmt.Sprintf("codex%s %s %s", joinFlags(flags), verb, ShellQuote(codexResumeID(sessionID))),
 			AcceptsPrompt: true,
+			Supported:     true,
 		}
 	case ProviderCopilot:
 		// copilot [flags] --resume=<id>; interactive resume has no positional prompt.
@@ -97,6 +120,7 @@ func BuildResumeSpec(provider, sessionID string, fork bool, flags []string) Resu
 			Binary:        "copilot",
 			Prefix:        fmt.Sprintf("copilot%s --resume=%s", joinFlags(flags), ShellQuote(sessionID)),
 			AcceptsPrompt: false,
+			Supported:     true,
 		}
 	case ProviderOpenCode:
 		// opencode [flags] --session <id> [--fork] [--prompt <prompt>].
@@ -109,6 +133,20 @@ func BuildResumeSpec(provider, sessionID string, fork bool, flags []string) Resu
 			Prefix:        prefix,
 			PromptFlag:    "--prompt",
 			AcceptsPrompt: true,
+			Supported:     true,
+		}
+	case ProviderPi:
+		// pi [options] --session <id> [messages...] resumes by session id.
+		// pi [options] --fork <id> [messages...] creates a new branch/session.
+		flag := "--session"
+		if fork {
+			flag = "--fork"
+		}
+		return ResumeSpec{
+			Binary:        "pi",
+			Prefix:        fmt.Sprintf("pi%s %s %s", joinFlags(flags), flag, ShellQuote(piResumeID(sessionID))),
+			AcceptsPrompt: true,
+			Supported:     true,
 		}
 	default:
 		prefix := fmt.Sprintf("claude%s --resume %s", joinFlags(flags), ShellQuote(sessionID))
@@ -119,6 +157,7 @@ func BuildResumeSpec(provider, sessionID string, fork bool, flags []string) Resu
 			Binary:        "claude",
 			Prefix:        prefix,
 			AcceptsPrompt: true,
+			Supported:     true,
 		}
 	}
 }
@@ -140,6 +179,9 @@ func AppendPromptArg(cmd string, spec ResumeSpec, promptArg string) string {
 // is dropped for providers that do not accept one.
 func ResumeCommand(provider, sessionID, prompt string, fork bool, flags []string) string {
 	spec := BuildResumeSpec(provider, sessionID, fork, flags)
+	if !spec.Supported {
+		return spec.Prefix
+	}
 	if prompt == "" || !spec.AcceptsPrompt {
 		return spec.Prefix
 	}
@@ -156,7 +198,11 @@ func ResumeCommand(provider, sessionID, prompt string, fork bool, flags []string
 // If projectPath is empty (missing in the DB), the bare command is returned
 // with a trailing comment noting the gap rather than erroring.
 func ResumeCommandIn(projectPath, provider, sessionID, prompt string, fork bool, flags []string) string {
+	spec := BuildResumeSpec(provider, sessionID, fork, flags)
 	cmd := ResumeCommand(provider, sessionID, prompt, fork, flags)
+	if !spec.Supported {
+		return cmd
+	}
 	if projectPath == "" {
 		return fmt.Sprintf("%s # project path missing in DB for session %s", cmd, sessionID)
 	}

@@ -4,6 +4,8 @@ ccrider can be configured via files in `~/.config/ccrider/`.
 
 ## Config Files
 
+Pi sessions are imported from `~/.pi/agent/sessions/` when that directory exists. ccrider can search/list/MCP and resume Pi sessions with `pi --session <id>`; forked resumes use `pi --fork <id>`.
+
 ### config.toml
 
 Main configuration file for global settings.
@@ -25,6 +27,9 @@ claude_flags = ["--dangerously-skip-permissions"]
 
 # Additional flags to pass to every opencode --session command
 # opencode_flags = []
+
+# Additional flags to pass to every pi --session/--fork command
+# pi_flags = []
 ```
 
 ### resume_prompt.txt
@@ -54,7 +59,7 @@ Template variables:
 
 ## Configuration Options
 
-### claude_flags / codex_flags / copilot_flags / opencode_flags
+### claude_flags / codex_flags / copilot_flags / opencode_flags / pi_flags
 
 **Type**: array of strings
 **Default**: `[]`
@@ -70,8 +75,9 @@ Each provider's flags go where its CLI expects global options:
 | `codex_flags`    | `codex <flags> resume <id>`         |
 | `copilot_flags`  | `copilot <flags> --resume=<id>`     |
 | `opencode_flags` | `opencode <flags> --session <id>`   |
+| `pi_flags`       | `pi <flags> --session <id>`         |
 
-Codex flags are placed **before** the subcommand (`codex [OPTIONS] <COMMAND>`); codex rejects global options after it. Forking keeps the same placement (`codex <flags> fork <id>`, `claude <flags> --resume <id> --fork-session`, `opencode <flags> --session <id> --fork`).
+Codex flags are placed **before** the subcommand (`codex [OPTIONS] <COMMAND>`); codex rejects global options after it. Forking keeps the same placement (`codex <flags> fork <id>`, `claude <flags> --resume <id> --fork-session`, `opencode <flags> --session <id> --fork`, `pi <flags> --fork <id>`).
 
 **WARNING**: Flags like `--dangerously-skip-permissions` (Claude) and `--dangerously-bypass-approvals-and-sandbox` (Codex) bypass safety checks. Only configure them in trusted, personal environments.
 
@@ -83,6 +89,7 @@ claude_flags = ["--dangerously-skip-permissions"]
 codex_flags = ["--dangerously-bypass-approvals-and-sandbox"]
 # copilot_flags = []
 # opencode_flags = []
+# pi_flags = []
 ```
 
 ## Configuration Loading Order
