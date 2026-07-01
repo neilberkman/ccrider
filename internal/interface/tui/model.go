@@ -205,7 +205,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Update viewport dimensions if it's been created
 		if m.viewport.Height > 0 {
 			m.viewport.Width = m.width
-			m.viewport.Height = m.height - 4
+			m.viewport.Height = m.height - 3
 		}
 
 		return m, nil

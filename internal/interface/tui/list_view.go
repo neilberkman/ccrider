@@ -3,11 +3,11 @@ package tui
 import (
 	"fmt"
 	"io"
-	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/dustin/go-humanize"
 )
 
@@ -213,11 +213,9 @@ func (m Model) viewList() string {
 		return "No sessions found. Press 's' to sync.\n\n" + helpText
 	}
 
-	// Render list and help on same line with no gap
-	listView := m.list.View()
-	// Strip trailing newlines from list view to eliminate gap
-	listView = strings.TrimRight(listView, "\n")
-	return listView + "\n" + helpText
+	// JoinVertical preserves the list's Height()-padded output and places
+	// helpText on the very last line, regardless of trailing padding.
+	return lipgloss.JoinVertical(lipgloss.Left, m.list.View(), helpText)
 }
 
 func formatTime(t string) string {
