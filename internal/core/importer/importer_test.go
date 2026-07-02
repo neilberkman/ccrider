@@ -3,12 +3,15 @@ package importer
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/neilberkman/ccrider/internal/core/db"
+	"github.com/neilberkman/ccrider/internal/core/search"
 	"github.com/neilberkman/ccrider/pkg/ccsessions"
 	"github.com/neilberkman/ccrider/pkg/codexsessions"
+	"github.com/neilberkman/ccrider/pkg/pisessions"
 )
 
 func TestPrepareSourceOptionalEnumerateErrorSkips(t *testing.T) {
@@ -297,6 +300,114 @@ func TestImportSession_CodexSession(t *testing.T) {
 	}
 	if sessionCount != 1 {
 		t.Errorf("Expected 1 session after re-import, got %d", sessionCount)
+	}
+}
+
+func TestDefaultSourcesIncludesPiWhenSessionDirExists(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	piDir := filepath.Join(home, ".pi", "agent", "sessions")
+	if err := os.MkdirAll(piDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	var found bool
+	for _, src := range DefaultSources() {
+		if src.Provider == pisessions.Provider {
+			found = true
+			if src.Path != piDir {
+				t.Fatalf("Pi source path = %q, want %q", src.Path, piDir)
+			}
+			if src.ParseFn == nil {
+				t.Fatal("Pi source ParseFn is nil")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("DefaultSources() did not include Pi source")
+	}
+}
+
+func TestDefaultSourcesOmitsPiWhenSessionDirMissing(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	for _, src := range DefaultSources() {
+		if src.Provider == pisessions.Provider {
+			t.Fatalf("DefaultSources() included Pi source without session dir: %#v", src)
+		}
+	}
+}
+
+func TestImportDirectory_PiSessionSearchable(t *testing.T) {
+	tmpfile, err := os.CreateTemp("", "test-pi-*.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Remove(tmpfile.Name()) }()
+	_ = tmpfile.Close()
+
+	database, err := db.New(tmpfile.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+
+	imp := New(database)
+	skipped, err := imp.ImportDirectory("../../../pkg/pisessions/testdata", nil, false, false, pisessions.ParseFile, pisessions.Provider)
+	if err != nil {
+		t.Fatalf("ImportDirectory() error = %v", err)
+	}
+	if skipped != 0 {
+		t.Fatalf("ImportDirectory() skipped = %d, want 0", skipped)
+	}
+
+	var provider, projectPath, version string
+	if err := database.QueryRow(`SELECT provider, project_path FROM sessions WHERE session_id = ?`, "basic").Scan(&provider, &projectPath); err != nil {
+		t.Fatal(err)
+	}
+	if provider != pisessions.Provider {
+		t.Fatalf("provider = %q, want %q", provider, pisessions.Provider)
+	}
+	if projectPath != "/tmp/pi-demo" {
+		t.Fatalf("project_path = %q, want /tmp/pi-demo", projectPath)
+	}
+	if err := database.QueryRow(`
+		SELECT COALESCE(m.version, '')
+		FROM messages m
+		JOIN sessions s ON s.id = m.session_id
+		WHERE s.session_id = ? AND m.sender = 'assistant'
+		ORDER BY m.sequence
+		LIMIT 1
+	`, "basic").Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != "openai-codex/gpt-5.5" {
+		t.Fatalf("version = %q, want openai-codex/gpt-5.5", version)
+	}
+
+	results, err := search.SearchWithFilters(database, search.SearchFilters{Query: "frobnicator", Provider: pisessions.Provider})
+	if err != nil {
+		t.Fatalf("Pi provider search failed: %v", err)
+	}
+	if len(results) != 1 || results[0].Provider != pisessions.Provider {
+		t.Fatalf("Pi provider search returned %#v", results)
+	}
+
+	codexResults, err := search.SearchWithFilters(database, search.SearchFilters{Query: "frobnicator", Provider: "codex"})
+	if err != nil {
+		t.Fatalf("Codex provider search failed: %v", err)
+	}
+	if len(codexResults) != 0 {
+		t.Fatalf("Codex provider search returned Pi results: %#v", codexResults)
+	}
+
+	skipped, err = imp.ImportDirectory("../../../pkg/pisessions/testdata", nil, false, false, pisessions.ParseFile, pisessions.Provider)
+	if err != nil {
+		t.Fatalf("ImportDirectory() second run error = %v", err)
+	}
+	if skipped != 3 {
+		t.Fatalf("ImportDirectory() second run skipped = %d, want 3 unchanged files", skipped)
 	}
 }
 

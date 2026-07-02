@@ -11,6 +11,7 @@ func TestResumeBinary(t *testing.T) {
 		ProviderCodex:    "codex",
 		ProviderCopilot:  "copilot",
 		ProviderOpenCode: "opencode",
+		ProviderPi:       "pi",
 		"":               "claude",
 		"unknown":        "claude",
 	}
@@ -151,6 +152,38 @@ func TestBuildResumeSpec(t *testing.T) {
 			wantBinary: "opencode",
 		},
 		{
+			name:       "pi resume",
+			provider:   ProviderPi,
+			wantPrefix: "pi --session 'sess-1'",
+			wantPrompt: true,
+			wantBinary: "pi",
+		},
+		{
+			name:       "pi flags placed before session",
+			provider:   ProviderPi,
+			flags:      []string{"--offline"},
+			wantPrefix: "pi --offline --session 'sess-1'",
+			wantPrompt: true,
+			wantBinary: "pi",
+		},
+		{
+			name:       "pi fork",
+			provider:   ProviderPi,
+			fork:       true,
+			wantPrefix: "pi --fork 'sess-1'",
+			wantPrompt: true,
+			wantBinary: "pi",
+		},
+		{
+			name:       "pi fork with flags",
+			provider:   ProviderPi,
+			fork:       true,
+			flags:      []string{"--offline"},
+			wantPrefix: "pi --offline --fork 'sess-1'",
+			wantPrompt: true,
+			wantBinary: "pi",
+		},
+		{
 			name:       "multiple flags joined in order",
 			provider:   ProviderCodex,
 			flags:      []string{"--dangerously-bypass-approvals-and-sandbox", "--search"},
@@ -178,11 +211,26 @@ func TestBuildResumeSpec(t *testing.T) {
 		}
 	})
 
+	t.Run("pi timestamped filename stem extracts uuid", func(t *testing.T) {
+		id := "2026-06-18T13-47-19-786Z_019edafc-796a-79ce-a42b-f1d986bd3e8c"
+		spec := BuildResumeSpec(ProviderPi, id, false, nil)
+		want := "pi --session '019edafc-796a-79ce-a42b-f1d986bd3e8c'"
+		if spec.Prefix != want {
+			t.Errorf("Prefix = %q, want %q", spec.Prefix, want)
+		}
+
+		spec = BuildResumeSpec(ProviderPi, id, true, []string{"--offline"})
+		want = "pi --offline --fork '019edafc-796a-79ce-a42b-f1d986bd3e8c'"
+		if spec.Prefix != want {
+			t.Errorf("Fork prefix with flags = %q, want %q", spec.Prefix, want)
+		}
+	})
+
 	// A session id containing shell metacharacters must be neutralized by
 	// quoting so it cannot break out of the command.
 	t.Run("malicious id is quoted", func(t *testing.T) {
 		id := "x'; rm -rf /; '"
-		for _, provider := range []string{ProviderClaude, ProviderCodex, ProviderCopilot, ProviderOpenCode} {
+		for _, provider := range []string{ProviderClaude, ProviderCodex, ProviderCopilot, ProviderOpenCode, ProviderPi} {
 			spec := BuildResumeSpec(provider, id, false, nil)
 			if !strings.Contains(spec.Prefix, ShellQuote(id)) {
 				t.Errorf("%s prefix = %q, want it to contain the quoted id %q", provider, spec.Prefix, ShellQuote(id))
@@ -243,6 +291,13 @@ func TestResumeCommandIn(t *testing.T) {
 			provider:    ProviderOpenCode,
 			sessionID:   "sess-1",
 			want:        "cd '/Users/x/proj' && opencode --session 'sess-1'",
+		},
+		{
+			name:        "pi has cd prefix",
+			projectPath: "/Users/x/proj",
+			provider:    ProviderPi,
+			sessionID:   "sess-1",
+			want:        "cd '/Users/x/proj' && pi --session 'sess-1'",
 		},
 		{
 			name:        "prompt appended after cd prefix",
@@ -321,6 +376,18 @@ func TestResumeCommand(t *testing.T) {
 			provider: ProviderOpenCode,
 			prompt:   "keep going",
 			want:     "opencode --session 'sess-1' --prompt 'keep going'",
+		},
+		{
+			name:     "pi appends prompt positionally",
+			provider: ProviderPi,
+			prompt:   "keep going",
+			want:     "pi --session 'sess-1' 'keep going'",
+		},
+		{
+			name:     "pi fork uses fork flag",
+			provider: ProviderPi,
+			fork:     true,
+			want:     "pi --fork 'sess-1'",
 		},
 		{
 			name:     "prompt with single quote is escaped",

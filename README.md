@@ -6,18 +6,18 @@
 [![Homebrew](https://img.shields.io/badge/homebrew-neilberkman%2Ftap-orange)](https://github.com/neilberkman/homebrew-tap)
 [![Show HN](https://img.shields.io/badge/Show%20HN-black?logo=ycombinator)](https://news.ycombinator.com/item?id=46512501)
 
-Search, browse, and resume your Claude Code, Codex CLI, GitHub Copilot CLI, and OpenCode sessions, plus MCP server to remember past context.
+Search, browse, and resume your Claude Code, Codex CLI, GitHub Copilot CLI, OpenCode, and Pi sessions, plus MCP server to remember past context.
 
 When your coding agent forgets, tell it: _[see what you have done](#the-king)_.
 
 ## Why ccrider?
 
-You've got months of coding agent sessions sitting in `~/.claude/projects/`, `~/.codex/sessions/`, `~/.copilot/`, and `~/.local/share/opencode/`. Finding that conversation where you fixed the authentication bug? Good luck grepping through nested JSON files.
+You've got months of coding agent sessions sitting in `~/.claude/projects/`, `~/.codex/sessions/`, `~/.copilot/`, `~/.local/share/opencode/`, and `~/.pi/agent/sessions/`. Finding that conversation where you fixed the authentication bug? Good luck grepping through nested JSON files.
 
-ccrider indexes Claude Code, Codex CLI, GitHub Copilot CLI, and OpenCode sessions into a single searchable database, with a TUI browser, CLI search, and an MCP server so your agent can search past sessions too.
+ccrider indexes Claude Code, Codex CLI, GitHub Copilot CLI, OpenCode, and Pi sessions into a single searchable database, with a TUI browser, CLI search, and an MCP server so your agent can search past sessions too.
 
 ```bash
-# Import sessions from Claude Code, Codex CLI, Copilot CLI, and OpenCode
+# Import sessions from Claude Code, Codex CLI, Copilot CLI, OpenCode, and Pi
 ccrider sync
 
 # Launch the TUI - browse, search, resume
@@ -87,7 +87,7 @@ Press **r** in the TUI or use the CLI:
 ccrider resume <session-id>
 ```
 
-Launches `claude --resume` in the right directory with the right session. Just works.
+Launches the provider's resume command in the right directory with the right session. Pi resumes with `pi --session <id>` and forks with `pi --fork <id>`.
 
 ### 4. Incremental Sync
 
@@ -96,7 +96,7 @@ ccrider sync         # Import new sessions from all providers
 ccrider sync --full  # Re-import everything
 ```
 
-Automatically discovers Claude Code (`~/.claude/projects/`), Codex CLI (`~/.codex/sessions/`), GitHub Copilot CLI (`~/.copilot/session-state/`), and OpenCode (`~/.local/share/opencode/opencode*.db`) sessions. Detects ongoing sessions and imports new messages without re-processing everything.
+Automatically discovers Claude Code (`~/.claude/projects/`), Codex CLI (`~/.codex/sessions/`), GitHub Copilot CLI (`~/.copilot/session-state/`), OpenCode (`~/.local/share/opencode/opencode*.db`), and Pi (`~/.pi/agent/sessions/`) sessions. Detects ongoing sessions and imports new messages without re-processing everything.
 
 ---
 
@@ -145,7 +145,7 @@ Add to your config (`~/Library/Application Support/Claude/claude_desktop_config.
 - **get_session_messages** - Get messages from a session (supports tail mode, context around search matches)
 - **generate_session_anchor** - Generate a unique phrase to tag your session for later retrieval
 
-All tools support a `provider` parameter to filter by `claude`, `codex`, `copilot`, or `opencode`. The MCP server provides read-only access to your session database. Your conversations stay local.
+All tools support a `provider` parameter to filter by `claude`, `codex`, `copilot`, `opencode`, or `pi`. The MCP server provides read-only access to your session database. Your conversations stay local.
 
 ---
 
@@ -161,6 +161,7 @@ claude_flags = ["--dangerously-skip-permissions"]
 # codex_flags = ["--dangerously-bypass-approvals-and-sandbox"]
 # copilot_flags = []
 # opencode_flags = []
+# pi_flags = []
 ```
 
 ```txt
@@ -204,7 +205,7 @@ Other coding agent session tools are broken:
 ccrider fixes this with:
 
 - 100% schema coverage - parses all message types correctly
-- Multi-provider - Claude Code, Codex CLI, GitHub Copilot CLI, and OpenCode in one database
+- Multi-provider - Claude Code, Codex CLI, GitHub Copilot CLI, OpenCode, and Pi in one database
 - SQLite FTS5 search - fast, powerful full-text search
 - Single binary - no npm, no pip, no dependencies
 - Native resume - one keystroke to resume sessions
@@ -234,6 +235,7 @@ pkg/
   codexsessions/      # Codex CLI session parser (public API)
   copilotsessions/    # GitHub Copilot CLI session parser (public API)
   opencodesessions/   # OpenCode session parser (public API)
+  pisessions/         # Pi session parser (public API)
 ```
 
 ### Quick Build

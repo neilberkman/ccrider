@@ -13,6 +13,7 @@ const (
 	ProviderCodex    = "codex"
 	ProviderCopilot  = "copilot"
 	ProviderOpenCode = "opencode"
+	ProviderPi       = "pi"
 )
 
 // providerInfo is the single description of everything ccrider knows about one
@@ -81,7 +82,7 @@ var providers = []providerInfo{
 			}
 			return ResumeSpec{
 				Binary:        "codex",
-				Prefix:        fmt.Sprintf("codex%s %s %s", joinFlags(flags), verb, ShellQuote(codexResumeID(sessionID))),
+				Prefix:        fmt.Sprintf("codex%s %s %s", joinFlags(flags), verb, ShellQuote(stripToTrailingUUID(sessionID))),
 				AcceptsPrompt: true,
 			}
 		},
@@ -121,6 +122,29 @@ var providers = []providerInfo{
 			}
 		},
 	},
+	{
+		Name:        ProviderPi,
+		Binary:      "pi",
+		Product:     "Pi",
+		SourceHint:  "~/.pi/agent/sessions/",
+		ConfigFlags: func(cfg *config.Config) []string { return cfg.PiFlags },
+		BuildSpec: func(sessionID string, fork bool, flags []string) ResumeSpec {
+			// pi [flags] --session <id> [prompt]; forking uses --fork <id>.
+			id := ShellQuote(stripToTrailingUUID(sessionID))
+			if fork {
+				return ResumeSpec{
+					Binary:        "pi",
+					Prefix:        fmt.Sprintf("pi%s --fork %s", joinFlags(flags), id),
+					AcceptsPrompt: true,
+				}
+			}
+			return ResumeSpec{
+				Binary:        "pi",
+				Prefix:        fmt.Sprintf("pi%s --session %s", joinFlags(flags), id),
+				AcceptsPrompt: true,
+			}
+		},
+	},
 }
 
 // lookupProvider returns the table entry for the given provider name.
@@ -143,7 +167,7 @@ func ResumeBinary(provider string) string {
 
 // BuildResumeSpec returns provider-specific resume invocation details.
 // flags are the user-configured extra flags for this provider's CLI
-// (claude_flags / codex_flags / copilot_flags / opencode_flags), injected at
+// (claude_flags / codex_flags / copilot_flags / opencode_flags / pi_flags), injected at
 // the position each CLI expects its global options.
 //
 // Session IDs come from the database and are normally UUID/rollout-shaped,

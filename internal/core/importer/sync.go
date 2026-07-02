@@ -9,6 +9,7 @@ import (
 	"github.com/neilberkman/ccrider/pkg/codexsessions"
 	"github.com/neilberkman/ccrider/pkg/copilotsessions"
 	"github.com/neilberkman/ccrider/pkg/opencodesessions"
+	"github.com/neilberkman/ccrider/pkg/pisessions"
 )
 
 // EnumerateFunc returns all parsed sessions for a database/event-log-backed
@@ -30,7 +31,7 @@ type Source struct {
 	Optional      bool
 }
 
-// DefaultSources returns the standard import sources (Claude + Codex + Copilot + OpenCode).
+// DefaultSources returns the standard import sources (Claude + Codex + Copilot + OpenCode + Pi).
 // Optional providers are only included when their data exists on disk.
 func DefaultSources() []Source {
 	home, err := os.UserHomeDir()
@@ -79,6 +80,16 @@ func DefaultSources() []Source {
 			EnumerateFn: func() ([]*ccsessions.ParsedSession, error) {
 				return opencodesessions.ParseAll(path)
 			},
+		})
+	}
+
+	piPath := filepath.Join(home, ".pi", "agent", "sessions")
+	if _, err := os.Stat(piPath); err == nil {
+		sources = append(sources, Source{
+			Path:          piPath,
+			ParseFn:       pisessions.ParseFile,
+			Provider:      pisessions.Provider,
+			SkipSubagents: false,
 		})
 	}
 

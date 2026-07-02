@@ -6,16 +6,15 @@ import (
 	"strings"
 )
 
-// codexRolloutUUID matches the trailing UUID in a Codex rollout filename, e.g.
-// "rollout-2026-06-04T14-40-56-019e93f0-3efe-7742-9598-bb06b36fb25a".
-var codexRolloutUUID = regexp.MustCompile(`[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+// trailingUUID matches a UUID at the end of a stored session id stem, e.g.
+// Codex "rollout-<timestamp>-<uuid>" or Pi "<timestamp>_<uuid>" filenames.
+var trailingUUID = regexp.MustCompile(`[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
-// codexResumeID returns the id that `codex resume` expects. ccrider stores Codex
-// sessions under their rollout filename (e.g. "rollout-<timestamp>-<uuid>"), but
-// codex resumes by the bare session UUID. If the stored id carries a trailing
-// UUID, extract it; otherwise pass it through unchanged.
-func codexResumeID(sessionID string) string {
-	if m := codexRolloutUUID.FindString(sessionID); m != "" {
+// stripToTrailingUUID returns the bare UUID some provider CLIs expect. ccrider
+// stores file-based sessions by filename stem in the DB; for providers whose
+// CLIs resolve the metadata UUID, this strip is load-bearing.
+func stripToTrailingUUID(sessionID string) string {
+	if m := trailingUUID.FindString(sessionID); m != "" {
 		return m
 	}
 	return sessionID

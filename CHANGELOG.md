@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Pi session support** — indexes Pi sessions from `~/.pi/agent/sessions/` alongside Claude Code, Codex CLI, GitHub Copilot CLI, and OpenCode. Pi sessions participate in sync, search, list, TUI, MCP, and resume workflows with `[pi]` provider tags and `--provider pi` filtering
+- **Pi resume support** — ccrider resumes Pi sessions with `pi --session <id>`, forks with `pi --fork <id>`, appends resume prompts positionally, and supports optional `pi_flags` in `config.toml`
+
 ### Fixed
 
 - **TUI shortcut toolbar positioning** — list and detail views now size their scrollable areas so the keyboard shortcut toolbar stays anchored to the final terminal line. The session list also uses `lipgloss.JoinVertical` to avoid manual newline trimming that could leave extra gaps. Thanks @Evidlo
