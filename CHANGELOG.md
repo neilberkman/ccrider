@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **TUI shortcut toolbar positioning** — list and detail views now size their scrollable areas so the keyboard shortcut toolbar stays anchored to the final terminal line. The session list also uses `lipgloss.JoinVertical` to avoid manual newline trimming that could leave extra gaps. Thanks @Evidlo
+
 ## [1.4.0] - 2026-06-28
 
 ### Added
