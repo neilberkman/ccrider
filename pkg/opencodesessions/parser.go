@@ -265,7 +265,7 @@ func parseSession(conn *sql.DB, dbPath string, dbInfo os.FileInfo, row sessionRo
 
 	summary := row.Title
 	if isDefaultTitle(summary) || strings.TrimSpace(summary) == "" {
-		summary = firstUserSummary(messages)
+		summary = ccsessions.FirstUserSummary(messages)
 	}
 
 	return &ccsessions.ParsedSession{
@@ -459,20 +459,6 @@ func isDefaultTitle(title string) bool {
 		return err == nil
 	}
 	return false
-}
-
-func firstUserSummary(messages []ccsessions.ParsedMessage) string {
-	for _, msg := range messages {
-		if msg.Sender != "human" {
-			continue
-		}
-		runes := []rune(msg.TextContent)
-		if len(runes) > 120 {
-			return string(runes[:117]) + "..."
-		}
-		return msg.TextContent
-	}
-	return ""
 }
 
 func timeFromMillis(ms int64) time.Time {

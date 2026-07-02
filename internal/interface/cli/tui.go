@@ -68,13 +68,15 @@ func runTUI(cmd *cobra.Command, args []string) error {
 
 // execResume dispatches to the right resume path for the session's provider.
 // Claude keeps its dedicated path (session-file recovery, prompt handling);
-// other agents use the generic execAgent path.
+// every other agent uses the generic execAgent path. Claude is the special
+// case here, not the default, so a newly added provider automatically gets
+// the generic path instead of silently being resumed with the claude binary.
 func execResume(provider, sessionID, projectPath, lastCwd, updatedAt, summary string, fork bool) error {
 	switch provider {
-	case session.ProviderCodex, session.ProviderCopilot, session.ProviderOpenCode:
-		return execAgent(provider, sessionID, projectPath, lastCwd, updatedAt, summary, fork)
-	default:
+	case "", session.ProviderClaude:
 		return execClaude(sessionID, projectPath, lastCwd, updatedAt, summary, fork)
+	default:
+		return execAgent(provider, sessionID, projectPath, lastCwd, updatedAt, summary, fork)
 	}
 }
 

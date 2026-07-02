@@ -5,26 +5,6 @@ import (
 	"github.com/neilberkman/ccrider/internal/core/db"
 )
 
-// ProviderFlags selects the configured extra-flags slice for the given
-// provider's CLI (claude_flags / codex_flags / copilot_flags /
-// opencode_flags). A nil cfg yields no flags. Unknown/empty providers map to
-// Claude, matching BuildResumeSpec.
-func ProviderFlags(cfg *config.Config, provider string) []string {
-	if cfg == nil {
-		return nil
-	}
-	switch provider {
-	case ProviderCodex:
-		return cfg.CodexFlags
-	case ProviderCopilot:
-		return cfg.CopilotFlags
-	case ProviderOpenCode:
-		return cfg.OpenCodeFlags
-	default:
-		return cfg.ClaudeFlags
-	}
-}
-
 // ConfiguredFlags loads the config and returns the extra flags the user
 // configured for the given provider's CLI (e.g.
 // --dangerously-skip-permissions for Claude). Config errors yield no flags

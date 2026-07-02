@@ -21,30 +21,6 @@ func codexResumeID(sessionID string) string {
 	return sessionID
 }
 
-// Provider identifiers. These match the values stored in the sessions.provider
-// column by the importer.
-const (
-	ProviderClaude   = "claude"
-	ProviderCodex    = "codex"
-	ProviderCopilot  = "copilot"
-	ProviderOpenCode = "opencode"
-)
-
-// ResumeBinary returns the CLI executable used to resume a session for the
-// given provider. Unknown/empty providers default to Claude.
-func ResumeBinary(provider string) string {
-	switch provider {
-	case ProviderCodex:
-		return "codex"
-	case ProviderCopilot:
-		return "copilot"
-	case ProviderOpenCode:
-		return "opencode"
-	default:
-		return "claude"
-	}
-}
-
 // ResumeSpec describes how to resume a session for a given provider.
 //
 // Prefix is the shell command up to (but excluding) any initial prompt
@@ -68,59 +44,6 @@ func joinFlags(flags []string) string {
 		return ""
 	}
 	return " " + strings.Join(flags, " ")
-}
-
-// BuildResumeSpec returns provider-specific resume invocation details.
-// flags are the user-configured extra flags for this provider's CLI
-// (claude_flags / codex_flags / copilot_flags / opencode_flags), injected at
-// the position each CLI expects its global options.
-func BuildResumeSpec(provider, sessionID string, fork bool, flags []string) ResumeSpec {
-	// Session IDs come from the database and are normally UUID/rollout-shaped,
-	// but shell-quote them anyway so an unexpected value can never break out of
-	// the command (defense-in-depth, since this string is run by a shell).
-	switch provider {
-	case ProviderCodex:
-		// codex [OPTIONS] resume <id> [prompt]; forking uses `codex fork`.
-		// Global options go BEFORE the subcommand (codex rejects them after).
-		verb := "resume"
-		if fork {
-			verb = "fork"
-		}
-		return ResumeSpec{
-			Binary:        "codex",
-			Prefix:        fmt.Sprintf("codex%s %s %s", joinFlags(flags), verb, ShellQuote(codexResumeID(sessionID))),
-			AcceptsPrompt: true,
-		}
-	case ProviderCopilot:
-		// copilot [flags] --resume=<id>; interactive resume has no positional prompt.
-		return ResumeSpec{
-			Binary:        "copilot",
-			Prefix:        fmt.Sprintf("copilot%s --resume=%s", joinFlags(flags), ShellQuote(sessionID)),
-			AcceptsPrompt: false,
-		}
-	case ProviderOpenCode:
-		// opencode [flags] --session <id> [--fork] [--prompt <prompt>].
-		prefix := fmt.Sprintf("opencode%s --session %s", joinFlags(flags), ShellQuote(sessionID))
-		if fork {
-			prefix += " --fork"
-		}
-		return ResumeSpec{
-			Binary:        "opencode",
-			Prefix:        prefix,
-			PromptFlag:    "--prompt",
-			AcceptsPrompt: true,
-		}
-	default:
-		prefix := fmt.Sprintf("claude%s --resume %s", joinFlags(flags), ShellQuote(sessionID))
-		if fork {
-			prefix += " --fork-session"
-		}
-		return ResumeSpec{
-			Binary:        "claude",
-			Prefix:        prefix,
-			AcceptsPrompt: true,
-		}
-	}
 }
 
 // AppendPromptArg appends an already shell-safe prompt argument to a resume

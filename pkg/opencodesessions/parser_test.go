@@ -103,7 +103,9 @@ func TestParseAllUsesFirstUserMessageWhenTitleIsDefault(t *testing.T) {
 	if len(sessions) != 1 {
 		t.Fatalf("ParseAll() returned %d sessions, want 1", len(sessions))
 	}
-	if got, want := sessions[0].Summary, strings.Repeat("x", 117)+"..."; got != want {
+	// Truncation is the shared ccsessions.FirstUserSummary rule (120 runes),
+	// identical across every provider.
+	if got, want := sessions[0].Summary, strings.Repeat("x", 120); got != want {
 		t.Errorf("Summary = %q, want truncated first-user summary", got)
 	}
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/neilberkman/ccrider/internal/core/db"
 	"github.com/neilberkman/ccrider/internal/core/importer"
+	"github.com/neilberkman/ccrider/internal/core/session"
 	"github.com/neilberkman/ccrider/pkg/ccsessions"
 	"github.com/spf13/cobra"
 )
@@ -18,13 +19,12 @@ var (
 var syncCmd = &cobra.Command{
 	Use:   "sync [path]",
 	Short: "Import/sync coding agent sessions",
-	Long: `Import sessions from Claude Code (~/.claude/projects/), Codex CLI
-(~/.codex/sessions/), GitHub Copilot CLI (~/.copilot/session-state/), and
-OpenCode (~/.local/share/opencode/opencode*.db), or from a specified Claude Code
-directory.
+	Long: fmt.Sprintf(`Import sessions from %s,
+or from a specified Claude Code directory.
 
 Performs incremental sync - only imports new or changed sessions.
 Use --force to re-import all sessions (fixes stale project_path values).`,
+		joinWithAnd(session.ProviderSources())),
 	Args: cobra.MaximumNArgs(1),
 	RunE: runSync,
 }

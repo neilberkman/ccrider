@@ -24,7 +24,7 @@ type SearchSessionsArgs struct {
 	Query            string `json:"query" jsonschema:"description=Search term to match against message content,required"`
 	Limit            int    `json:"limit,omitempty" jsonschema:"description=Max number of sessions to return (default: 10)"`
 	Project          string `json:"project,omitempty" jsonschema:"description=Filter by project path"`
-	Provider         string `json:"provider,omitempty" jsonschema:"description=Filter by provider (claude, codex, copilot, or opencode)"`
+	Provider         string `json:"provider,omitempty" jsonschema:"description=Filter by provider"`
 	CurrentSessionID string `json:"current_session_id,omitempty" jsonschema:"description=Current session ID to search within (searches only this session)"`
 	ExcludeCurrent   bool   `json:"exclude_current,omitempty" jsonschema:"description=Exclude current session from results (searches only other sessions)"`
 	AfterDate        string `json:"after_date,omitempty" jsonschema:"description=Only sessions updated after this date (ISO 8601 format, e.g. 2025-01-01)"`
@@ -37,7 +37,7 @@ type SearchSessionsArgs struct {
 type ListRecentSessionsArgs struct {
 	Limit    int    `json:"limit,omitempty" jsonschema:"description=Max sessions to return (default: 20)"`
 	Project  string `json:"project,omitempty" jsonschema:"description=Filter by project path"`
-	Provider string `json:"provider,omitempty" jsonschema:"description=Filter by provider (claude, codex, copilot, or opencode)"`
+	Provider string `json:"provider,omitempty" jsonschema:"description=Filter by provider"`
 }
 
 // GetSessionMessagesArgs defines arguments for the get_session_messages tool
@@ -138,6 +138,19 @@ func toSessionSummary(cs db.Session, cfg *config.Config) SessionSummary {
 	}
 }
 
+// providerFilterDescription renders the provider-filter parameter description
+// from the core provider registry, so the advertised values can never drift
+// from the providers ccrider actually imports.
+func providerFilterDescription() string {
+	names := session.ProviderNames()
+	quoted := make([]string, len(names))
+	for i, n := range names {
+		quoted[i] = fmt.Sprintf("%q", n)
+	}
+	return fmt.Sprintf("Filter by provider (e.g. %s, or %s)",
+		strings.Join(quoted[:len(quoted)-1], ", "), quoted[len(quoted)-1])
+}
+
 // StartServer starts the MCP server
 func StartServer(dbPath string) error {
 	// Open database
@@ -184,7 +197,7 @@ func StartServer(dbPath string) error {
 		mcp.WithBoolean("exact_match",
 			mcp.Description("If true, treats the query as an exact phrase match (auto-quoted). Use this instead of trying to add quotes yourself.")),
 		mcp.WithString("provider",
-			mcp.Description("Filter by provider (e.g. \"claude\", \"codex\", \"copilot\", or \"opencode\")")),
+			mcp.Description(providerFilterDescription())),
 	)
 	s.AddTool(searchTool, makeSearchSessionsHandler(database))
 
@@ -200,7 +213,7 @@ func StartServer(dbPath string) error {
 		mcp.WithString("project",
 			mcp.Description("Filter by project path")),
 		mcp.WithString("provider",
-			mcp.Description("Filter by provider (e.g. \"claude\", \"codex\", \"copilot\", or \"opencode\")")),
+			mcp.Description(providerFilterDescription())),
 	)
 	s.AddTool(listTool, makeListRecentSessionsHandler(database))
 
