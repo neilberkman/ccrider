@@ -91,21 +91,6 @@ Suggested fixes:
 	return fmt.Errorf("%s command failed in %s: %w", binary, workDir, err)
 }
 
-// providerDisplayName returns a human-friendly name for the provider's CLI,
-// including install guidance where useful.
-func providerDisplayName(provider string) string {
-	switch provider {
-	case ProviderCodex:
-		return "Codex CLI"
-	case ProviderCopilot:
-		return "GitHub Copilot CLI"
-	case ProviderOpenCode:
-		return "OpenCode CLI"
-	default:
-		return "Claude Code (npm install -g @anthropic-ai/claude-code)"
-	}
-}
-
 // SessionFileExists checks if the Claude Code session file exists on disk.
 // Claude stores sessions in ~/.claude/projects/<encoded-project-path>/<session-id>.jsonl
 func SessionFileExists(sessionID, projectPath string) bool {

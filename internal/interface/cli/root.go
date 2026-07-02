@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/neilberkman/ccrider/internal/core/session"
 	"github.com/spf13/cobra"
 )
 
@@ -30,15 +32,29 @@ func Execute() {
 var rootCmd = &cobra.Command{
 	Use:   "ccrider",
 	Short: "Coding agent session manager",
-	Long: `ccrider - search, browse, and resume your coding agent sessions
+	Long: fmt.Sprintf(`ccrider - search, browse, and resume your coding agent sessions
 
-A fast, reliable tool for managing Claude Code, Codex CLI, GitHub Copilot CLI,
-and OpenCode sessions with full-text search, incremental sync, and native resume
-integration.`,
+A fast, reliable tool for managing %s
+sessions with full-text search, incremental sync, and native resume
+integration.`, joinWithAnd(session.ProviderProducts())),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Default to TUI if no subcommand specified
 		return tuiCmd.RunE(cmd, args)
 	},
+}
+
+// joinWithAnd renders items as a natural-language list: "a, b, and c".
+func joinWithAnd(items []string) string {
+	switch len(items) {
+	case 0:
+		return ""
+	case 1:
+		return items[0]
+	case 2:
+		return items[0] + " and " + items[1]
+	default:
+		return strings.Join(items[:len(items)-1], ", ") + ", and " + items[len(items)-1]
+	}
 }
 
 func init() {

@@ -26,6 +26,7 @@ func TestLoadPerProviderFlags(t *testing.T) {
 codex_flags = ["--dangerously-bypass-approvals-and-sandbox"]
 copilot_flags = ["--allow-all-tools"]
 opencode_flags = ["--model", "anthropic/claude-sonnet-4"]
+pi_flags = ["--offline", "--no-extensions"]
 `)
 	cfg, err := Load()
 	if err != nil {
@@ -43,6 +44,9 @@ opencode_flags = ["--model", "anthropic/claude-sonnet-4"]
 	if want := []string{"--model", "anthropic/claude-sonnet-4"}; !reflect.DeepEqual(cfg.OpenCodeFlags, want) {
 		t.Errorf("OpenCodeFlags = %v, want %v", cfg.OpenCodeFlags, want)
 	}
+	if want := []string{"--offline", "--no-extensions"}; !reflect.DeepEqual(cfg.PiFlags, want) {
+		t.Errorf("PiFlags = %v, want %v", cfg.PiFlags, want)
+	}
 }
 
 func TestSaveRoundTripsPerProviderFlags(t *testing.T) {
@@ -54,6 +58,7 @@ func TestSaveRoundTripsPerProviderFlags(t *testing.T) {
 		CodexFlags:    []string{"--codex-only"},
 		CopilotFlags:  []string{"--copilot-only"},
 		OpenCodeFlags: []string{"--opencode-only"},
+		PiFlags:       []string{"--pi-only"},
 	}
 	if err := Save(in); err != nil {
 		t.Fatal(err)
@@ -74,5 +79,8 @@ func TestSaveRoundTripsPerProviderFlags(t *testing.T) {
 	}
 	if !reflect.DeepEqual(out.OpenCodeFlags, in.OpenCodeFlags) {
 		t.Errorf("OpenCodeFlags = %v, want %v", out.OpenCodeFlags, in.OpenCodeFlags)
+	}
+	if !reflect.DeepEqual(out.PiFlags, in.PiFlags) {
+		t.Errorf("PiFlags = %v, want %v", out.PiFlags, in.PiFlags)
 	}
 }

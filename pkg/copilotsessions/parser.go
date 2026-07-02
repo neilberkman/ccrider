@@ -125,68 +125,60 @@ func parseSession(sessionDir, sessionID, eventsPath string, info os.FileInfo) (*
 
 	// Read events line by line and skip any malformed line, so one corrupt
 	// line (e.g. a partially-flushed write on a live session) doesn't drop the
-	// rest of the transcript — matching the Claude/Codex parsers. ReadBytes
-	// grows to fit arbitrarily long event lines.
-	reader := bufio.NewReaderSize(file, 1024*1024)
-
+	// rest of the transcript — the shared line reader grows to fit arbitrarily
+	// long event lines.
 	var messages []ccsessions.ParsedMessage
 	sequence := 0
 
-	for {
-		line, readErr := reader.ReadBytes('\n')
+	_ = ccsessions.ForEachLine(file, func(line []byte) error {
+		var ev rawEvent
+		if json.Unmarshal(line, &ev) != nil {
+			return nil
+		}
+		switch ev.Type {
+		case "session.start", "session.resume":
+			// The event stream is authoritative for cwd; the
+			// workspace.yaml value is only a fallback for sessions
+			// whose start event lacks one.
+			var d sessionStartData
+			if json.Unmarshal(ev.Data, &d) == nil && d.Context.CWD != "" {
+				cwd = d.Context.CWD
+			}
 
-		if len(line) > 0 {
-			var ev rawEvent
-			if json.Unmarshal(line, &ev) == nil {
-				switch ev.Type {
-				case "session.start", "session.resume":
-					// The event stream is authoritative for cwd; the
-					// workspace.yaml value is only a fallback for sessions
-					// whose start event lacks one.
-					var d sessionStartData
-					if json.Unmarshal(ev.Data, &d) == nil && d.Context.CWD != "" {
-						cwd = d.Context.CWD
-					}
+		case "user.message":
+			var d messageData
+			if json.Unmarshal(ev.Data, &d) == nil && strings.TrimSpace(d.Content) != "" {
+				sequence++
+				messages = append(messages, ccsessions.ParsedMessage{
+					UUID:        ev.ID,
+					ParentUUID:  ev.ParentID,
+					Type:        "user",
+					Sender:      "human",
+					TextContent: d.Content,
+					Timestamp:   parseTime(ev.Timestamp),
+					Sequence:    sequence,
+					CWD:         cwd,
+				})
+			}
 
-				case "user.message":
-					var d messageData
-					if json.Unmarshal(ev.Data, &d) == nil && strings.TrimSpace(d.Content) != "" {
-						sequence++
-						messages = append(messages, ccsessions.ParsedMessage{
-							UUID:        ev.ID,
-							ParentUUID:  ev.ParentID,
-							Type:        "user",
-							Sender:      "human",
-							TextContent: d.Content,
-							Timestamp:   parseTime(ev.Timestamp),
-							Sequence:    sequence,
-							CWD:         cwd,
-						})
-					}
-
-				case "assistant.message":
-					var d messageData
-					if json.Unmarshal(ev.Data, &d) == nil && strings.TrimSpace(d.Content) != "" {
-						sequence++
-						messages = append(messages, ccsessions.ParsedMessage{
-							UUID:        ev.ID,
-							ParentUUID:  ev.ParentID,
-							Type:        "assistant",
-							Sender:      "assistant",
-							TextContent: d.Content,
-							Timestamp:   parseTime(ev.Timestamp),
-							Sequence:    sequence,
-							CWD:         cwd,
-						})
-					}
-				}
+		case "assistant.message":
+			var d messageData
+			if json.Unmarshal(ev.Data, &d) == nil && strings.TrimSpace(d.Content) != "" {
+				sequence++
+				messages = append(messages, ccsessions.ParsedMessage{
+					UUID:        ev.ID,
+					ParentUUID:  ev.ParentID,
+					Type:        "assistant",
+					Sender:      "assistant",
+					TextContent: d.Content,
+					Timestamp:   parseTime(ev.Timestamp),
+					Sequence:    sequence,
+					CWD:         cwd,
+				})
 			}
 		}
-
-		if readErr != nil {
-			break
-		}
-	}
+		return nil
+	})
 
 	if len(messages) == 0 {
 		return nil, nil
@@ -195,17 +187,7 @@ func parseSession(sessionDir, sessionID, eventsPath string, info os.FileInfo) (*
 	summary := wsName
 	if summary == "" {
 		// Fall back to the first user message, matching the other parsers.
-		for _, m := range messages {
-			if m.Sender == "human" && m.TextContent != "" {
-				runes := []rune(m.TextContent)
-				if len(runes) > 120 {
-					summary = string(runes[:120])
-				} else {
-					summary = m.TextContent
-				}
-				break
-			}
-		}
+		summary = ccsessions.FirstUserSummary(messages)
 	}
 
 	return &ccsessions.ParsedSession{

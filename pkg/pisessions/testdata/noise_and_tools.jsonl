@@ -1,0 +1,8 @@
+{"type":"session","version":3,"id":"pi-noise-session","timestamp":"2026-06-18T14:00:00.000Z","cwd":"/tmp/pi-noise"}
+{"type":"custom","id":"c1","parentId":null,"timestamp":"2026-06-18T14:00:01.000Z","customType":"plannotator","data":{"private":"must not index"}}
+{"type":"custom_message","id":"cm1","parentId":null,"timestamp":"2026-06-18T14:00:02.000Z","customType":"context-prune-summary","content":"must not index either","details":{"kind":"summary"}}
+{"type":"message","id":"u1","parentId":null,"timestamp":"2026-06-18T14:00:03.000Z","message":{"role":"user","timestamp":1781784003000,"content":[{"type":"text","text":"Run the frobnicator check"}]}}
+{"type":"message","id":"t1","parentId":"u1","timestamp":"2026-06-18T14:00:04.000Z","message":{"role":"toolResult","toolName":"bash","toolCallId":"redacted-call","isError":false,"timestamp":1781784004000,"content":[{"type":"text","text":"frobnicator passed"}]}}
+{"type":"message","id":"a-tool","parentId":"t1","timestamp":"2026-06-18T14:00:04.500Z","message":{"role":"assistant","timestamp":1781784004500,"content":[{"type":"toolCall","id":"hidden-call","name":"read","arguments":{"query":"hidden tool call"}}],"provider":"openai-codex","model":"gpt-5.5"}}
+not-json
+{"type":"message","id":"a1","parentId":"a-tool","timestamp":"2026-06-18T14:00:05.000Z","message":{"role":"assistant","timestamp":1781784005000,"content":[{"type":"text","text":"The check passed."}]}}

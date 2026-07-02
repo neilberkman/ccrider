@@ -1,11 +1,8 @@
 package ccsessions
 
 import (
-	"bufio"
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -86,57 +83,15 @@ func ParseFile(path string) (session *ParsedSession, err error) {
 		Messages:  make([]ParsedMessage, 0),
 	}
 
-	// Use bufio.Reader with ReadBytes to handle arbitrarily large lines
-	// (bufio.Scanner has hard 64MB limit even with large buffer)
-	reader := bufio.NewReaderSize(file, 1024*1024) // 1MB read buffer
 	lineNum := 0
-	var lineBuffer bytes.Buffer
-
-	for {
+	if err := ForEachLine(file, func(line []byte) error {
 		lineNum++
-		lineBuffer.Reset()
-
-		// Read until newline, accumulating chunks for arbitrarily long lines
-		for {
-			chunk, err := reader.ReadBytes('\n')
-			lineBuffer.Write(chunk)
-
-			if err == io.EOF {
-				// End of file
-				if lineBuffer.Len() == 0 {
-					// True EOF with no pending data
-					return session, nil
-				}
-				// Last line without trailing newline - process it
-				break
-			}
-			if err != nil {
-				return nil, fmt.Errorf("error reading file: %w", err)
-			}
-
-			// Found newline - line is complete
-			break
-		}
-
-		// Get line bytes and trim trailing newline
-		line := lineBuffer.Bytes()
-		if len(line) > 0 && line[len(line)-1] == '\n' {
-			line = line[:len(line)-1]
-		}
-		if len(line) > 0 && line[len(line)-1] == '\r' {
-			line = line[:len(line)-1]
-		}
-
-		// Skip empty lines
-		if len(line) == 0 {
-			continue
-		}
 
 		var raw rawEntry
 		if err := json.Unmarshal(line, &raw); err != nil {
 			// Skip corrupted lines (null bytes, truncated writes, etc.)
 			// rather than discarding the entire session
-			continue
+			return nil
 		}
 
 		// Handle summary if present (may not be first line, or may not exist)
@@ -147,7 +102,7 @@ func ParseFile(path string) (session *ParsedSession, err error) {
 			if raw.SessionID != "" {
 				session.SessionID = raw.SessionID
 			}
-			continue
+			return nil
 		}
 
 		// Extract sessionId from messages if we haven't found it yet
@@ -155,15 +110,19 @@ func ParseFile(path string) (session *ParsedSession, err error) {
 			session.SessionID = raw.SessionID
 		}
 
-		// Parse message entries
+		// Parse message entries; silently skip unsupported message types
 		msg, err := parseMessage(&raw, lineNum)
 		if err != nil {
-			// Silently skip unsupported message types
-			continue
+			return nil
 		}
 
 		session.Messages = append(session.Messages, *msg)
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("error reading file: %w", err)
 	}
+
+	return session, nil
 }
 
 func parseMessage(raw *rawEntry, sequence int) (*ParsedMessage, error) {
