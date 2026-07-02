@@ -2,10 +2,17 @@
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-07-02
+
 ### Added
 
 - **Pi session support** — indexes Pi sessions from `~/.pi/agent/sessions/` alongside Claude Code, Codex CLI, GitHub Copilot CLI, and OpenCode. Pi sessions participate in sync, search, list, TUI, MCP, and resume workflows with `[pi]` provider tags and `--provider pi` filtering
 - **Pi resume support** — ccrider resumes Pi sessions with `pi --session <id>`, forks with `pi --fork <id>`, appends resume prompts positionally, and supports optional `pi_flags` in `config.toml`
+
+### Changed
+
+- **Provider registry** — provider metadata, resume binary lookup, resume specs, config flag lookup, source hints, and help-text provider lists now derive from a single core registry instead of scattered switch statements
+- **Shared JSONL parser utilities** — Claude, Codex, Copilot, OpenCode, and Pi parsers now share the JSONL read loop, deterministic UUID helper, first-user summary fallback, and text item extraction helpers
 
 ### Fixed
 
