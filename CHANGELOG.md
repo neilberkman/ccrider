@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-07-04
+
+### Changed
+
+- **Provider-neutral session display** — TUI and CLI list output now tag Claude sessions with `[claude]` just like Codex, Copilot, OpenCode, and Pi. TUI help/title text, sync output, MCP/export help, and resume prompt docs now describe coding agents/providers instead of treating Claude Code as the baseline
+
 ## [1.5.0] - 2026-07-02
 
 ### Added

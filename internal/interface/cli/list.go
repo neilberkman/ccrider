@@ -92,7 +92,7 @@ func runList(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 
 	for i, s := range sessions {
-		if s.provider != "" && s.provider != "claude" {
+		if s.provider != "" {
 			fmt.Printf("[%d] [%s] %s\n", i+1, s.provider, s.sessionID)
 		} else {
 			fmt.Printf("[%d] %s\n", i+1, s.sessionID)

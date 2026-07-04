@@ -155,7 +155,7 @@ func New(database *db.DB) Model {
 
 	// Create empty list initially (will be populated when sessions load)
 	emptyList := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
-	emptyList.Title = "Claude Code Sessions"
+	emptyList.Title = "Coding Agent Sessions"
 
 	// Get current working directory for filtering
 	currentDir, _ := os.Getwd()

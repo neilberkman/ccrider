@@ -11,7 +11,7 @@ func (m Model) updateTerminalFallback(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "r":
 		// Resume in current terminal
-		return m, launchClaudeSession(
+		return m, launchSession(
 			m.fallbackProvider,
 			m.fallbackSessionID,
 			m.fallbackProjectPath,
@@ -55,7 +55,7 @@ func (m Model) updateTerminalFallback(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) viewTerminalFallback() string {
 	// Build the command here so we can show it. Core handles the cd prefix,
-	// working dir resolution (project path, NOT lastCwd), and claude flags.
+	// working dir resolution (project path, NOT lastCwd), and provider flags.
 	cmd := session.DisplayResumeCommand(m.fallbackProvider, m.fallbackSessionID, m.fallbackProjectPath, m.fallbackLastCwd, false)
 
 	return fmt.Sprintf(`

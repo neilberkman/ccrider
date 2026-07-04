@@ -261,9 +261,9 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "r":
-		// Resume session in Claude Code
+		// Resume session with its provider CLI
 		if m.currentSession != nil {
-			return m, launchClaudeSession(
+			return m, launchSession(
 				m.currentSession.Session.Provider,
 				m.currentSession.Session.ID,
 				m.currentSession.Session.Project,
@@ -278,7 +278,7 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "f":
 		// Fork session (resume with new session ID)
 		if m.currentSession != nil {
-			return m, launchClaudeSession(
+			return m, launchSession(
 				m.currentSession.Session.Provider,
 				m.currentSession.Session.ID,
 				m.currentSession.Session.Project,
@@ -566,7 +566,7 @@ type sessionLaunchedMsg struct {
 	fork        bool
 }
 
-func launchClaudeSession(provider, sessionID, projectPath, lastCwd, updatedAt, summary string, fork bool) tea.Cmd {
+func launchSession(provider, sessionID, projectPath, lastCwd, updatedAt, summary string, fork bool) tea.Cmd {
 	return func() tea.Msg {
 		// We need to exec() to replace the process, but bubbletea makes this tricky
 		// Instead, we'll return a special message telling the TUI to quit,

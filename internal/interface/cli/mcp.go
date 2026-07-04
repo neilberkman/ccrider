@@ -9,8 +9,8 @@ import (
 
 var mcpCmd = &cobra.Command{
 	Use:   "serve-mcp",
-	Short: "Start MCP server for Claude Code integration",
-	Long: `Start an MCP (Model Context Protocol) server that allows Claude Code
+	Short: "Start MCP server for coding agents",
+	Long: `Start an MCP (Model Context Protocol) server that allows coding agents
 to search and retrieve information from your session history.
 
 For Claude Code:
@@ -25,6 +25,8 @@ For Claude Desktop (~/Library/Application Support/Claude/claude_desktop_config.j
       }
     }
   }
+
+For other MCP clients, configure command "ccrider" with args ["serve-mcp"].
 `,
 	RunE: runMCP,
 }

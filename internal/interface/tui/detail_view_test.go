@@ -12,15 +12,15 @@ import (
 //
 // isolateConfig points HOME at an empty temp dir so the commands built via
 // session.DisplayResumeCommand don't pick up the developer's real
-// ~/.config/ccrider (e.g. configured claude flags).
+// ~/.config/ccrider (e.g. configured provider flags).
 func isolateConfig(t *testing.T) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 }
 
-func TestLaunchClaudeSessionMessageHasCdPrefix(t *testing.T) {
+func TestLaunchSessionMessageHasCdPrefix(t *testing.T) {
 	isolateConfig(t)
-	msg := launchClaudeSession("claude", "sess-1", "/Users/x/proj", "/Users/x/elsewhere", "", "", false)()
+	msg := launchSession("claude", "sess-1", "/Users/x/proj", "/Users/x/elsewhere", "", "", false)()
 	lm, ok := msg.(sessionLaunchedMsg)
 	if !ok {
 		t.Fatalf("expected sessionLaunchedMsg, got %T", msg)

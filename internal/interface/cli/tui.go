@@ -80,8 +80,8 @@ func execResume(provider, sessionID, projectPath, lastCwd, updatedAt, summary st
 	}
 }
 
-// execAgent resumes a non-Claude agent session by exec'ing the
-// provider's resume command, replacing the current process.
+// execAgent resumes a provider through the generic resume path, replacing the
+// current process with the provider's resume command.
 func execAgent(provider, sessionID, projectPath, lastCwd, updatedAt, summary string, fork bool) error {
 	// Config errors fall back to defaults (no flags, default prompt template);
 	// a resume without optional extras is still correct.

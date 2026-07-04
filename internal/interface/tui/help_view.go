@@ -18,8 +18,8 @@ func (m Model) updateHelp(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) viewHelp() string {
 	help := `
-Claude Code Session Manager - Help
-═══════════════════════════════════
+CCRider Session Browser - Help
+══════════════════════════════
 
 SESSION LIST VIEW
 ─────────────────
@@ -36,7 +36,7 @@ SESSION DETAIL VIEW
 ───────────────────
   e            Export session (opens path dialog with default)
   E            Export session (blank path, type your own)
-  r            Resume session in Claude Code (replaces TUI)
+  r            Resume session with provider CLI (replaces TUI)
   f            Fork session (new session ID, replaces TUI)
   o            Open session in new terminal window
   c            Copy resume command to clipboard
@@ -62,7 +62,7 @@ Press any key to return to session list
 	var b strings.Builder
 	for _, line := range strings.Split(help, "\n") {
 		switch {
-		case line == "Claude Code Session Manager - Help" || isRule(line, '═'):
+		case line == "CCRider Session Browser - Help" || isRule(line, '═'):
 			b.WriteString(helpTitleStyle.Render(line))
 		case isHeading(line) || isRule(line, '─'):
 			b.WriteString(helpHeadingStyle.Render(line))

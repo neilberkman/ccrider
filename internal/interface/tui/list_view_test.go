@@ -13,11 +13,9 @@ func TestSessionListItem_Title_Claude(t *testing.T) {
 	}}
 
 	title := item.Title()
-	if title != "Fix auth bug" {
-		t.Errorf("Title() = %q, want %q", title, "Fix auth bug")
-	}
-	if strings.Contains(title, "[claude]") {
-		t.Error("Claude sessions should NOT have a [claude] prefix")
+	want := "[claude] Fix auth bug"
+	if title != want {
+		t.Errorf("Title() = %q, want %q", title, want)
 	}
 }
 

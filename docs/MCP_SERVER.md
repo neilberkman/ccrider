@@ -134,7 +134,7 @@ All MCP tools automatically sync the database before executing queries to ensure
 
 - **MCP Framework**: `github.com/mark3labs/mcp-go` (same as clippy)
 - **Database**: Existing SQLite database at `~/.config/ccrider/sessions.db`
-- **Server Protocol**: stdio-based MCP server (standard for Claude Desktop)
+- **Server Protocol**: stdio-based MCP server for MCP-capable clients
 
 ### Database Queries
 
@@ -148,7 +148,7 @@ Can factor these into reusable core functions.
 
 ### Configuration
 
-MCP servers are configured in Claude Desktop's config file:
+Configure an MCP-capable client to run `ccrider serve-mcp`. Claude Desktop uses this config form:
 
 ```json
 {
@@ -202,7 +202,7 @@ MCP servers are configured in Claude Desktop's config file:
 
 **Configuration Example:**
 
-Add to `~/.config/claude/config.json`:
+Generic MCP client config form:
 
 ```json
 {
@@ -258,7 +258,7 @@ func StartServer() error {
 
 ## Success Criteria
 
-1. Claude Code can search past sessions via MCP
+1. MCP clients can search past sessions via MCP
 2. Results are relevant and well-formatted
 3. Performance is acceptable (<500ms for typical searches)
 4. Integration is seamless for users

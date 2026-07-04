@@ -20,7 +20,7 @@ var (
 var exportCmd = &cobra.Command{
 	Use:   "export <session-id>",
 	Short: "Export a session to markdown",
-	Long: `Export a Claude Code session to markdown.
+	Long: `Export a coding agent session to markdown.
 
 By default, writes markdown to stdout for piping or redirection.
 

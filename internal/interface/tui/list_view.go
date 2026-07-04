@@ -28,7 +28,7 @@ func (i sessionListItem) Title() string {
 			title = i.session.ID
 		}
 	}
-	if i.session.Provider != "" && i.session.Provider != "claude" {
+	if i.session.Provider != "" {
 		title = "[" + i.session.Provider + "] " + title
 	}
 	return title

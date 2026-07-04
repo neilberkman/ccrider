@@ -27,7 +27,7 @@ ccrider tui
 ccrider search "authentication bug"
 ```
 
-Stay in your terminal. Find any conversation. Resume where you left off. Non-Claude sessions are tagged with their provider in the TUI for easy identification.
+Stay in your terminal. Find any conversation. Resume where you left off. Sessions are tagged with their provider in the TUI for easy identification.
 
 **Installation:**
 
@@ -41,7 +41,7 @@ cd ccrider
 go build -o ccrider cmd/ccrider/main.go
 sudo mv ccrider /usr/local/bin/
 
-# Install MCP server for all your projects (optional)
+# Optional: install the MCP server in Claude Code
 claude mcp add --scope user ccrider $(which ccrider) serve-mcp
 ```
 
@@ -81,19 +81,13 @@ Powered by SQLite FTS5 - search message content, filter by project or date, get 
 
 ### 3. Resume Sessions
 
-Press **r** in the TUI or use the CLI:
-
-```bash
-ccrider resume <session-id>
-```
-
-Launches the provider's resume command in the right directory with the right session. Pi resumes with `pi --session <id>` and forks with `pi --fork <id>`.
+Press **r** in the TUI to launch the provider's resume command in the right directory with the right session. Use **c** to copy that command or **o** to open it in a new terminal. Pi resumes with `pi --session <id>` and forks with `pi --fork <id>`.
 
 ### 4. Incremental Sync
 
 ```bash
 ccrider sync         # Import new sessions from all providers
-ccrider sync --full  # Re-import everything
+ccrider sync --force # Re-import everything
 ```
 
 Automatically discovers Claude Code (`~/.claude/projects/`), Codex CLI (`~/.codex/sessions/`), GitHub Copilot CLI (`~/.copilot/session-state/`), OpenCode (`~/.local/share/opencode/opencode*.db`), and Pi (`~/.pi/agent/sessions/`) sessions. Detects ongoing sessions and imports new messages without re-processing everything.
@@ -112,6 +106,8 @@ Ask your agent to search past conversations while working on new problems:
 - "Search my Codex sessions for database migrations"
 
 ### Setup
+
+Configure your MCP-capable client to run `ccrider serve-mcp`. Examples:
 
 **Claude Code:**
 
@@ -137,6 +133,10 @@ Add to your config (`~/Library/Application Support/Claude/claude_desktop_config.
   }
 }
 ```
+
+**Other MCP clients:**
+
+Use command `ccrider` with args `["serve-mcp"]`.
 
 ### Available Tools
 
@@ -190,7 +190,7 @@ Uses proven technologies:
 - **Go** for performance and single-binary distribution
 - **SQLite with FTS5** for fast full-text search
 - **Bubbletea** for polished terminal UI
-- **MCP** for Claude integration
+- **MCP** for coding agent integration
 
 ### Why This Matters
 

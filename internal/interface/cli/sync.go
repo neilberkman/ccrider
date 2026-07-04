@@ -19,8 +19,9 @@ var (
 var syncCmd = &cobra.Command{
 	Use:   "sync [path]",
 	Short: "Import/sync coding agent sessions",
-	Long: fmt.Sprintf(`Import sessions from %s,
-or from a specified Claude Code directory.
+	Long: fmt.Sprintf(`Import sessions from %s.
+
+With an explicit path, imports Claude Code JSONL sessions from that directory.
 
 Performs incremental sync - only imports new or changed sessions.
 Use --force to re-import all sessions (fixes stale project_path values).`,
@@ -35,19 +36,22 @@ func init() {
 }
 
 func runSync(cmd *cobra.Command, args []string) error {
-	// Determine source path
-	sourcePath := getDefaultClaudeDir()
+	// Determine source path for explicit Claude JSONL imports.
+	sourcePath := ""
 	if len(args) > 0 {
 		sourcePath = args[0]
+		// Resolve symlinks (filepath.Walk doesn't follow them)
+		resolved, err := filepath.EvalSymlinks(sourcePath)
+		if err == nil {
+			sourcePath = resolved
+		}
 	}
 
-	// Resolve symlinks (filepath.Walk doesn't follow them)
-	resolved, err := filepath.EvalSymlinks(sourcePath)
-	if err == nil {
-		sourcePath = resolved
+	if len(args) > 0 {
+		fmt.Printf("Syncing Claude Code sessions from: %s\n", sourcePath)
+	} else {
+		fmt.Printf("Syncing sessions from %s\n", joinWithAnd(session.ProviderProducts()))
 	}
-
-	fmt.Printf("Syncing sessions from: %s\n", sourcePath)
 	fmt.Printf("Database: %s\n\n", dbPath)
 
 	// Ensure database directory exists
@@ -126,12 +130,4 @@ func runSync(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
-}
-
-func getDefaultClaudeDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "~/.claude/projects"
-	}
-	return filepath.Join(home, ".claude", "projects")
 }

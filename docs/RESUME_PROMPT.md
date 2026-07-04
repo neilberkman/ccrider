@@ -4,24 +4,24 @@
 
 When viewing a session in `ccrider tui`, you have multiple ways to resume:
 
-- **`r` - Resume** - Quit ccrider and launch Claude in the same terminal
+- **`r` - Resume** - Quit ccrider and launch the provider CLI in the same terminal
 - **`f` - Fork** - Same as resume but creates a new session ID
-- **`o` - Open in New Terminal** - Launch Claude in a new terminal window (keeps ccrider open)
+- **`o` - Open in New Terminal** - Launch the provider CLI in a new terminal window (keeps ccrider open)
 - **`c` - Copy Command** - Copy the resume command to clipboard
 
 ## Resume Prompt Customization
 
-When you resume a session (via `r`, `f`, or `o`), ccrider sends a contextual prompt to Claude Code to help set the right context.
+When you resume a session (via `r`, `f`, or `o`), ccrider sends a contextual prompt to the provider CLI when that CLI accepts an initial prompt.
 
 ## How It Works
 
-1. **ccrider resumes from the original project directory** - This is where Claude Code stores session files (in `~/.claude/projects/`)
-2. **A prompt is sent to Claude** telling it:
+1. **ccrider resumes from the original project directory** - this is where provider CLIs resolve stored session metadata.
+2. **A prompt is sent when supported** telling the agent:
    - Where you were actually working (last working directory from the session)
    - How long the session has been inactive
    - To check the current state before proceeding
 
-This solves the problem of sessions that moved between directories (like git worktrees) - Claude can find the session files AND knows where to navigate.
+This solves the problem of sessions that moved between directories (like git worktrees): the provider CLI can find the session, and the prompt tells the agent where you were actually working.
 
 ## Default Prompt Template
 
@@ -33,7 +33,7 @@ Resuming session from {{last_updated}}.{{#different_directory}} Started in your 
 IMPORTANT: This session has been inactive for {{time_since}}. Before proceeding: check git status, look around to understand what changed, and be careful not to overwrite any work in progress.
 ```
 
-Note: ccrider automatically starts Claude in the correct directory (preferring `last_cwd` over `project_path`), so the template doesn't need to tell Claude to navigate - it's already there!
+Note: ccrider starts the provider CLI from the original project directory so session lookup works. The template can still mention `last_cwd` when the session had moved into a worktree or subdirectory.
 
 ## Available Variables
 
