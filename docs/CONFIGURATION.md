@@ -6,6 +6,8 @@ ccrider can be configured via files in `~/.config/ccrider/`.
 
 Pi sessions are imported from `~/.pi/agent/sessions/` when that directory exists. ccrider can search, list, serve through MCP, and resume Pi sessions with `pi --session <id>`; forked resumes use `pi --fork <id>`.
 
+Antigravity CLI sessions are imported from `~/.gemini/antigravity-cli/brain/` when that directory exists. ccrider indexes each canonical `transcript.jsonl` and resumes it with `agy --conversation <id>`. Antigravity forks interactively after resuming with `/fork`.
+
 ### config.toml
 
 Main configuration file for global settings.

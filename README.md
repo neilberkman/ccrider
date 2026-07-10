@@ -5,18 +5,18 @@
 [![Homebrew](https://img.shields.io/badge/homebrew-neilberkman%2Ftap-orange)](https://github.com/neilberkman/homebrew-tap)
 [![Show HN](https://img.shields.io/badge/Show%20HN-black?logo=ycombinator)](https://news.ycombinator.com/item?id=46512501)
 
-Search, browse, and resume your Claude Code, Codex CLI, GitHub Copilot CLI, OpenCode, and Pi sessions, plus MCP server to remember past context.
+Search, browse, and resume your Claude Code, Codex CLI, GitHub Copilot CLI, OpenCode, Pi, and Antigravity CLI sessions, plus MCP server to remember past context.
 
 When your coding agent forgets, tell it: _[see what you have done](#the-king)_.
 
 ## Why ccrider?
 
-You've got months of coding agent sessions sitting in `~/.claude/projects/`, `~/.codex/sessions/`, `~/.copilot/`, `~/.local/share/opencode/`, and `~/.pi/agent/sessions/`. Finding that conversation where you fixed the authentication bug? Good luck grepping through nested JSON files.
+You've got months of coding agent sessions sitting in `~/.claude/projects/`, `~/.codex/sessions/`, `~/.copilot/`, `~/.local/share/opencode/`, `~/.pi/agent/sessions/`, and `~/.gemini/antigravity-cli/brain/`. Finding that conversation where you fixed the authentication bug? Good luck grepping through nested JSON files.
 
-ccrider indexes Claude Code, Codex CLI, GitHub Copilot CLI, OpenCode, and Pi sessions into a single searchable database, with a TUI browser, CLI search, and an MCP server so your agent can search past sessions too.
+ccrider indexes Claude Code, Codex CLI, GitHub Copilot CLI, OpenCode, Pi, and Antigravity CLI sessions into a single searchable database, with a TUI browser, CLI search, and an MCP server so your agent can search past sessions too.
 
 ```bash
-# Import sessions from Claude Code, Codex CLI, Copilot CLI, OpenCode, and Pi
+# Import sessions from Claude Code, Codex CLI, Copilot CLI, OpenCode, Pi, and Antigravity CLI
 ccrider sync
 
 # Launch the TUI - browse, search, resume
@@ -80,7 +80,7 @@ Powered by SQLite FTS5 - search message content, filter by project or date, get 
 
 ### 3. Resume Sessions
 
-Press **r** in the TUI to launch the provider's resume command in the right directory with the right session. Use **c** to copy that command or **o** to open it in a new terminal. Pi resumes with `pi --session <id>` and forks with `pi --fork <id>`.
+Press **r** in the TUI to launch the provider's resume command in the right directory with the right session. Use **c** to copy that command or **o** to open it in a new terminal. Pi resumes with `pi --session <id>` and forks with `pi --fork <id>`; Antigravity resumes with `agy --conversation <id>` and forks interactively with `/fork`.
 
 ### 4. Incremental Sync
 
@@ -89,7 +89,7 @@ ccrider sync         # Import new sessions from all providers
 ccrider sync --force # Re-import everything
 ```
 
-Automatically discovers Claude Code (`~/.claude/projects/`), Codex CLI (`~/.codex/sessions/`), GitHub Copilot CLI (`~/.copilot/session-state/`), OpenCode (`~/.local/share/opencode/opencode*.db`), and Pi (`~/.pi/agent/sessions/`) sessions. Detects ongoing sessions and imports new messages without re-processing everything.
+Automatically discovers Claude Code (`~/.claude/projects/`), Codex CLI (`~/.codex/sessions/`), GitHub Copilot CLI (`~/.copilot/session-state/`), OpenCode (`~/.local/share/opencode/opencode*.db`), Pi (`~/.pi/agent/sessions/`), and Antigravity CLI (`~/.gemini/antigravity-cli/brain/`) sessions. Antigravity imports the canonical `transcript.jsonl` for each conversation, excluding the full diagnostic transcript. Detects ongoing sessions and imports new messages without re-processing everything.
 
 ---
 
@@ -144,7 +144,7 @@ Use command `ccrider` with args `["serve-mcp"]`.
 - **get_session_messages** - Get messages from a session (supports tail mode, context around search matches)
 - **generate_session_anchor** - Generate a unique phrase to tag your session for later retrieval
 
-All tools support a `provider` parameter to filter by `claude`, `codex`, `copilot`, `opencode`, or `pi`. The MCP server provides read-only access to your session database. Your conversations stay local.
+All tools support a `provider` parameter to filter by `claude`, `codex`, `copilot`, `opencode`, `pi`, or `antigravity`. The MCP server provides read-only access to your session database. Your conversations stay local.
 
 ---
 
@@ -204,7 +204,7 @@ Other coding agent session tools are broken:
 ccrider fixes this with:
 
 - 100% schema coverage - parses all message types correctly
-- Multi-provider - Claude Code, Codex CLI, GitHub Copilot CLI, OpenCode, and Pi in one database
+- Multi-provider - Claude Code, Codex CLI, GitHub Copilot CLI, OpenCode, Pi, and Antigravity CLI in one database
 - SQLite FTS5 search - fast, powerful full-text search
 - Single binary - no npm, no pip, no dependencies
 - Native resume - one keystroke to resume sessions
@@ -235,6 +235,7 @@ pkg/
   copilotsessions/    # GitHub Copilot CLI session parser (public API)
   opencodesessions/   # OpenCode session parser (public API)
   pisessions/         # Pi session parser (public API)
+  antigravitysessions/ # Antigravity CLI session parser (public API)
 ```
 
 ### Quick Build

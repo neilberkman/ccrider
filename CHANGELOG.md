@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-07-10
+
+### Added
+
+- **Antigravity CLI session support** — indexes canonical Antigravity transcripts from `~/.gemini/antigravity-cli/brain/`, preserving workspace associations from its local history index and avoiding collisions from shared `transcript.jsonl` filenames. Antigravity sessions participate in sync, search, list, TUI, and MCP workflows with `[antigravity]` provider tags and `--provider antigravity` filtering
+- **Antigravity resume support** — ccrider resumes Antigravity CLI sessions with `agy --conversation <id>`. Because Antigravity only branches interactively with `/fork`, the TUI omits its direct fork shortcut for those sessions
+
 ## [1.5.1] - 2026-07-04
 
 ### Changed

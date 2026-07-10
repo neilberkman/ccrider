@@ -9,11 +9,12 @@ import (
 // Provider identifiers. These match the values stored in the sessions.provider
 // column by the importer.
 const (
-	ProviderClaude   = "claude"
-	ProviderCodex    = "codex"
-	ProviderCopilot  = "copilot"
-	ProviderOpenCode = "opencode"
-	ProviderPi       = "pi"
+	ProviderClaude      = "claude"
+	ProviderCodex       = "codex"
+	ProviderCopilot     = "copilot"
+	ProviderOpenCode    = "opencode"
+	ProviderPi          = "pi"
+	ProviderAntigravity = "antigravity"
 )
 
 // providerInfo is the single description of everything ccrider knows about one
@@ -42,6 +43,8 @@ type providerInfo struct {
 	// user-configured extra flags, injected at the position the CLI expects
 	// its global options.
 	BuildSpec func(sessionID string, fork bool, flags []string) ResumeSpec
+	// SupportsFork reports whether ccrider can launch a fork directly.
+	SupportsFork bool
 }
 
 // providers lists every supported provider in display order. The first entry
@@ -66,6 +69,7 @@ var providers = []providerInfo{
 				AcceptsPrompt: true,
 			}
 		},
+		SupportsFork: true,
 	},
 	{
 		Name:        ProviderCodex,
@@ -86,6 +90,7 @@ var providers = []providerInfo{
 				AcceptsPrompt: true,
 			}
 		},
+		SupportsFork: true,
 	},
 	{
 		Name:        ProviderCopilot,
@@ -121,6 +126,7 @@ var providers = []providerInfo{
 				AcceptsPrompt: true,
 			}
 		},
+		SupportsFork: true,
 	},
 	{
 		Name:        ProviderPi,
@@ -142,6 +148,23 @@ var providers = []providerInfo{
 				Binary:        "pi",
 				Prefix:        fmt.Sprintf("pi%s --session %s", joinFlags(flags), id),
 				AcceptsPrompt: true,
+			}
+		},
+		SupportsFork: true,
+	},
+	{
+		Name:        ProviderAntigravity,
+		Binary:      "agy",
+		Product:     "Antigravity CLI",
+		SourceHint:  "~/.gemini/antigravity-cli/brain/",
+		ConfigFlags: func(*config.Config) []string { return nil },
+		BuildSpec: func(sessionID string, fork bool, flags []string) ResumeSpec {
+			// Antigravity branches from its interactive /fork command. Its CLI
+			// has no direct fork flag, so ccrider only resumes the selected UUID.
+			return ResumeSpec{
+				Binary:        "agy",
+				Prefix:        fmt.Sprintf("agy%s --conversation %s", joinFlags(flags), ShellQuote(sessionID)),
+				AcceptsPrompt: false,
 			}
 		},
 	},
@@ -186,6 +209,11 @@ func ProviderFlags(cfg *config.Config, provider string) []string {
 		return nil
 	}
 	return lookupProvider(provider).ConfigFlags(cfg)
+}
+
+// SupportsFork reports whether ccrider can start a forked session directly.
+func SupportsFork(provider string) bool {
+	return lookupProvider(provider).SupportsFork
 }
 
 // providerDisplayName returns a human-friendly name for the provider's CLI,

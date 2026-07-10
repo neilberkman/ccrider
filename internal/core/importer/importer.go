@@ -36,10 +36,7 @@ func New(database *db.DB) *Importer {
 func (i *Importer) ImportSession(session *ccsessions.ParsedSession, existingMessageCount int, fileInode, fileDevice uint64, fileHash string, provider string) error {
 	hash := fileHash
 
-	// Use filename as DB key (not parsed sessionId which points to previous
-	// file in resumed session chains, causing hash thrashing)
-	fileSessionID := filepath.Base(session.FilePath)
-	fileSessionID = strings.TrimSuffix(fileSessionID, filepath.Ext(fileSessionID))
+	fileSessionID := sessionImportID(session)
 
 	// Begin transaction
 	tx, err := i.db.Begin()
@@ -52,7 +49,10 @@ func (i *Importer) ImportSession(session *ccsessions.ParsedSession, existingMess
 
 	// Extract project path from FIRST message CWD (where session was initiated)
 	// This is the directory where `claude` was launched, NOT where user was last working
-	projectPath := extractProjectInitiationPath(session.Messages)
+	projectPath := session.ProjectPath
+	if projectPath == "" {
+		projectPath = extractProjectInitiationPath(session.Messages)
+	}
 	if projectPath == "" {
 		// Fallback to decoding from directory name (legacy behavior)
 		projectPath = extractProjectPath(session.FilePath)
@@ -420,8 +420,7 @@ func (i *Importer) ImportEnumerated(sessions []*ccsessions.ParsedSession, progre
 	var skipped, failed int
 
 	for _, session := range sessions {
-		sessionID := filepath.Base(session.FilePath)
-		sessionID = strings.TrimSuffix(sessionID, filepath.Ext(sessionID))
+		sessionID := sessionImportID(session)
 
 		hash := enumeratedSessionHash(sessionID, session)
 
@@ -457,6 +456,17 @@ func (i *Importer) ImportEnumerated(sessions []*ccsessions.ParsedSession, progre
 	}
 
 	return skipped, nil
+}
+
+// sessionImportID returns the stable database key for a parsed session.
+// File-based providers retain the historical filename key so resumed-session
+// chains do not collapse; providers with a shared log filename supply ImportID.
+func sessionImportID(session *ccsessions.ParsedSession) string {
+	if id := strings.TrimSpace(session.ImportID); id != "" {
+		return id
+	}
+	fileSessionID := filepath.Base(session.FilePath)
+	return strings.TrimSuffix(fileSessionID, filepath.Ext(fileSessionID))
 }
 
 // enumeratedSessionHash produces a change-detection hash for an enumerated

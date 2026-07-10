@@ -161,6 +161,9 @@ func TestProviderFlags(t *testing.T) {
 		"":        "--claude-only",
 		"unknown": "--claude-only",
 	}
+	if got := ProviderFlags(cfg, ProviderAntigravity); got != nil {
+		t.Errorf("ProviderFlags(cfg, antigravity) = %v, want nil", got)
+	}
 	for provider, want := range cases {
 		got := ProviderFlags(cfg, provider)
 		if len(got) != 1 || got[0] != want {

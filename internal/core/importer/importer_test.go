@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -57,6 +58,24 @@ func TestPrepareSourceEnumerateErrorFatalByDefault(t *testing.T) {
 	if !errors.Is(err, boom) {
 		t.Fatalf("PrepareSource() error = %v, want %v", err, boom)
 	}
+}
+
+func TestDefaultSourcesIncludesAntigravityWhenStoreExists(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".gemini", "antigravity-cli", "brain"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, source := range DefaultSources() {
+		if source.Provider == "antigravity" {
+			if source.EnumerateFn == nil {
+				t.Fatal("Antigravity source must enumerate canonical transcripts")
+			}
+			return
+		}
+	}
+	t.Fatal("DefaultSources() did not include Antigravity")
 }
 
 func TestImportSession(t *testing.T) {
@@ -567,5 +586,71 @@ func TestEnumeratedSessionHash(t *testing.T) {
 	// Changed UUID -> different hash.
 	if h := enumeratedSessionHash("s", mk(t0, m("a", "hello"), m("z", "world"))); h == base {
 		t.Error("hash unchanged after a uuid change")
+	}
+}
+
+func TestImportEnumeratedUsesExplicitImportID(t *testing.T) {
+	tmpfile, err := os.CreateTemp("", "test-antigravity-*.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Remove(tmpfile.Name()) }()
+	_ = tmpfile.Close()
+
+	database, err := db.New(tmpfile.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+
+	stamp := time.Date(2026, 7, 10, 20, 0, 0, 0, time.UTC)
+	makeSession := func(id, project, text string) *ccsessions.ParsedSession {
+		return &ccsessions.ParsedSession{
+			SessionID:   id,
+			ImportID:    id,
+			ProjectPath: project,
+			Summary:     text,
+			FilePath:    "/tmp/antigravity/transcript.jsonl",
+			FileMtime:   stamp,
+			Messages: []ccsessions.ParsedMessage{{
+				UUID:        ccsessions.DeterministicUUID("antigravity:" + id + ":0"),
+				Type:        "user",
+				Sender:      "human",
+				TextContent: text,
+				Timestamp:   stamp,
+				Sequence:    1,
+				CWD:         project,
+			}},
+		}
+	}
+
+	imp := New(database)
+	sessions := []*ccsessions.ParsedSession{
+		makeSession("first-conversation", "/tmp/project-one", "first prompt"),
+		makeSession("second-conversation", "/tmp/project-two", "second prompt"),
+	}
+	if _, err := imp.ImportEnumerated(sessions, nil, false, "antigravity"); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := database.Query(`SELECT session_id, project_path FROM sessions ORDER BY session_id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = rows.Close() }()
+	var got []string
+	for rows.Next() {
+		var id, project string
+		if err := rows.Scan(&id, &project); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, id+":"+project)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"first-conversation:/tmp/project-one", "second-conversation:/tmp/project-two"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("imported sessions = %v, want %v", got, want)
 	}
 }

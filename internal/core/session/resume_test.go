@@ -7,17 +7,37 @@ import (
 
 func TestResumeBinary(t *testing.T) {
 	cases := map[string]string{
-		ProviderClaude:   "claude",
-		ProviderCodex:    "codex",
-		ProviderCopilot:  "copilot",
-		ProviderOpenCode: "opencode",
-		ProviderPi:       "pi",
-		"":               "claude",
-		"unknown":        "claude",
+		ProviderClaude:      "claude",
+		ProviderCodex:       "codex",
+		ProviderCopilot:     "copilot",
+		ProviderOpenCode:    "opencode",
+		ProviderPi:          "pi",
+		ProviderAntigravity: "agy",
+		"":                  "claude",
+		"unknown":           "claude",
 	}
 	for provider, want := range cases {
 		if got := ResumeBinary(provider); got != want {
 			t.Errorf("ResumeBinary(%q) = %q, want %q", provider, got, want)
+		}
+	}
+}
+
+func TestAntigravityResumeSpec(t *testing.T) {
+	spec := BuildResumeSpec(ProviderAntigravity, "sess-1", false, nil)
+	if spec.Binary != "agy" || spec.Prefix != "agy --conversation 'sess-1'" || spec.AcceptsPrompt {
+		t.Fatalf("BuildResumeSpec(antigravity) = %#v", spec)
+	}
+
+	if SupportsFork(ProviderAntigravity) {
+		t.Error("Antigravity should require its interactive /fork command")
+	}
+	if SupportsFork(ProviderCopilot) {
+		t.Error("Copilot should not advertise unsupported direct forking")
+	}
+	for _, provider := range []string{ProviderClaude, ProviderCodex, ProviderOpenCode, ProviderPi} {
+		if !SupportsFork(provider) {
+			t.Errorf("SupportsFork(%q) = false, want true", provider)
 		}
 	}
 }
@@ -230,7 +250,7 @@ func TestBuildResumeSpec(t *testing.T) {
 	// quoting so it cannot break out of the command.
 	t.Run("malicious id is quoted", func(t *testing.T) {
 		id := "x'; rm -rf /; '"
-		for _, provider := range []string{ProviderClaude, ProviderCodex, ProviderCopilot, ProviderOpenCode, ProviderPi} {
+		for _, provider := range []string{ProviderClaude, ProviderCodex, ProviderCopilot, ProviderOpenCode, ProviderPi, ProviderAntigravity} {
 			spec := BuildResumeSpec(provider, id, false, nil)
 			if !strings.Contains(spec.Prefix, ShellQuote(id)) {
 				t.Errorf("%s prefix = %q, want it to contain the quoted id %q", provider, spec.Prefix, ShellQuote(id))

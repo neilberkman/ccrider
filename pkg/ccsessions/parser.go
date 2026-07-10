@@ -11,12 +11,16 @@ import (
 // ParsedSession represents a fully parsed session file
 type ParsedSession struct {
 	SessionID string
-	Summary   string
-	LeafUUID  string
-	Messages  []ParsedMessage
-	FilePath  string
-	FileSize  int64
-	FileMtime time.Time
+	// ImportID is the stable database key for providers whose files do not
+	// have a unique filename per session. Empty preserves filename-based keys.
+	ImportID    string
+	ProjectPath string
+	Summary     string
+	LeafUUID    string
+	Messages    []ParsedMessage
+	FilePath    string
+	FileSize    int64
+	FileMtime   time.Time
 }
 
 // ParsedMessage represents a parsed JSONL message entry

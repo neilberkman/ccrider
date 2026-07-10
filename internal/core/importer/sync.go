@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/neilberkman/ccrider/pkg/antigravitysessions"
 	"github.com/neilberkman/ccrider/pkg/ccsessions"
 	"github.com/neilberkman/ccrider/pkg/codexsessions"
 	"github.com/neilberkman/ccrider/pkg/copilotsessions"
@@ -31,7 +32,7 @@ type Source struct {
 	Optional      bool
 }
 
-// DefaultSources returns the standard import sources (Claude + Codex + Copilot + OpenCode + Pi).
+// DefaultSources returns the standard import sources (Claude + Codex + Copilot + OpenCode + Pi + Antigravity).
 // Optional providers are only included when their data exists on disk.
 func DefaultSources() []Source {
 	home, err := os.UserHomeDir()
@@ -90,6 +91,18 @@ func DefaultSources() []Source {
 			ParseFn:       pisessions.ParseFile,
 			Provider:      pisessions.Provider,
 			SkipSubagents: false,
+		})
+	}
+
+	antigravityRoot := antigravitysessions.DefaultRoot()
+	if _, err := os.Stat(filepath.Join(antigravityRoot, "brain")); err == nil {
+		root := antigravityRoot
+		sources = append(sources, Source{
+			Path:     root,
+			Provider: antigravitysessions.Provider,
+			EnumerateFn: func() ([]*ccsessions.ParsedSession, error) {
+				return antigravitysessions.ParseAll(root)
+			},
 		})
 	}
 

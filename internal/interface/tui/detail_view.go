@@ -278,6 +278,10 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "f":
 		// Fork session (resume with new session ID)
 		if m.currentSession != nil {
+			if !session.SupportsFork(m.currentSession.Session.Provider) {
+				m.err = fmt.Errorf("%s forks from its own UI; resume it and run its fork command", m.currentSession.Session.Provider)
+				return m, nil
+			}
 			return m, launchSession(
 				m.currentSession.Session.Provider,
 				m.currentSession.Session.ID,
@@ -740,7 +744,11 @@ func (m Model) viewDetail() string {
 		content += searchBox
 	} else {
 		footer := fmt.Sprintf("\n%3.f%%", m.viewport.ScrollPercent()*100)
-		footer += "\n\ne: export | r: resume | f: fork | o: open in new terminal | c: copy | /: search | j/k: scroll | esc: back | q: quit"
+		forkHint := ""
+		if session.SupportsFork(m.currentSession.Session.Provider) {
+			forkHint = " | f: fork"
+		}
+		footer += "\n\ne: export | r: resume" + forkHint + " | o: open in new terminal | c: copy | /: search | j/k: scroll | esc: back | q: quit"
 		content += footer
 	}
 

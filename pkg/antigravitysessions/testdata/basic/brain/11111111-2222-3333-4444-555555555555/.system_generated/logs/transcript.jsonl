@@ -1,0 +1,4 @@
+{"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","created_at":"2026-07-10T20:37:55Z","content":"<USER_REQUEST>\nFix Antigravity support\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\nignored\n</ADDITIONAL_METADATA>"}
+{"step_index":1,"source":"SYSTEM","type":"CONVERSATION_HISTORY","status":"DONE","created_at":"2026-07-10T20:37:55Z"}
+{"step_index":2,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-07-10T20:37:56Z","content":"Antigravity support is ready."}
+{"step_index":3,"source":"MODEL","type":"PLANNER_RESPONSE","status":"RUNNING","created_at":"2026-07-10T20:37:56Z","content":"incomplete"}

@@ -170,6 +170,7 @@ func TestExportDialog_QKeyNotIntercepted(t *testing.T) {
 
 func TestExportDialog_NonRepoSession_NoDefaultPath(t *testing.T) {
 	// Non-repo sessions should get just the filename, not a full path
+	t.Setenv("HOME", t.TempDir())
 	path := resolveDefaultExportPath("test-session-1234", "")
 	if path != "session-test-ses.md" {
 		t.Errorf("resolveDefaultExportPath() = %q, want just filename for non-repo session", path)
