@@ -48,11 +48,11 @@ func runSync(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(args) > 0 {
-		fmt.Printf("Syncing Claude Code sessions from: %s\n", sourcePath)
+		fmt.Fprintf(os.Stderr, "Syncing Claude Code sessions from: %s\n", sourcePath)
 	} else {
-		fmt.Printf("Syncing sessions from %s\n", joinWithAnd(session.ProviderProducts()))
+		fmt.Fprintf(os.Stderr, "Syncing sessions from %s\n", joinWithAnd(session.ProviderProducts()))
 	}
-	fmt.Printf("Database: %s\n\n", dbPath)
+	fmt.Fprintf(os.Stderr, "Database: %s\n\n", dbPath)
 
 	// Ensure database directory exists
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
@@ -75,9 +75,9 @@ func runSync(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to check migration status: %w", err)
 		}
 		if needsMigrationSync {
-			fmt.Println("⚡ One-time optimization: Populating file tracking data for fast incremental syncs...")
-			fmt.Println("   This will take a minute but makes future syncs much faster.")
-			fmt.Println()
+			fmt.Fprintln(os.Stderr, "⚡ One-time optimization: Populating file tracking data for fast incremental syncs...")
+			fmt.Fprintln(os.Stderr, "   This will take a minute but makes future syncs much faster.")
+			fmt.Fprintln(os.Stderr)
 			syncForce = true
 		}
 	}
@@ -111,8 +111,10 @@ func runSync(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		fmt.Printf("Syncing %s sessions from: %s\n", prepared.Provider, prepared.Path)
-		progress := importer.NewProgressReporter(os.Stdout, prepared.Total)
+		fmt.Fprintf(os.Stderr, "Syncing %s sessions from: %s\n", prepared.Provider, prepared.Path)
+		stat, statErr := os.Stderr.Stat()
+		interactive := statErr == nil && stat.Mode()&os.ModeCharDevice != 0
+		progress := importer.NewProgressReporter(os.Stderr, prepared.Total, interactive)
 		skipped, err := prepared.Run(progress, syncForce)
 		if err != nil {
 			return fmt.Errorf("%s import failed: %w", src.Provider, err)
@@ -125,7 +127,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 			if src.EnumerateFn != nil {
 				unit = "sessions"
 			}
-			fmt.Printf("\nSkipped %d/%d %s %s (%.1f%% unchanged)\n", skipped, prepared.Total, src.Provider, unit, skipRate)
+			fmt.Fprintf(os.Stderr, "\nSkipped %d/%d %s %s (%.1f%% unchanged)\n", skipped, prepared.Total, src.Provider, unit, skipRate)
 		}
 	}
 

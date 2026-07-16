@@ -80,7 +80,7 @@ func runExport(cmd *cobra.Command, args []string) error {
 		// Look up session's project path
 		detail, err := database.GetSessionDetail(sessionID)
 		if err != nil {
-			return fmt.Errorf("session not found: %w", err)
+			return err
 		}
 		if detail.ProjectPath == "" {
 			return fmt.Errorf("session has no associated repo; use --output to specify a path")

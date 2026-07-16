@@ -24,7 +24,7 @@ func SetVersion(version, commit, date string) {
 // Execute runs the CLI
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }
@@ -36,9 +36,17 @@ var rootCmd = &cobra.Command{
 
 A fast, reliable tool for managing %s
 sessions with full-text search, incremental sync, and native resume
-integration.`, joinWithAnd(session.ProviderProducts())),
+integration.
+
+Report issues: https://github.com/neilberkman/ccrider/issues`, joinWithAnd(session.ProviderProducts())),
+	SilenceErrors: true,
+	SilenceUsage:  true,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// Default to TUI if no subcommand specified
+		// Default to TUI if no subcommand specified; fall back to help
+		// when stdout is not a terminal (piped or redirected)
+		if stat, err := os.Stdout.Stat(); err == nil && stat.Mode()&os.ModeCharDevice == 0 {
+			return cmd.Help()
+		}
 		return tuiCmd.RunE(cmd, args)
 	},
 }

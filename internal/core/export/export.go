@@ -14,7 +14,7 @@ import (
 func GenerateMarkdown(database *db.DB, sessionID string) (string, error) {
 	detail, err := database.GetSessionDetail(sessionID)
 	if err != nil {
-		return "", fmt.Errorf("session not found: %w", err)
+		return "", err
 	}
 
 	var b strings.Builder

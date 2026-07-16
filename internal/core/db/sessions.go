@@ -1,8 +1,14 @@
 package db
 
 import (
+	"database/sql"
+	"errors"
+	"fmt"
 	"time"
 )
+
+// ErrSessionNotFound is returned when a session ID does not exist in the database
+var ErrSessionNotFound = errors.New("session not found")
 
 // Session represents a session returned from ListSessions
 type Session struct {
@@ -175,6 +181,9 @@ func (db *DB) GetSessionLaunchInfo(sessionID string) (*Session, string, error) {
 		&lastCwd,
 		&session.Provider,
 	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, "", fmt.Errorf("%w: %s", ErrSessionNotFound, sessionID)
+	}
 	if err != nil {
 		return nil, "", err
 	}
@@ -216,6 +225,9 @@ func (db *DB) GetSessionDetail(sessionID string) (*SessionDetail, error) {
 		&detail.UpdatedAt,
 		&detail.Provider,
 	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("%w: %s", ErrSessionNotFound, sessionID)
+	}
 	if err != nil {
 		return nil, err
 	}

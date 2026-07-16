@@ -15,20 +15,25 @@ type ProgressCallback interface {
 
 // ProgressReporter handles progress feedback during import
 type ProgressReporter struct {
-	writer    io.Writer
-	total     int
-	current   int
-	startTime time.Time
-	lastMsg   string
+	writer      io.Writer
+	total       int
+	current     int
+	startTime   time.Time
+	lastMsg     string
+	interactive bool
+	lastDecile  int
 }
 
-// NewProgressReporter creates a new progress reporter
-func NewProgressReporter(w io.Writer, total int) *ProgressReporter {
+// NewProgressReporter creates a new progress reporter. When interactive is
+// false (e.g. output is piped or redirected), the animated progress bar is
+// replaced with one plain line per 10% of progress.
+func NewProgressReporter(w io.Writer, total int, interactive bool) *ProgressReporter {
 	return &ProgressReporter{
-		writer:    w,
-		total:     total,
-		current:   0,
-		startTime: time.Now(),
+		writer:      w,
+		total:       total,
+		current:     0,
+		startTime:   time.Now(),
+		interactive: interactive,
 	}
 }
 
@@ -38,6 +43,14 @@ func (p *ProgressReporter) Update(sessionSummary string, firstMsg string) {
 
 	// Calculate progress percentage
 	pct := float64(p.current) / float64(p.total) * 100
+
+	if !p.interactive {
+		if decile := int(pct) / 10; decile > p.lastDecile {
+			p.lastDecile = decile
+			_, _ = fmt.Fprintf(p.writer, "%3d%% (%d/%d)\n", decile*10, p.current, p.total)
+		}
+		return
+	}
 
 	// Draw progress bar (50 chars wide)
 	barWidth := 50
@@ -66,5 +79,8 @@ func (p *ProgressReporter) Update(sessionSummary string, firstMsg string) {
 // Finish completes the progress display
 func (p *ProgressReporter) Finish() {
 	elapsed := time.Since(p.startTime)
-	_, _ = fmt.Fprintf(p.writer, "\nCompleted: Imported %d sessions in %s\n", p.total, elapsed.Round(time.Millisecond))
+	if p.interactive {
+		_, _ = fmt.Fprintln(p.writer)
+	}
+	_, _ = fmt.Fprintf(p.writer, "Completed: Imported %d sessions in %s\n", p.total, elapsed.Round(time.Millisecond))
 }

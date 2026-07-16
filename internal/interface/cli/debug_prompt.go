@@ -33,7 +33,7 @@ func runDebugPrompt(cmd *cobra.Command, args []string) error {
 	// Use core function to get session launch info
 	session, lastCwd, err := database.GetSessionLaunchInfo(sessionID)
 	if err != nil {
-		return fmt.Errorf("session not found: %w", err)
+		return err
 	}
 
 	projectPath := session.ProjectPath
