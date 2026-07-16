@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-07-16
+
+### Changed
+
+- **Sync output keeps stdout clean** — all sync progress and status messages now write to stderr, and when output is not a terminal the animated progress bar is replaced with plain one-line-per-10% updates, so cron jobs and CI logs no longer fill with redraw frames
+- **Piped bare invocation prints help** — `ccrider | ...` with stdout redirected shows help text instead of failing with a TTY error
+- Root help now links to the GitHub issues page
+
+### Fixed
+
+- **Errors print once and cleanly** — runtime failures no longer print the error twice or dump the full usage block after it
+- **Unknown session IDs report a human-readable error** — `session not found: <id>` instead of leaking `sql: no rows in result set`
+
 ## [1.6.0] - 2026-07-10
 
 ### Added
