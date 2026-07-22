@@ -678,8 +678,7 @@ func openInNewTerminal(provider, sessionID, projectPath, lastCwd, updatedAt, sum
 		resumePrompt := session.RenderResumePromptOneLine(cfg.ResumePromptTemplate, projectPath, lastCwd, updatedAt)
 		shellCmd := session.ResumeCommand(provider, sessionID, resumePrompt, false, session.ProviderFlags(cfg, provider))
 
-		// Resolve working directory (always projectPath, see session.ResolveWorkingDir)
-		workDir := session.ResolveWorkingDir(projectPath, lastCwd)
+		workDir := session.ResolveWorkingDir(provider, projectPath, lastCwd)
 
 		// Pre-flight check: verify the agent binary is runnable from this directory
 		if err := session.ValidateRunnable(provider, workDir); err != nil {

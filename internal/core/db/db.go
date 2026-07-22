@@ -339,6 +339,7 @@ func (db *DB) NeedsMigrationSync() (bool, error) {
 			COUNT(*) as total,
 			COUNT(CASE WHEN file_inode IS NOT NULL AND file_inode != 0 THEN 1 END) as with_inode
 		FROM sessions
+		WHERE provider IN ('claude', 'codex', 'pi')
 	`).Scan(&total, &withInode)
 	if err != nil {
 		return false, err

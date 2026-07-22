@@ -15,6 +15,14 @@ const (
 	ProviderOpenCode    = "opencode"
 	ProviderPi          = "pi"
 	ProviderAntigravity = "antigravity"
+	ProviderAmp         = "amp"
+)
+
+type workingDirPolicy int
+
+const (
+	workingDirRequired workingDirPolicy = iota
+	workingDirExistingPreferred
 )
 
 // providerInfo is the single description of everything ccrider knows about one
@@ -45,6 +53,10 @@ type providerInfo struct {
 	BuildSpec func(sessionID string, fork bool, flags []string) ResumeSpec
 	// SupportsFork reports whether ccrider can launch a fork directly.
 	SupportsFork bool
+	// WorkingDir controls whether the recorded project path is required for
+	// resume. Cloud-backed providers can identify a session globally and only
+	// prefer the recorded directory when it exists on this machine.
+	WorkingDir workingDirPolicy
 }
 
 // providers lists every supported provider in display order. The first entry
@@ -167,6 +179,22 @@ var providers = []providerInfo{
 				AcceptsPrompt: false,
 			}
 		},
+	},
+	{
+		Name:        ProviderAmp,
+		Binary:      "amp",
+		Product:     "Amp",
+		InstallHint: "https://ampcode.com/manual",
+		SourceHint:  "authenticated account via amp threads",
+		ConfigFlags: func(*config.Config) []string { return nil },
+		BuildSpec: func(sessionID string, fork bool, flags []string) ResumeSpec {
+			return ResumeSpec{
+				Binary:        "amp",
+				Prefix:        fmt.Sprintf("amp threads continue %s", ShellQuote(sessionID)),
+				AcceptsPrompt: false,
+			}
+		},
+		WorkingDir: workingDirExistingPreferred,
 	},
 }
 

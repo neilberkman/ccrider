@@ -34,6 +34,13 @@ func New(database *db.DB) *Importer {
 // fileHash: pre-computed BLAKE3 hash from ImportDirectory (avoids double-hashing)
 // provider: identifies the agent (e.g. "claude", "codex")
 func (i *Importer) ImportSession(session *ccsessions.ParsedSession, existingMessageCount int, fileInode, fileDevice uint64, fileHash string, provider string) error {
+	return i.importSession(session, existingMessageCount, fileInode, fileDevice, fileHash, provider, false)
+}
+
+// importSession writes one parsed session. replaceMessages atomically replaces
+// the stored transcript for authoritative remote snapshots, removing messages
+// that disappeared upstream and their FTS entries.
+func (i *Importer) importSession(session *ccsessions.ParsedSession, existingMessageCount int, fileInode, fileDevice uint64, fileHash string, provider string, replaceMessages bool) error {
 	hash := fileHash
 
 	fileSessionID := sessionImportID(session)
@@ -54,8 +61,11 @@ func (i *Importer) ImportSession(session *ccsessions.ParsedSession, existingMess
 		projectPath = extractProjectInitiationPath(session.Messages)
 	}
 	if projectPath == "" {
-		// Fallback to decoding from directory name (legacy behavior)
-		projectPath = extractProjectPath(session.FilePath)
+		// Fallback to decoding from directory name for file-based providers.
+		// Remote sources use synthetic paths and must supply a real local path.
+		if !replaceMessages {
+			projectPath = extractProjectPath(session.FilePath)
+		}
 	}
 
 	// Extract last CWD (where user was last working) for resume prompt
@@ -135,6 +145,20 @@ func (i *Importer) ImportSession(session *ccsessions.ParsedSession, existingMess
 	err = tx.QueryRow("SELECT id FROM sessions WHERE session_id = ?", fileSessionID).Scan(&sessionDBID)
 	if err != nil {
 		return fmt.Errorf("failed to get session ID: %w", err)
+	}
+	if replaceMessages {
+		// Remote revisions are authoritative transcript snapshots. Invalidate all
+		// transcript-derived data in the same transaction so a failed replacement
+		// restores both the old messages and their caches.
+		for _, table := range []string{"messages", "session_summaries", "summary_chunks", "session_issues", "session_files"} {
+			if _, err := tx.Exec(`DELETE FROM `+table+` WHERE session_id = ?`, sessionDBID); err != nil {
+				return fmt.Errorf("failed to invalidate %s for replaced session: %w", table, err)
+			}
+		}
+		if _, err := tx.Exec(`UPDATE sessions SET llm_summary = NULL, llm_summary_at = NULL WHERE id = ?`, sessionDBID); err != nil {
+			return fmt.Errorf("failed to invalidate legacy summary for replaced session: %w", err)
+		}
+		existingMessageCount = 0
 	}
 
 	// Insert messages (use INSERT OR IGNORE to skip duplicates from resumed sessions)
@@ -492,6 +516,91 @@ func (i *Importer) ImportEnumerated(sessions []*ccsessions.ParsedSession, progre
 		fmt.Fprintf(os.Stderr, "\nImport completed with %d failures (see warnings above)\n", failed)
 	}
 
+	return skipped, nil
+}
+
+// ImportRemote imports remote sessions using a cheap reference list and an
+// on-demand fetch function. The opaque reference revision is stored in the
+// existing file_hash column so unchanged remote sessions never need a full
+// export on subsequent syncs.
+func (i *Importer) ImportRemote(refs []RemoteSessionRef, fetch func(RemoteSessionRef) (*ccsessions.ParsedSession, error), progress ProgressCallback, force bool, provider string) (int, error) {
+	existingHash := make(map[string]string)
+	rows, err := i.db.Query(`SELECT session_id, COALESCE(file_hash, '') FROM sessions`)
+	if err != nil {
+		return 0, fmt.Errorf("failed to load remote session metadata: %w", err)
+	}
+	for rows.Next() {
+		var sessionID, hash string
+		if err := rows.Scan(&sessionID, &hash); err != nil {
+			_ = rows.Close()
+			return 0, fmt.Errorf("failed to scan remote session metadata: %w", err)
+		}
+		existingHash[sessionID] = hash
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return 0, fmt.Errorf("failed to read remote session metadata: %w", err)
+	}
+	_ = rows.Close()
+
+	var skipped, failed int
+	for _, ref := range refs {
+		ref.ImportID = strings.TrimSpace(ref.ImportID)
+		ref.Revision = strings.TrimSpace(ref.Revision)
+		if ref.ImportID == "" || ref.Revision == "" {
+			fmt.Fprintf(os.Stderr, "WARN: Cannot import remote %s session: missing id or revision\n", provider)
+			failed++
+			continue
+		}
+		if !force && existingHash[ref.ImportID] == ref.Revision {
+			skipped++
+			continue
+		}
+
+		session, err := fetch(ref)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "WARN: Cannot fetch %s session %s: %v\n", provider, ref.ImportID, err)
+			failed++
+			continue
+		}
+		if session == nil {
+			fmt.Fprintf(os.Stderr, "WARN: Cannot fetch %s session %s: empty session\n", provider, ref.ImportID)
+			failed++
+			continue
+		}
+
+		if exportedID := strings.TrimSpace(session.SessionID); exportedID != "" && exportedID != ref.ImportID {
+			fmt.Fprintf(os.Stderr, "WARN: Cannot import remote %s session %s: export contained session id %s\n", provider, ref.ImportID, exportedID)
+			failed++
+			continue
+		}
+		// The listed id is the stable source of truth for the database key.
+		session.ImportID = ref.ImportID
+		if session.SessionID == "" {
+			session.SessionID = ref.ImportID
+		}
+		if err := i.importSession(session, 0, 0, 0, ref.Revision, provider, true); err != nil {
+			fmt.Fprintf(os.Stderr, "WARN: Cannot import remote %s session %s: %v\n", provider, ref.ImportID, err)
+			failed++
+			continue
+		}
+		existingHash[ref.ImportID] = ref.Revision
+
+		if progress != nil {
+			firstMsg := ""
+			if len(session.Messages) > 0 {
+				firstMsg = session.Messages[0].TextContent
+				if len(firstMsg) > 100 {
+					firstMsg = firstMsg[:97] + "..."
+				}
+			}
+			progress.Update(session.Summary, firstMsg)
+		}
+	}
+
+	if failed > 0 {
+		fmt.Fprintf(os.Stderr, "\nRemote import completed with %d failures (see warnings above)\n", failed)
+	}
 	return skipped, nil
 }
 

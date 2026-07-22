@@ -1,6 +1,7 @@
 package importer
 
 import (
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -58,6 +59,51 @@ func TestPrepareSourceEnumerateErrorFatalByDefault(t *testing.T) {
 	if !errors.Is(err, boom) {
 		t.Fatalf("PrepareSource() error = %v, want %v", err, boom)
 	}
+}
+
+func TestPrepareSourceOptionalRemoteErrorSkips(t *testing.T) {
+	boom := errors.New("Amp is offline")
+	imp := New(nil)
+	prepared, err := imp.PrepareSource(Source{
+		Path:     "authenticated Amp account",
+		Provider: "amp",
+		Optional: true,
+		Remote: &RemoteSource{
+			List: func() ([]RemoteSessionRef, error) { return nil, boom },
+		},
+	})
+	if err != nil {
+		t.Fatalf("PrepareSource() error = %v, want nil", err)
+	}
+	if !errors.Is(prepared.Warning, boom) {
+		t.Fatalf("Warning = %v, want %v", prepared.Warning, boom)
+	}
+	if skipped, err := prepared.Run(nil, false); err != nil || skipped != 0 {
+		t.Fatalf("Run() = (%d, %v), want (0, nil)", skipped, err)
+	}
+}
+
+func TestDefaultSourcesIncludesAmpWhenCLIExists(t *testing.T) {
+	home := t.TempDir()
+	binDir := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("PATH", binDir)
+	if err := os.WriteFile(filepath.Join(binDir, "amp"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, source := range DefaultSources() {
+		if source.Provider == "amp" {
+			if source.Remote == nil || source.Remote.List == nil || source.Remote.Fetch == nil {
+				t.Fatal("Amp source must use remote list/fetch import")
+			}
+			if !source.Optional {
+				t.Fatal("Amp source must be optional when offline or unauthenticated")
+			}
+			return
+		}
+	}
+	t.Fatal("DefaultSources() did not include Amp")
 }
 
 func TestDefaultSourcesIncludesAntigravityWhenStoreExists(t *testing.T) {
@@ -723,5 +769,237 @@ func TestImportDirectory_HashMatchRefreshesStat(t *testing.T) {
 	}
 	if diff := storedMtime.Sub(drifted); diff > time.Second || diff < -time.Second {
 		t.Fatalf("stored file_mtime = %v, want ~%v (fast path never re-arms)", storedMtime, drifted)
+	}
+}
+
+func TestImportRemoteFetchesOnlyNewOrChangedSessions(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "remote.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+
+	imp := New(database)
+	stamp := time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC)
+	text := "first version"
+	includeRemovedMessage := true
+	fetches := 0
+	failFetch := false
+	fetch := func(ref RemoteSessionRef) (*ccsessions.ParsedSession, error) {
+		fetches++
+		if failFetch || ref.ImportID == "T-bad" {
+			return nil, errors.New("temporary export failure")
+		}
+		messages := []ccsessions.ParsedMessage{{
+			UUID:        ccsessions.DeterministicUUID("amp:" + ref.ImportID + ":1"),
+			Type:        "user",
+			Sender:      "human",
+			TextContent: text,
+			Timestamp:   stamp,
+			Sequence:    1,
+			CWD:         "/tmp/project",
+		}}
+		if includeRemovedMessage {
+			messages = append(messages, ccsessions.ParsedMessage{
+				UUID:        ccsessions.DeterministicUUID("amp:" + ref.ImportID + ":removed"),
+				Type:        "assistant",
+				Sender:      "assistant",
+				TextContent: "obsolete narwhal answer",
+				Timestamp:   stamp.Add(time.Second),
+				Sequence:    2,
+				CWD:         "/tmp/project",
+			})
+		}
+		return &ccsessions.ParsedSession{
+			SessionID:   ref.ImportID,
+			ImportID:    "wrong-export-id",
+			ProjectPath: "/tmp/project",
+			Summary:     "Amp thread",
+			FilePath:    "amp://threads/" + ref.ImportID,
+			FileMtime:   stamp,
+			Messages:    messages,
+		}, nil
+	}
+
+	refs := []RemoteSessionRef{
+		{ImportID: "T-one", Revision: "revision-1"},
+		{ImportID: "T-bad", Revision: "revision-1"},
+	}
+	skipped, err := imp.ImportRemote(refs, fetch, nil, false, "amp")
+	if err != nil {
+		t.Fatalf("initial ImportRemote() error = %v", err)
+	}
+	if skipped != 0 || fetches != 2 {
+		t.Fatalf("initial ImportRemote() = skipped %d, fetches %d; want 0, 2", skipped, fetches)
+	}
+
+	var provider, hash, storedText string
+	if err := database.QueryRow(`SELECT provider, file_hash FROM sessions WHERE session_id = ?`, "T-one").Scan(&provider, &hash); err != nil {
+		t.Fatal(err)
+	}
+	currentUUID := ccsessions.DeterministicUUID("amp:T-one:1")
+	if err := database.QueryRow(`SELECT text_content FROM messages WHERE uuid = ?`, currentUUID).Scan(&storedText); err != nil {
+		t.Fatal(err)
+	}
+	if provider != "amp" || hash != "revision-1" || storedText != "first version" {
+		t.Fatalf("initial stored values = %q/%q/%q", provider, hash, storedText)
+	}
+	var badCount int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM sessions WHERE session_id = ?`, "T-bad").Scan(&badCount); err != nil {
+		t.Fatal(err)
+	}
+	if badCount != 0 {
+		t.Fatal("failed remote export created a partial session")
+	}
+	var obsoleteMatches int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'narwhal'`).Scan(&obsoleteMatches); err != nil {
+		t.Fatal(err)
+	}
+	if obsoleteMatches != 1 {
+		t.Fatalf("initial obsolete FTS matches = %d, want 1", obsoleteMatches)
+	}
+	var sessionDBID int64
+	if err := database.QueryRow(`SELECT id FROM sessions WHERE session_id = ?`, "T-one").Scan(&sessionDBID); err != nil {
+		t.Fatal(err)
+	}
+	derivedFixtures := []struct {
+		query string
+		args  []any
+	}{
+		{`INSERT INTO session_summaries (session_id, one_line_summary) VALUES (?, ?)`, []any{sessionDBID, "stale summary"}},
+		{`INSERT INTO summary_chunks (session_id, chunk_index, summary) VALUES (?, ?, ?)`, []any{sessionDBID, 0, "stale chunk"}},
+		{`INSERT INTO session_issues (session_id, issue_id, issue_id_lower) VALUES (?, ?, ?)`, []any{sessionDBID, "OLD-1", "old-1"}},
+		{`INSERT INTO session_files (session_id, file_path, file_name) VALUES (?, ?, ?)`, []any{sessionDBID, "old/file.go", "file.go"}},
+		{`UPDATE sessions SET llm_summary = ?, llm_summary_at = CURRENT_TIMESTAMP WHERE id = ?`, []any{"stale legacy summary", sessionDBID}},
+	}
+	for _, fixture := range derivedFixtures {
+		if _, err := database.Exec(fixture.query, fixture.args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// The unchanged reference is skipped before Fetch is called.
+	skipped, err = imp.ImportRemote(refs[:1], fetch, nil, false, "amp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if skipped != 1 || fetches != 2 {
+		t.Fatalf("unchanged ImportRemote() = skipped %d, fetches %d; want 1, 2", skipped, fetches)
+	}
+
+	// A new revision fetches again and updates stable message UUIDs in place.
+	text = "second version"
+	includeRemovedMessage = false
+	refs[0].Revision = "revision-2"
+	if _, err := imp.ImportRemote(refs[:1], fetch, nil, false, "amp"); err != nil {
+		t.Fatal(err)
+	}
+	if fetches != 3 {
+		t.Fatalf("changed ImportRemote() fetches = %d, want 3", fetches)
+	}
+	if err := database.QueryRow(`SELECT file_hash FROM sessions WHERE session_id = ?`, "T-one").Scan(&hash); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QueryRow(`SELECT text_content FROM messages WHERE uuid = ?`, currentUUID).Scan(&storedText); err != nil {
+		t.Fatal(err)
+	}
+	if hash != "revision-2" || storedText != "second version" {
+		t.Fatalf("changed stored values = %q/%q", hash, storedText)
+	}
+	var storedMessageCount, actualMessageCount int
+	if err := database.QueryRow(`SELECT message_count FROM sessions WHERE session_id = ?`, "T-one").Scan(&storedMessageCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&actualMessageCount); err != nil {
+		t.Fatal(err)
+	}
+	if storedMessageCount != 1 || actualMessageCount != 1 {
+		t.Fatalf("message counts = stored %d, actual %d; want 1, 1", storedMessageCount, actualMessageCount)
+	}
+	if err := database.QueryRow(`SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'narwhal'`).Scan(&obsoleteMatches); err != nil {
+		t.Fatal(err)
+	}
+	if obsoleteMatches != 0 {
+		t.Fatalf("removed remote message remains in FTS: %d matches", obsoleteMatches)
+	}
+	for _, table := range []string{"session_summaries", "summary_chunks", "session_issues", "session_files"} {
+		var count int
+		if err := database.QueryRow(`SELECT COUNT(*) FROM `+table+` WHERE session_id = ?`, sessionDBID).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 0 {
+			t.Fatalf("replaced transcript retained %d rows in %s", count, table)
+		}
+	}
+	var legacySummary sql.NullString
+	var legacySummaryAt sql.NullTime
+	if err := database.QueryRow(`SELECT llm_summary, llm_summary_at FROM sessions WHERE id = ?`, sessionDBID).Scan(&legacySummary, &legacySummaryAt); err != nil {
+		t.Fatal(err)
+	}
+	if legacySummary.Valid || legacySummaryAt.Valid {
+		t.Fatalf("replaced transcript retained legacy summary: %v/%v", legacySummary, legacySummaryAt)
+	}
+
+	// A later fetch failure leaves the previously imported revision intact.
+	failFetch = true
+	refs[0].Revision = "revision-3"
+	if _, err := imp.ImportRemote(refs[:1], fetch, nil, false, "amp"); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QueryRow(`SELECT file_hash FROM sessions WHERE session_id = ?`, "T-one").Scan(&hash); err != nil {
+		t.Fatal(err)
+	}
+	if hash != "revision-2" {
+		t.Fatalf("failed fetch replaced cached revision with %q", hash)
+	}
+
+	// Force sync fetches an unchanged reference.
+	failFetch = false
+	refs[0].Revision = "revision-2"
+	beforeForce := fetches
+	if _, err := imp.ImportRemote(refs[:1], fetch, nil, true, "amp"); err != nil {
+		t.Fatal(err)
+	}
+	if fetches != beforeForce+1 {
+		t.Fatalf("forced ImportRemote() fetches = %d, want %d", fetches, beforeForce+1)
+	}
+}
+
+func TestImportRemoteDoesNotDeriveProjectFromSyntheticPath(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "remote-project.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+
+	stamp := time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC)
+	imp := New(database)
+	refs := []RemoteSessionRef{{ImportID: "T-no-tree", Revision: "revision-1"}}
+	fetch := func(ref RemoteSessionRef) (*ccsessions.ParsedSession, error) {
+		return &ccsessions.ParsedSession{
+			SessionID: ref.ImportID,
+			ImportID:  ref.ImportID,
+			FilePath:  "amp://threads/" + ref.ImportID,
+			FileMtime: stamp,
+			Messages: []ccsessions.ParsedMessage{{
+				UUID:        ccsessions.DeterministicUUID("amp:" + ref.ImportID + ":1"),
+				Type:        "user",
+				Sender:      "human",
+				TextContent: "No local tree metadata",
+				Timestamp:   stamp,
+				Sequence:    1,
+			}},
+		}, nil
+	}
+	if _, err := imp.ImportRemote(refs, fetch, nil, false, "amp"); err != nil {
+		t.Fatal(err)
+	}
+
+	var projectPath string
+	if err := database.QueryRow(`SELECT project_path FROM sessions WHERE session_id = ?`, "T-no-tree").Scan(&projectPath); err != nil {
+		t.Fatal(err)
+	}
+	if projectPath != "" {
+		t.Fatalf("project_path = %q, want empty path for remote session without local tree", projectPath)
 	}
 }

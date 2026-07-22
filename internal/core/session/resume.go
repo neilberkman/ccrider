@@ -69,20 +69,22 @@ func ResumeCommand(provider, sessionID, prompt string, fork bool, flags []string
 }
 
 // ResumeCommandIn builds the full one-line resume command for display or
-// clipboard, prefixed with `cd <projectPath> && ` so it works from any cwd.
-// Every provider scopes session storage by the directory the session was
-// created in (Claude under ~/.claude/projects/<encoded-cwd>/, Codex by cwd in
-// session_meta), so a resume command without the cd prefix fails outside the
-// project directory.
+// clipboard. Providers that scope sessions to a project get a
+// `cd <projectPath> && ` prefix. Globally-addressed cloud sessions use the
+// recorded project path only when it exists on this machine.
 //
 // If projectPath is empty (missing in the DB), the bare command is returned
 // with a trailing comment noting the gap rather than erroring.
 func ResumeCommandIn(projectPath, provider, sessionID, prompt string, fork bool, flags []string) string {
 	cmd := ResumeCommand(provider, sessionID, prompt, fork, flags)
+	workDir := recordedWorkingDir(provider, projectPath)
+	if workDir == "" && lookupProvider(provider).WorkingDir == workingDirExistingPreferred {
+		return cmd
+	}
 	if projectPath == "" {
 		return fmt.Sprintf("%s # project path missing in DB for session %s", cmd, sessionID)
 	}
-	return fmt.Sprintf("cd %s && %s", ShellQuote(projectPath), cmd)
+	return fmt.Sprintf("cd %s && %s", ShellQuote(workDir), cmd)
 }
 
 // ShellQuote wraps s in single quotes, safely escaping any embedded single

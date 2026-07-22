@@ -124,7 +124,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 		if skipped > 0 && !syncForce {
 			skipRate := float64(skipped) / float64(prepared.Total) * 100
 			unit := "files"
-			if src.EnumerateFn != nil {
+			if src.EnumerateFn != nil || src.Remote != nil {
 				unit = "sessions"
 			}
 			fmt.Fprintf(os.Stderr, "\nSkipped %d/%d %s %s (%.1f%% unchanged)\n", skipped, prepared.Total, src.Provider, unit, skipRate)

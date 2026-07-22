@@ -15,7 +15,7 @@ When you resume a session (via `r`, `f`, or `o`), ccrider sends a contextual pro
 
 ## How It Works
 
-1. **ccrider resumes from the original project directory** - this is where provider CLIs resolve stored session metadata.
+1. **ccrider resumes from the original project directory** - this is where most provider CLIs resolve stored session metadata. Amp thread IDs are global, so an unavailable orb or other-machine path falls back to the caller's current directory.
 2. **A prompt is sent when supported** telling the agent:
    - Where you were actually working (last working directory from the session)
    - How long the session has been inactive

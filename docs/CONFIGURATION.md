@@ -8,6 +8,8 @@ Pi sessions are imported from `~/.pi/agent/sessions/` when that directory exists
 
 Antigravity CLI sessions are imported from `~/.gemini/antigravity-cli/brain/` when that directory exists. ccrider indexes each canonical `transcript.jsonl` and resumes it with `agy --conversation <id>`. Antigravity forks interactively after resuming with `/fork`.
 
+Amp sessions are imported when the `amp` CLI is installed and authenticated. ccrider uses `amp threads list` for change detection, exports only new or changed threads, and resumes with `amp threads continue <id>`. Amp threads are cloud-backed, so syncing downloads their searchable text into ccrider's local SQLite database. No ccrider config or API key is required; authentication is owned by the Amp CLI.
+
 ### config.toml
 
 Main configuration file for global settings.

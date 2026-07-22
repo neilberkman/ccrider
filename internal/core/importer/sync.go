@@ -2,9 +2,11 @@ package importer
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
+	"github.com/neilberkman/ccrider/pkg/ampsessions"
 	"github.com/neilberkman/ccrider/pkg/antigravitysessions"
 	"github.com/neilberkman/ccrider/pkg/ccsessions"
 	"github.com/neilberkman/ccrider/pkg/codexsessions"
@@ -18,22 +20,39 @@ import (
 // session in a flat, walkable directory.
 type EnumerateFunc func() ([]*ccsessions.ParsedSession, error)
 
+// RemoteSessionRef identifies a remotely stored session and the opaque
+// revision token used to detect whether it must be fetched again.
+type RemoteSessionRef struct {
+	ImportID string
+	Revision string
+}
+
+// RemoteSource lists lightweight remote references and fetches one full
+// session on demand. This avoids downloading every remote transcript before
+// the importer can determine which ones are unchanged.
+type RemoteSource struct {
+	List  func() ([]RemoteSessionRef, error)
+	Fetch func(RemoteSessionRef) (*ccsessions.ParsedSession, error)
+}
+
 // Source describes a session source to import.
 //
 // File-based providers (Claude, Codex) set Path + ParseFn and are imported by
 // walking a directory of JSONL files. Enumerated providers set EnumerateFn
-// instead, which yields all sessions in one call.
+// instead, which yields all sessions in one call. Cloud-backed providers set
+// Remote, allowing the importer to fetch only new or changed sessions.
 type Source struct {
 	Path          string
 	ParseFn       ParseFunc
 	EnumerateFn   EnumerateFunc
+	Remote        *RemoteSource
 	Provider      string
 	SkipSubagents bool
 	Optional      bool
 }
 
-// DefaultSources returns the standard import sources (Claude + Codex + Copilot + OpenCode + Pi + Antigravity).
-// Optional providers are only included when their data exists on disk.
+// DefaultSources returns the standard import sources. Local optional providers
+// are included when their data exists; Amp is included when its CLI is on PATH.
 func DefaultSources() []Source {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -106,6 +125,31 @@ func DefaultSources() []Source {
 		})
 	}
 
+	if _, err := exec.LookPath("amp"); err == nil {
+		client := ampsessions.NewClient()
+		sources = append(sources, Source{
+			Path:     "authenticated Amp account",
+			Provider: ampsessions.Provider,
+			Optional: true,
+			Remote: &RemoteSource{
+				List: func() ([]RemoteSessionRef, error) {
+					threads, err := client.ListThreads()
+					if err != nil {
+						return nil, err
+					}
+					refs := make([]RemoteSessionRef, len(threads))
+					for i, thread := range threads {
+						refs[i] = RemoteSessionRef{ImportID: thread.ID, Revision: thread.Revision}
+					}
+					return refs, nil
+				},
+				Fetch: func(ref RemoteSessionRef) (*ccsessions.ParsedSession, error) {
+					return client.ExportThread(ref.ImportID)
+				},
+			},
+		})
+	}
+
 	return sources
 }
 
@@ -127,10 +171,26 @@ func (p PreparedSource) Run(progress ProgressCallback, force bool) (int, error) 
 	return p.run(progress, force)
 }
 
-// PrepareSource resolves a Source into its work count and import action. For
-// enumerated sources the sessions are read once here and reused by Run, so the
-// underlying store/event logs are not parsed twice.
+// PrepareSource resolves a Source into its work count and import action.
 func (i *Importer) PrepareSource(src Source) (PreparedSource, error) {
+	if src.Remote != nil {
+		refs, err := src.Remote.List()
+		if err != nil {
+			if src.Optional {
+				return skippedPreparedSource(src, err), nil
+			}
+			return PreparedSource{}, err
+		}
+		return PreparedSource{
+			Provider: src.Provider,
+			Path:     src.Path,
+			Total:    len(refs),
+			run: func(progress ProgressCallback, force bool) (int, error) {
+				return i.ImportRemote(refs, src.Remote.Fetch, progress, force, src.Provider)
+			},
+		}, nil
+	}
+
 	if src.EnumerateFn != nil {
 		sessions, err := src.EnumerateFn()
 		if err != nil {
