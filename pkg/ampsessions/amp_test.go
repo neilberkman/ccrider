@@ -262,21 +262,45 @@ func TestParseExportSummaryFallbackAndUnknownFields(t *testing.T) {
 }
 
 func TestParseExportRejectsMissingEssentialIDs(t *testing.T) {
-	tests := []struct {
-		name    string
-		fixture string
-		wantErr string
-	}{
-		{name: "thread id", fixture: `{"messages":[]}`, wantErr: "thread id is missing"},
-		{name: "message id", fixture: `{"id":"T-one","messages":[{"role":"user","content":[{"type":"text","text":"hello"}]}]}`, wantErr: "message 1 id"},
+	_, err := Parse([]byte(`{"messages":[]}`))
+	if err == nil || !strings.Contains(err.Error(), "thread id is missing") {
+		t.Fatalf("Parse() error = %v, want missing thread id", err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := Parse([]byte(tt.fixture))
-			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
-				t.Fatalf("Parse() error = %v, want containing %q", err, tt.wantErr)
-			}
-		})
+}
+
+func TestParseExportUsesSequenceWhenLegacyMessageIDIsMissing(t *testing.T) {
+	fixture := `{
+		"id":"T-legacy",
+		"messages":[
+			{"role":"user","content":[{"type":"text","text":"first"}]},
+			{"role":"assistant","messageId":null,"content":[{"type":"text","text":"second"}]},
+			{"role":"user","content":[{"type":"tool_result"}]}
+		]
+	}`
+	first, err := Parse([]byte(fixture))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	second, err := Parse([]byte(fixture))
+	if err != nil {
+		t.Fatalf("Parse() second error = %v", err)
+	}
+	if len(first.Messages) != 2 {
+		t.Fatalf("messages = %d, want 2 text messages", len(first.Messages))
+	}
+	if first.Messages[0].UUID == first.Messages[1].UUID {
+		t.Fatal("sequence-derived UUIDs collided")
+	}
+	if first.Messages[0].UUID != second.Messages[0].UUID || first.Messages[1].UUID != second.Messages[1].UUID {
+		t.Fatal("sequence-derived UUIDs are not deterministic")
+	}
+}
+
+func TestParseExportRejectsMalformedMessageID(t *testing.T) {
+	fixture := `{"id":"T-one","messages":[{"role":"user","messageId":{"bad":true},"content":[{"type":"text","text":"hello"}]}]}`
+	_, err := Parse([]byte(fixture))
+	if err == nil || !strings.Contains(err.Error(), "unsupported message id") {
+		t.Fatalf("Parse() error = %v, want unsupported message id", err)
 	}
 }
 

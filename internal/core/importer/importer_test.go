@@ -1,11 +1,13 @@
 package importer
 
 import (
+	"bytes"
 	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +17,18 @@ import (
 	"github.com/neilberkman/ccrider/pkg/codexsessions"
 	"github.com/neilberkman/ccrider/pkg/pisessions"
 )
+
+func TestProgressReporterFinishReportsImportedCount(t *testing.T) {
+	var output bytes.Buffer
+	progress := NewProgressReporter(&output, 5, false)
+	progress.Update("first", "")
+	progress.Update("second", "")
+	progress.Finish()
+
+	if got := output.String(); !strings.Contains(got, "Completed: Imported 2 sessions") {
+		t.Fatalf("progress output = %q, want imported count", got)
+	}
+}
 
 func TestPrepareSourceOptionalEnumerateErrorSkips(t *testing.T) {
 	boom := errors.New("schema changed")
