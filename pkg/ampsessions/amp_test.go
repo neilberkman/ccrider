@@ -1,166 +1,11 @@
 package ampsessions
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
 )
-
-func TestClientListThreadsPaginatesAndDeduplicates(t *testing.T) {
-	var calls [][]string
-	client := newClient(func(_ context.Context, args ...string) ([]byte, error) {
-		calls = append(calls, append([]string(nil), args...))
-		offset := args[len(args)-1]
-		switch offset {
-		case "0":
-			return []byte(`[
-				{"id":"T-one","updated":"2026-07-22T10:00:00Z","messageCount":2},
-				{"id":"T-two","updated":"2026-07-22T11:00:00Z","messageCount":4}
-			]`), nil
-		case "2":
-			return []byte(`[
-				{"id":"T-two","updated":"2026-07-22T11:00:00Z","messageCount":4},
-				{"id":"T-three","updated":"2026-07-22T12:00:00Z","messageCount":6}
-			]`), nil
-		case "4":
-			return []byte(`[]`), nil
-		default:
-			t.Fatalf("unexpected offset %s", offset)
-			return nil, nil
-		}
-	}, 2)
-
-	refs, err := client.ListThreads()
-	if err != nil {
-		t.Fatalf("ListThreads() error = %v", err)
-	}
-	if len(refs) != 3 {
-		t.Fatalf("ListThreads() returned %d refs, want 3", len(refs))
-	}
-	ids := []string{refs[0].ID, refs[1].ID, refs[2].ID}
-	if want := []string{"T-one", "T-two", "T-three"}; !reflect.DeepEqual(ids, want) {
-		t.Fatalf("thread ids = %v, want %v", ids, want)
-	}
-	if len(calls) != 3 {
-		t.Fatalf("amp calls = %d, want 3", len(calls))
-	}
-	if got := strings.Join(calls[0], " "); got != "threads list --json --include-archived --limit 2 --offset 0" {
-		t.Fatalf("first amp call = %q", got)
-	}
-}
-
-func TestThreadRevisionChangesWithRemoteMetadata(t *testing.T) {
-	messageCount := 2
-	base := threadListItem{ID: "T-one", Updated: "2026-07-22T10:00:00Z", MessageCount: &messageCount}
-	baseRevision, err := base.revision()
-	if err != nil {
-		t.Fatal(err)
-	}
-	stableRevision, err := base.revision()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if baseRevision != stableRevision {
-		t.Fatal("revision is not stable")
-	}
-	changedTime := base
-	changedTime.Updated = "2026-07-22T10:01:00Z"
-	changedTimeRevision, err := changedTime.revision()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if baseRevision == changedTimeRevision {
-		t.Fatal("updated timestamp did not change revision")
-	}
-	changedCount := base
-	changedMessageCount := *base.MessageCount + 1
-	changedCount.MessageCount = &changedMessageCount
-	changedCountRevision, err := changedCount.revision()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if baseRevision == changedCountRevision {
-		t.Fatal("message count did not change revision")
-	}
-}
-
-func TestClientListThreadsReturnsActionableErrors(t *testing.T) {
-	tests := []struct {
-		name    string
-		run     runFunc
-		wantErr string
-	}{
-		{
-			name: "command failure",
-			run: func(context.Context, ...string) ([]byte, error) {
-				return nil, errors.New("not authenticated")
-			},
-			wantErr: "list Amp threads: not authenticated",
-		},
-		{
-			name: "invalid json",
-			run: func(context.Context, ...string) ([]byte, error) {
-				return []byte(`not-json`), nil
-			},
-			wantErr: "parse Amp thread list at offset 0",
-		},
-		{
-			name: "missing id",
-			run: func(context.Context, ...string) ([]byte, error) {
-				return []byte(`[{}]`), nil
-			},
-			wantErr: "thread id is missing",
-		},
-		{
-			name: "missing revision metadata",
-			run: func(context.Context, ...string) ([]byte, error) {
-				return []byte(`[{"id":"T-one","messageCount":1}]`), nil
-			},
-			wantErr: "has no updated timestamp",
-		},
-		{
-			name: "missing message count",
-			run: func(context.Context, ...string) ([]byte, error) {
-				return []byte(`[{"id":"T-one","updated":"2026-07-22T10:00:00Z"}]`), nil
-			},
-			wantErr: "has no message count",
-		},
-		{
-			name: "negative message count",
-			run: func(context.Context, ...string) ([]byte, error) {
-				return []byte(`[{"id":"T-one","updated":"2026-07-22T10:00:00Z","messageCount":-1}]`), nil
-			},
-			wantErr: "has invalid message count -1",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			client := newClient(tt.run, 100)
-			_, err := client.ListThreads()
-			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
-				t.Fatalf("ListThreads() error = %v, want containing %q", err, tt.wantErr)
-			}
-		})
-	}
-}
-
-func TestClientExportThreadRejectsMismatchedID(t *testing.T) {
-	client := newClient(func(_ context.Context, args ...string) ([]byte, error) {
-		if got := strings.Join(args, " "); got != "threads export T-requested" {
-			t.Fatalf("amp args = %q", got)
-		}
-		return []byte(exportFixture("T-other")), nil
-	}, 100)
-	_, err := client.ExportThread("T-requested")
-	if err == nil || !strings.Contains(err.Error(), `export contained thread id "T-other"`) {
-		t.Fatalf("ExportThread() error = %v", err)
-	}
-}
 
 func TestParseExport(t *testing.T) {
 	session, err := Parse([]byte(exportFixture("T-example")))
@@ -301,6 +146,17 @@ func TestParseExportRejectsMalformedMessageID(t *testing.T) {
 	_, err := Parse([]byte(fixture))
 	if err == nil || !strings.Contains(err.Error(), "unsupported message id") {
 		t.Fatalf("Parse() error = %v, want unsupported message id", err)
+	}
+}
+
+func TestParseExportRejectsDuplicateMessageID(t *testing.T) {
+	fixture := `{"id":"T-one","messages":[
+		{"role":"user","messageId":7,"content":[{"type":"text","text":"first"}]},
+		{"role":"assistant","messageId":7,"content":[{"type":"text","text":"second"}]}
+	]}`
+	_, err := Parse([]byte(fixture))
+	if err == nil || !strings.Contains(err.Error(), `duplicate message id "7"`) {
+		t.Fatalf("Parse() error = %v, want duplicate message id", err)
 	}
 }
 

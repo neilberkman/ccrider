@@ -128,7 +128,7 @@ All MCP tools automatically sync the database before executing queries to ensure
 - **Silent**: No progress output to avoid polluting MCP responses
 - **Incremental**: Only imports new or changed sessions (hash-based deduplication)
 - **Centralized**: Single `syncDatabase()` function called by all tool handlers
-- **Remote-aware**: Local sources are typically fast; Amp performs a lightweight authenticated thread listing and exports only changed threads
+- **Local-only**: MCP request syncs refresh local sources with a short deadline and never contact Amp or other cloud sources. Previously imported Amp sessions remain searchable from the local cache.
 
 ### Technology Stack
 

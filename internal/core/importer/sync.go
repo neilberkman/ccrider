@@ -1,12 +1,15 @@
 package importer
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
-	"github.com/neilberkman/ccrider/pkg/ampsessions"
 	"github.com/neilberkman/ccrider/pkg/antigravitysessions"
 	"github.com/neilberkman/ccrider/pkg/ccsessions"
 	"github.com/neilberkman/ccrider/pkg/codexsessions"
@@ -14,6 +17,8 @@ import (
 	"github.com/neilberkman/ccrider/pkg/opencodesessions"
 	"github.com/neilberkman/ccrider/pkg/pisessions"
 )
+
+const remoteSyncTimeout = 2 * time.Minute
 
 // EnumerateFunc returns all parsed sessions for a database/event-log-backed
 // provider (e.g. Copilot, OpenCode) that does not store one JSONL file per
@@ -31,8 +36,8 @@ type RemoteSessionRef struct {
 // session on demand. This avoids downloading every remote transcript before
 // the importer can determine which ones are unchanged.
 type RemoteSource struct {
-	List  func() ([]RemoteSessionRef, error)
-	Fetch func(RemoteSessionRef) (*ccsessions.ParsedSession, error)
+	List  func(context.Context) ([]RemoteSessionRef, error)
+	Fetch func(context.Context, RemoteSessionRef) (*ccsessions.ParsedSession, error)
 }
 
 // Source describes a session source to import.
@@ -52,8 +57,9 @@ type Source struct {
 }
 
 // DefaultSources returns the standard import sources. Local optional providers
-// are included when their data exists; Amp is included when its CLI is on PATH.
-func DefaultSources() []Source {
+// are included when their data exists; Amp also requires explicit opt-in and
+// its CLI on PATH.
+func DefaultSources(ampEnabled bool) []Source {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return []Source{}
@@ -125,26 +131,21 @@ func DefaultSources() []Source {
 		})
 	}
 
-	if _, err := exec.LookPath("amp"); err == nil {
-		client := ampsessions.NewClient()
+	if ampEnabled {
+		if _, err := exec.LookPath("amp"); err != nil {
+			return sources
+		}
+		client := newAmpClient()
 		sources = append(sources, Source{
 			Path:     "authenticated Amp account",
-			Provider: ampsessions.Provider,
+			Provider: ampProvider,
 			Optional: true,
 			Remote: &RemoteSource{
-				List: func() ([]RemoteSessionRef, error) {
-					threads, err := client.ListThreads()
-					if err != nil {
-						return nil, err
-					}
-					refs := make([]RemoteSessionRef, len(threads))
-					for i, thread := range threads {
-						refs[i] = RemoteSessionRef{ImportID: thread.ID, Revision: thread.Revision}
-					}
-					return refs, nil
+				List: func(ctx context.Context) ([]RemoteSessionRef, error) {
+					return client.listThreads(ctx)
 				},
-				Fetch: func(ref RemoteSessionRef) (*ccsessions.ParsedSession, error) {
-					return client.ExportThread(ref.ImportID)
+				Fetch: func(ctx context.Context, ref RemoteSessionRef) (*ccsessions.ParsedSession, error) {
+					return client.exportThread(ctx, ref.ImportID)
 				},
 			},
 		})
@@ -162,31 +163,47 @@ type PreparedSource struct {
 	Path     string
 	Total    int
 	Warning  error
-	run      func(progress ProgressCallback, force bool) (skipped int, err error)
+	run      func(context.Context, ProgressCallback, bool) (ImportResult, error)
 }
 
-// Run imports the prepared source, reporting progress, and returns the number
-// of skipped (unchanged) units.
-func (p PreparedSource) Run(progress ProgressCallback, force bool) (int, error) {
-	return p.run(progress, force)
+// Run imports the prepared source, reporting per-unit outcomes.
+func (p PreparedSource) Run(ctx context.Context, progress ProgressCallback, force bool) (ImportResult, error) {
+	return p.run(ctx, progress, force)
 }
 
 // PrepareSource resolves a Source into its work count and import action.
-func (i *Importer) PrepareSource(src Source) (PreparedSource, error) {
+func (i *Importer) PrepareSource(ctx context.Context, src Source) (PreparedSource, error) {
+	if err := ctx.Err(); err != nil {
+		return PreparedSource{}, err
+	}
 	if src.Remote != nil {
-		refs, err := src.Remote.List()
+		deadline := time.Now().Add(remoteSyncTimeout)
+		listCtx, cancel := context.WithDeadline(ctx, deadline)
+		refs, err := src.Remote.List(listCtx)
+		cancel()
 		if err != nil {
+			if ctx.Err() != nil {
+				return PreparedSource{}, ctx.Err()
+			}
 			if src.Optional {
 				return skippedPreparedSource(src, err), nil
 			}
 			return PreparedSource{}, err
 		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return PreparedSource{}, context.DeadlineExceeded
+		}
 		return PreparedSource{
 			Provider: src.Provider,
 			Path:     src.Path,
 			Total:    len(refs),
-			run: func(progress ProgressCallback, force bool) (int, error) {
-				return i.ImportRemote(refs, src.Remote.Fetch, progress, force, src.Provider)
+			run: func(ctx context.Context, progress ProgressCallback, force bool) (ImportResult, error) {
+				// Count list and export execution toward the whole remote budget,
+				// but not time a prepared source waits behind another provider.
+				remoteCtx, cancel := context.WithTimeout(ctx, remaining)
+				defer cancel()
+				return i.ImportRemote(remoteCtx, refs, src.Remote.Fetch, progress, force, src.Provider)
 			},
 		}, nil
 	}
@@ -194,6 +211,9 @@ func (i *Importer) PrepareSource(src Source) (PreparedSource, error) {
 	if src.EnumerateFn != nil {
 		sessions, err := src.EnumerateFn()
 		if err != nil {
+			if ctx.Err() != nil {
+				return PreparedSource{}, ctx.Err()
+			}
 			if src.Optional {
 				return skippedPreparedSource(src, err), nil
 			}
@@ -203,14 +223,20 @@ func (i *Importer) PrepareSource(src Source) (PreparedSource, error) {
 			Provider: src.Provider,
 			Path:     src.Path,
 			Total:    len(sessions),
-			run: func(progress ProgressCallback, force bool) (int, error) {
-				return i.ImportEnumerated(sessions, progress, force, src.Provider)
+			run: func(ctx context.Context, progress ProgressCallback, force bool) (ImportResult, error) {
+				if err := ctx.Err(); err != nil {
+					return ImportResult{}, err
+				}
+				return i.ImportEnumerated(ctx, sessions, progress, force, src.Provider)
 			},
 		}, nil
 	}
 
 	total, err := CountJSONLFiles(src.Path, src.SkipSubagents)
 	if err != nil {
+		if ctx.Err() != nil {
+			return PreparedSource{}, ctx.Err()
+		}
 		if src.Optional {
 			return skippedPreparedSource(src, err), nil
 		}
@@ -220,8 +246,11 @@ func (i *Importer) PrepareSource(src Source) (PreparedSource, error) {
 		Provider: src.Provider,
 		Path:     src.Path,
 		Total:    total,
-		run: func(progress ProgressCallback, force bool) (int, error) {
-			return i.ImportDirectory(src.Path, progress, force, src.SkipSubagents, src.ParseFn, src.Provider)
+		run: func(ctx context.Context, progress ProgressCallback, force bool) (ImportResult, error) {
+			if err := ctx.Err(); err != nil {
+				return ImportResult{}, err
+			}
+			return i.ImportDirectory(ctx, src.Path, progress, force, src.SkipSubagents, src.ParseFn, src.Provider)
 		},
 	}, nil
 }
@@ -231,8 +260,8 @@ func skippedPreparedSource(src Source, warning error) PreparedSource {
 		Provider: src.Provider,
 		Path:     src.Path,
 		Warning:  warning,
-		run: func(ProgressCallback, bool) (int, error) {
-			return 0, nil
+		run: func(context.Context, ProgressCallback, bool) (ImportResult, error) {
+			return ImportResult{}, nil
 		},
 	}
 }
@@ -262,18 +291,23 @@ func CountJSONLFiles(dirPath string, skipSubagents bool) (int, error) {
 }
 
 // SyncAll imports from all default sources. Silent (nil progress) for background use.
-func (i *Importer) SyncAll(force bool) error {
-	for _, src := range DefaultSources() {
-		prepared, err := i.PrepareSource(src)
+func (i *Importer) SyncAll(ctx context.Context, sources []Source, force bool) error {
+	var failures []error
+	for _, src := range sources {
+		prepared, err := i.PrepareSource(ctx, src)
 		if err != nil {
 			return err
 		}
 		if prepared.Warning != nil {
 			continue
 		}
-		if _, err := prepared.Run(nil, force); err != nil {
+		result, err := prepared.Run(ctx, nil, force)
+		if err != nil {
 			return err
 		}
+		for _, failure := range result.Failures {
+			failures = append(failures, fmt.Errorf("%s %s: %w", src.Provider, failure.ID, failure.Err))
+		}
 	}
-	return nil
+	return errors.Join(failures...)
 }

@@ -16,6 +16,7 @@ CRITICAL: You MUST immediately cd to {{last_cwd}} before doing anything else. Th
 IMPORTANT: This session has been inactive for {{time_since}}. Before proceeding: check git status, look around to understand what changed, and be careful not to overwrite any work in progress.`
 
 type Config struct {
+	AmpEnabled           bool
 	ResumePromptTemplate string
 	TerminalCommand      string            // Custom command to spawn terminal (optional)
 	ClaudeFlags          []string          // Additional flags to pass to claude --resume
@@ -29,6 +30,7 @@ type Config struct {
 }
 
 type tomlConfig struct {
+	AmpEnabled     bool              `toml:"amp_enabled"`
 	ClaudeFlags    []string          `toml:"claude_flags"`
 	CodexFlags     []string          `toml:"codex_flags"`
 	CopilotFlags   []string          `toml:"copilot_flags"`
@@ -60,6 +62,7 @@ func Load() (*Config, error) {
 		var tc tomlConfig
 		if _, err := toml.DecodeFile(tomlPath, &tc); err == nil {
 			cfg.ClaudeFlags = tc.ClaudeFlags
+			cfg.AmpEnabled = tc.AmpEnabled
 			cfg.CodexFlags = tc.CodexFlags
 			cfg.CopilotFlags = tc.CopilotFlags
 			cfg.OpenCodeFlags = tc.OpenCodeFlags
@@ -97,6 +100,7 @@ func Save(cfg *Config) error {
 	}
 
 	tc := tomlConfig{
+		AmpEnabled:     cfg.AmpEnabled,
 		ClaudeFlags:    cfg.ClaudeFlags,
 		CodexFlags:     cfg.CodexFlags,
 		CopilotFlags:   cfg.CopilotFlags,

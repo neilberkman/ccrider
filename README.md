@@ -16,7 +16,7 @@ You've got months of coding agent sessions sitting in `~/.claude/projects/`, `~/
 ccrider indexes Claude Code, Codex CLI, GitHub Copilot CLI, OpenCode, Pi, Antigravity CLI, and Amp sessions into a single searchable database, with a TUI browser, CLI search, and an MCP server so your agent can search past sessions too.
 
 ```bash
-# Import sessions from every detected provider, including Amp when its CLI is installed
+# Import sessions from every detected local provider (and Amp when explicitly enabled)
 ccrider sync
 
 # Launch the TUI - browse, search, resume
@@ -89,9 +89,9 @@ ccrider sync         # Import new sessions from all providers
 ccrider sync --force # Re-import everything
 ```
 
-Automatically discovers Claude Code (`~/.claude/projects/`), Codex CLI (`~/.codex/sessions/`), GitHub Copilot CLI (`~/.copilot/session-state/`), OpenCode (`~/.local/share/opencode/opencode*.db`), Pi (`~/.pi/agent/sessions/`), and Antigravity CLI (`~/.gemini/antigravity-cli/brain/`) sessions. Antigravity imports each canonical `transcript.jsonl`, excluding its diagnostic transcript. When `amp` is installed and authenticated, ccrider also lists archived and active threads from your Amp account and imports them through `amp threads export`. The lightweight Amp thread revision is checked first, so unchanged cloud threads are not exported again.
+Automatically discovers Claude Code (`~/.claude/projects/`), Codex CLI (`~/.codex/sessions/`), GitHub Copilot CLI (`~/.copilot/session-state/`), OpenCode (`~/.local/share/opencode/opencode*.db`), Pi (`~/.pi/agent/sessions/`), and Antigravity CLI (`~/.gemini/antigravity-cli/brain/`) sessions. Antigravity imports each canonical `transcript.jsonl`, excluding its diagnostic transcript. To import Amp, set `amp_enabled = true` in `~/.config/ccrider/config.toml` and install/authenticate the `amp` CLI. ccrider then lists archived and active threads and exports only new or changed threads.
 
-Amp threads are cloud-backed. Enabling this integration downloads their searchable text into ccrider's local SQLite database. If Amp is unavailable, offline, or unauthenticated, ccrider keeps previously imported Amp data and continues syncing local providers; an explicit `ccrider sync` prints the Amp warning.
+Amp threads are cloud-backed. The integration is disabled by default because enabling it downloads searchable text into ccrider's local SQLite database. MCP requests never contact Amp; they search cached Amp data from an earlier CLI/TUI sync.
 
 ---
 
@@ -225,7 +225,7 @@ cmd/ccrider/          # CLI entry point + MCP server
 internal/
   core/               # Business logic (no UI concerns)
     db/               # Database operations
-    importer/         # Session import/sync
+    importer/         # Session import/sync and Amp CLI client
     search/           # Full-text search
     session/          # Session launch logic
   interface/          # Thin UI wrappers
@@ -238,7 +238,7 @@ pkg/
   opencodesessions/   # OpenCode session parser (public API)
   pisessions/         # Pi session parser (public API)
   antigravitysessions/ # Antigravity CLI session parser (public API)
-  ampsessions/        # Amp CLI client and thread parser (public API)
+  ampsessions/        # Pure Amp export parser (public API)
 ```
 
 ### Quick Build

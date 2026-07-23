@@ -1,12 +1,14 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/neilberkman/ccrider/internal/core/config"
 	"github.com/neilberkman/ccrider/internal/core/db"
 	"github.com/neilberkman/ccrider/internal/core/importer"
 	"github.com/neilberkman/ccrider/internal/core/search"
@@ -226,14 +228,16 @@ type syncProgressMsg struct {
 func startSyncWithProgress(database *db.DB, filterByProject bool, projectPath string) tea.Cmd {
 	return func() tea.Msg {
 		imp := importer.New(database)
+		ctx := context.Background()
 
 		// Resolve each source (count work + import action) via core. Sources that
 		// fail to prepare (e.g. an unreadable Copilot store) are surfaced as a
 		// warning rather than silently dropped.
 		var prepared []importer.PreparedSource
 		var total int
-		for _, src := range importer.DefaultSources() {
-			p, err := imp.PrepareSource(src)
+		cfg, _ := config.Load()
+		for _, src := range importer.DefaultSources(cfg.AmpEnabled) {
+			p, err := imp.PrepareSource(ctx, src)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "WARN: %s sync skipped: %v\n", src.Provider, err)
 				continue
@@ -261,8 +265,12 @@ func startSyncWithProgress(database *db.DB, filterByProject bool, projectPath st
 			}
 
 			for _, p := range prepared {
-				if _, err := p.Run(progress, false); err != nil {
+				result, err := p.Run(ctx, progress, false)
+				if err != nil {
 					fmt.Fprintf(os.Stderr, "WARN: %s sync failed: %v\n", p.Provider, err)
+				}
+				for _, failure := range result.Failures {
+					fmt.Fprintf(os.Stderr, "WARN: Cannot import %s session %s: %v\n", p.Provider, failure.ID, failure.Err)
 				}
 			}
 

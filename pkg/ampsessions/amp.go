@@ -1,173 +1,16 @@
-// Package ampsessions imports Amp threads through Amp's supported CLI.
-//
-// Amp threads are cloud-backed, so ccrider first lists lightweight thread
-// references and only exports threads whose revision changed since the last
-// sync. The Amp CLI owns authentication, including AMP_API_KEY handling.
+// Package ampsessions parses Amp thread exports into the shared session model.
 package ampsessions
 
 import (
-	"bytes"
-	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/url"
-	"os/exec"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/neilberkman/ccrider/pkg/ccsessions"
 )
-
-const (
-	Provider        = "amp"
-	defaultPageSize = 100
-	commandTimeout  = 30 * time.Second
-)
-
-// ThreadRef is the lightweight metadata returned by `amp threads list`.
-type ThreadRef struct {
-	ID       string
-	Revision string
-}
-
-// runFunc invokes the Amp CLI with the supplied arguments. Keeping the runner
-// injectable makes pagination and error handling testable without an Amp
-// account or network access.
-type runFunc func(context.Context, ...string) ([]byte, error)
-
-// Client accesses Amp threads through the installed Amp CLI.
-type Client struct {
-	run      runFunc
-	pageSize int
-	timeout  time.Duration
-}
-
-// NewClient creates a client backed by the `amp` executable on PATH.
-func NewClient() *Client {
-	return &Client{
-		run:      runAmp,
-		pageSize: defaultPageSize,
-		timeout:  commandTimeout,
-	}
-}
-
-func newClient(run runFunc, pageSize int) *Client {
-	return &Client{run: run, pageSize: pageSize, timeout: commandTimeout}
-}
-
-func runAmp(ctx context.Context, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "amp", args...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	output, err := cmd.Output()
-	if err == nil {
-		return output, nil
-	}
-	message := strings.TrimSpace(stderr.String())
-	if message == "" {
-		return nil, fmt.Errorf("run amp command: %w", err)
-	}
-	return nil, fmt.Errorf("run amp command: %w: %s", err, message)
-}
-
-// ListThreads returns every thread visible to the authenticated Amp user,
-// including archived threads. Results are paginated and deduplicated. A thread
-// moved across offsets during a concurrent account change may appear on the
-// next sync; missing list entries never delete cached sessions.
-func (c *Client) ListThreads() ([]ThreadRef, error) {
-	seen := make(map[string]struct{})
-	var refs []ThreadRef
-
-	for offset := 0; ; offset += c.pageSize {
-		ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
-		output, err := c.run(ctx,
-			"threads", "list", "--json", "--include-archived",
-			"--limit", strconv.Itoa(c.pageSize), "--offset", strconv.Itoa(offset),
-		)
-		cancel()
-		if err != nil {
-			return nil, fmt.Errorf("list Amp threads: %w", err)
-		}
-
-		var page []threadListItem
-		if err := json.Unmarshal(output, &page); err != nil {
-			return nil, fmt.Errorf("parse Amp thread list at offset %d: %w", offset, err)
-		}
-
-		added := 0
-		for _, item := range page {
-			if strings.TrimSpace(item.ID) == "" {
-				return nil, fmt.Errorf("parse Amp thread list at offset %d: thread id is missing", offset)
-			}
-			revision, err := item.revision()
-			if err != nil {
-				return nil, fmt.Errorf("parse Amp thread list at offset %d: %w", offset, err)
-			}
-			if _, ok := seen[item.ID]; ok {
-				continue
-			}
-			seen[item.ID] = struct{}{}
-			refs = append(refs, ThreadRef{ID: item.ID, Revision: revision})
-			added++
-		}
-
-		if len(page) < c.pageSize {
-			break
-		}
-		if added == 0 {
-			return nil, fmt.Errorf("list Amp threads: pagination made no progress at offset %d", offset)
-		}
-	}
-
-	return refs, nil
-}
-
-// ExportThread downloads and parses one Amp thread by id.
-func (c *Client) ExportThread(threadID string) (*ccsessions.ParsedSession, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
-	defer cancel()
-
-	output, err := c.run(ctx, "threads", "export", threadID)
-	if err != nil {
-		return nil, fmt.Errorf("export Amp thread %s: %w", threadID, err)
-	}
-	session, err := Parse(output)
-	if err != nil {
-		return nil, fmt.Errorf("parse Amp thread %s: %w", threadID, err)
-	}
-	if strings.TrimSpace(session.SessionID) != strings.TrimSpace(threadID) {
-		return nil, fmt.Errorf("parse Amp thread %s: export contained thread id %q", threadID, session.SessionID)
-	}
-	return session, nil
-}
-
-type threadListItem struct {
-	ID           string `json:"id"`
-	Updated      string `json:"updated"`
-	UpdatedAt    string `json:"updatedAt"`
-	MessageCount *int   `json:"messageCount"`
-}
-
-func (item threadListItem) revision() (string, error) {
-	updated := strings.TrimSpace(item.Updated)
-	if updated == "" {
-		updated = strings.TrimSpace(item.UpdatedAt)
-	}
-	if updated == "" {
-		return "", fmt.Errorf("thread %s has no updated timestamp", item.ID)
-	}
-	if item.MessageCount == nil {
-		return "", fmt.Errorf("thread %s has no message count", item.ID)
-	}
-	if *item.MessageCount < 0 {
-		return "", fmt.Errorf("thread %s has invalid message count %d", item.ID, *item.MessageCount)
-	}
-	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%d", item.ID, updated, *item.MessageCount)))
-	return hex.EncodeToString(sum[:]), nil
-}
 
 type rawThread struct {
 	ID        string             `json:"id"`
@@ -230,6 +73,7 @@ func Parse(data []byte) (*ccsessions.ParsedSession, error) {
 
 	rawMessages := *thread.Messages
 	messages := make([]ccsessions.ParsedMessage, 0, len(rawMessages))
+	seenIDs := make(map[string]struct{}, len(rawMessages))
 	for sequence, raw := range rawMessages {
 		var message rawMessage
 		if err := json.Unmarshal(raw, &message); err != nil {
@@ -241,6 +85,16 @@ func Parse(data []byte) (*ccsessions.ParsedSession, error) {
 			continue
 		}
 
+		messageID, err := messageIdentity(message.MessageID, sequence+1)
+		if err != nil {
+			return nil, fmt.Errorf("decode message %d id: %w", sequence+1, err)
+		}
+		uuid := ccsessions.DeterministicUUID("amp:" + thread.ID + ":" + messageID)
+		if _, exists := seenIDs[uuid]; exists {
+			return nil, fmt.Errorf("decode message %d id: duplicate message id %q", sequence+1, messageID)
+		}
+		seenIDs[uuid] = struct{}{}
+
 		text, blockTime, err := messageText(message.Content)
 		if err != nil {
 			return nil, fmt.Errorf("decode message %d content: %w", sequence+1, err)
@@ -248,17 +102,13 @@ func Parse(data []byte) (*ccsessions.ParsedSession, error) {
 		if strings.TrimSpace(text) == "" {
 			continue
 		}
-		messageID, err := messageIdentity(message.MessageID, sequence+1)
-		if err != nil {
-			return nil, fmt.Errorf("decode message %d id: %w", sequence+1, err)
-		}
 		timestamp := parseFlexibleTime(message.Meta.SentAt)
 		if timestamp.IsZero() {
 			timestamp = blockTime
 		}
 
 		messages = append(messages, ccsessions.ParsedMessage{
-			UUID:        ccsessions.DeterministicUUID("amp:" + thread.ID + ":" + messageID),
+			UUID:        uuid,
 			Type:        msgType,
 			Sender:      sender,
 			Content:     append(json.RawMessage(nil), raw...),
