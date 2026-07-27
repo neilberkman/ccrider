@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-07-27
+
+### Added
+
+- **Amp thread support** — ccrider indexes threads from your authenticated Amp account through the Amp CLI, covering active and archived threads, and participates in sync, search, list, export, TUI, and MCP workflows with `[amp]` provider tags and `--provider amp` filtering. Sync is incremental: a lightweight thread listing detects changes and only new or changed threads are exported. Both current and legacy Amp export schemas are supported
+- **Amp resume support** — resumes with `amp threads continue <thread-id>`. Because Amp threads are addressed globally rather than by directory, ccrider resumes in the recorded project directory when it exists on this machine and falls back to the current directory when the thread came from an orb or another machine
+- **`amp_enabled` config option** — Amp is cloud-backed, so importing it downloads thread text into the local database. The integration is off by default and requires `amp_enabled = true` in `~/.config/ccrider/config.toml`. MCP request syncs never contact Amp; they search Amp data already cached by an earlier CLI or TUI sync
+
+### Changed
+
+- **Sync respects cancellation** — Ctrl-C during a sync now stops promptly instead of running to completion, and remote imports carry bounded deadlines
+- **Import failures are reported per session** — the importer returns structured per-session outcomes instead of printing warnings from the core, so each interface renders them in its own voice, and progress accounts for failed units rather than stalling
+
+### Fixed
+
+- **A failed session no longer breaks MCP queries** — an incomplete or timed-out background sync is logged and the request is served from cached data, instead of failing the tool call outright
+- **One-time inode migration ignores providers that have no session files** — cloud-backed and database-backed providers no longer skew the check that decides whether a backfill is needed
+
 ## [1.6.2] - 2026-07-27
 
 ### Fixed
