@@ -114,11 +114,14 @@ func execAgent(provider, sessionID, projectPath, lastCwd, updatedAt, summary str
 		}
 	}
 
-	// Resolve working directory (always projectPath, see session.ResolveWorkingDir)
-	workDir := session.ResolveWorkingDir(projectPath, lastCwd)
+	workDir := session.ResolveWorkingDir(provider, projectPath, lastCwd)
 
 	// Show what we're doing
-	fmt.Fprintf(os.Stderr, "[ccrider] cd %s && %s\n", session.ShellQuote(workDir), cmd)
+	displayCmd := cmd
+	if workDir != "" {
+		displayCmd = fmt.Sprintf("cd %s && %s", session.ShellQuote(workDir), cmd)
+	}
+	fmt.Fprintf(os.Stderr, "[ccrider] %s\n", displayCmd)
 
 	// Set terminal title before launching
 	updatedTime := session.ParseSessionTime(updatedAt)
@@ -194,7 +197,7 @@ func execClaude(sessionID, projectPath, lastCwd, updatedAt, summary string, fork
 	cmd := session.AppendPromptArg(spec.Prefix, spec, promptArg)
 
 	// Resolve working directory (always projectPath, see session.ResolveWorkingDir)
-	workDir := session.ResolveWorkingDir(projectPath, lastCwd)
+	workDir := session.ResolveWorkingDir(session.ProviderClaude, projectPath, lastCwd)
 
 	// Show what we're doing
 	fmt.Fprintf(os.Stderr, "[ccrider] cd %s && %s\n", session.ShellQuote(workDir), cmd)

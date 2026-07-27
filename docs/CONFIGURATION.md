@@ -8,9 +8,13 @@ Pi sessions are imported from `~/.pi/agent/sessions/` when that directory exists
 
 Antigravity CLI sessions are imported from `~/.gemini/antigravity-cli/brain/` when that directory exists. ccrider indexes each canonical `transcript.jsonl` and resumes it with `agy --conversation <id>`. Antigravity forks interactively after resuming with `/fork`.
 
+Amp cloud import is an explicit privacy opt-in. Set `amp_enabled = true` in `config.toml` and install/authenticate the `amp` CLI. ccrider uses `amp threads list` for change detection, exports only new or changed threads, and resumes with `amp threads continue <id>`. Enabling it downloads searchable thread text into the local SQLite database. MCP requests never refresh cloud sources and only use cached Amp data.
+
 ### config.toml
 
 Main configuration file for global settings.
+
+`amp_enabled` is a boolean and defaults to `false`.
 
 **Location**: `~/.config/ccrider/config.toml`
 
@@ -87,6 +91,7 @@ Codex flags are placed **before** the subcommand (`codex [OPTIONS] <COMMAND>`); 
 
 ```toml
 # ~/.config/ccrider/config.toml
+amp_enabled = true
 claude_flags = ["--dangerously-skip-permissions"]
 codex_flags = ["--dangerously-bypass-approvals-and-sandbox"]
 # copilot_flags = []

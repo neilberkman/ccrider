@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -264,7 +265,12 @@ func coerceStringNumbers(args map[string]interface{}) {
 
 // syncDatabase ensures the database is up-to-date before running tool queries
 func syncDatabase(ctx context.Context, database *db.DB) error {
-	return importer.New(database).SyncAll(false)
+	syncCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	if err := importer.New(database).SyncAll(syncCtx, importer.DefaultSources(false), false); err != nil {
+		fmt.Fprintf(os.Stderr, "WARN: background session sync incomplete; serving cached data: %v\n", err)
+	}
+	return nil
 }
 
 func makeSearchSessionsHandler(database *db.DB) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -321,7 +327,13 @@ func makeSearchSessionsHandler(database *db.DB) func(context.Context, mcp.CallTo
 			for attempt := 0; attempt < 5; attempt++ {
 				if attempt > 0 {
 					// Wait before retry, re-sync to pick up any new writes
-					time.Sleep(1 * time.Second)
+					timer := time.NewTimer(1 * time.Second)
+					select {
+					case <-ctx.Done():
+						timer.Stop()
+						return nil, ctx.Err()
+					case <-timer.C:
+					}
 					if err := syncDatabase(ctx, database); err != nil {
 						lastErr = err
 						continue

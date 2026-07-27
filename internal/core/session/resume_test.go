@@ -1,6 +1,7 @@
 package session
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -13,6 +14,7 @@ func TestResumeBinary(t *testing.T) {
 		ProviderOpenCode:    "opencode",
 		ProviderPi:          "pi",
 		ProviderAntigravity: "agy",
+		ProviderAmp:         "amp",
 		"":                  "claude",
 		"unknown":           "claude",
 	}
@@ -34,6 +36,9 @@ func TestAntigravityResumeSpec(t *testing.T) {
 	}
 	if SupportsFork(ProviderCopilot) {
 		t.Error("Copilot should not advertise unsupported direct forking")
+	}
+	if SupportsFork(ProviderAmp) {
+		t.Error("Amp should not advertise unsupported direct forking")
 	}
 	for _, provider := range []string{ProviderClaude, ProviderCodex, ProviderOpenCode, ProviderPi} {
 		if !SupportsFork(provider) {
@@ -211,6 +216,15 @@ func TestBuildResumeSpec(t *testing.T) {
 			wantPrompt: true,
 			wantBinary: "codex",
 		},
+		{
+			name:       "amp continue",
+			provider:   ProviderAmp,
+			fork:       true,
+			flags:      []string{"--ignored"},
+			wantPrefix: "amp threads continue 'sess-1'",
+			wantPrompt: false,
+			wantBinary: "amp",
+		},
 	}
 
 	// Codex stores sessions under a rollout filename; resume must use the
@@ -250,7 +264,7 @@ func TestBuildResumeSpec(t *testing.T) {
 	// quoting so it cannot break out of the command.
 	t.Run("malicious id is quoted", func(t *testing.T) {
 		id := "x'; rm -rf /; '"
-		for _, provider := range []string{ProviderClaude, ProviderCodex, ProviderCopilot, ProviderOpenCode, ProviderPi, ProviderAntigravity} {
+		for _, provider := range []string{ProviderClaude, ProviderCodex, ProviderCopilot, ProviderOpenCode, ProviderPi, ProviderAntigravity, ProviderAmp} {
 			spec := BuildResumeSpec(provider, id, false, nil)
 			if !strings.Contains(spec.Prefix, ShellQuote(id)) {
 				t.Errorf("%s prefix = %q, want it to contain the quoted id %q", provider, spec.Prefix, ShellQuote(id))
@@ -272,6 +286,24 @@ func TestBuildResumeSpec(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("Amp uses an existing local project path", func(t *testing.T) {
+		projectPath := t.TempDir()
+		got := ResumeCommandIn(projectPath, ProviderAmp, "T-one", "ignored", false, nil)
+		want := "cd " + ShellQuote(projectPath) + " && amp threads continue 'T-one'"
+		if got != want {
+			t.Errorf("ResumeCommandIn = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("Amp ignores an unavailable remote project path", func(t *testing.T) {
+		projectPath := t.TempDir() + "/missing-orb-workspace"
+		got := ResumeCommandIn(projectPath, ProviderAmp, "T-one", "ignored", false, nil)
+		want := "amp threads continue 'T-one'"
+		if got != want {
+			t.Errorf("ResumeCommandIn = %q, want %q", got, want)
+		}
+	})
 }
 
 func TestResumeCommandIn(t *testing.T) {
@@ -415,6 +447,12 @@ func TestResumeCommand(t *testing.T) {
 			prompt:   "it's done",
 			want:     `claude --resume 'sess-1' 'it'\''s done'`,
 		},
+		{
+			name:     "amp drops prompt",
+			provider: ProviderAmp,
+			prompt:   "keep going",
+			want:     "amp threads continue 'sess-1'",
+		},
 	}
 
 	for _, tt := range tests {
@@ -424,5 +462,29 @@ func TestResumeCommand(t *testing.T) {
 				t.Errorf("ResumeCommand = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestResolveWorkingDir(t *testing.T) {
+	callerDir := t.TempDir()
+	t.Chdir(callerDir)
+	existingProject := t.TempDir()
+	missingProject := t.TempDir() + "/orb-workspace"
+
+	if got := ResolveWorkingDir(ProviderAmp, existingProject, "/ignored"); got != existingProject {
+		t.Errorf("ResolveWorkingDir(Amp existing) = %q, want %q", got, existingProject)
+	}
+	if got := ResolveWorkingDir(ProviderAmp, missingProject, "/ignored"); got != callerDir {
+		t.Errorf("ResolveWorkingDir(Amp missing) = %q, want caller cwd %q", got, callerDir)
+	}
+	if got := ResolveWorkingDir(ProviderClaude, missingProject, "/ignored"); got != missingProject {
+		t.Errorf("ResolveWorkingDir(Claude) = %q, want required project %q", got, missingProject)
+	}
+}
+
+func TestFileIdentityProviderNames(t *testing.T) {
+	want := []string{ProviderClaude, ProviderCodex, ProviderPi}
+	if got := FileIdentityProviderNames(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("FileIdentityProviderNames() = %v, want %v", got, want)
 	}
 }

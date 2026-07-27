@@ -164,6 +164,9 @@ func TestProviderFlags(t *testing.T) {
 	if got := ProviderFlags(cfg, ProviderAntigravity); got != nil {
 		t.Errorf("ProviderFlags(cfg, antigravity) = %v, want nil", got)
 	}
+	if got := ProviderFlags(cfg, ProviderAmp); got != nil {
+		t.Errorf("ProviderFlags(cfg, amp) = %v, want nil", got)
+	}
 	for provider, want := range cases {
 		got := ProviderFlags(cfg, provider)
 		if len(got) != 1 || got[0] != want {

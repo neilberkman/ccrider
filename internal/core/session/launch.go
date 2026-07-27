@@ -9,15 +9,40 @@ import (
 	"strings"
 )
 
-// ResolveWorkingDir determines the correct directory to start claude --resume
+// ResolveWorkingDir determines the directory to start a provider's resume
+// command. Most providers require the original project path. Providers with
+// globally-addressed cloud sessions prefer that path only when it exists on
+// this machine, otherwise they start from the caller's current directory.
 //
-// CRITICAL: Always returns projectPath, NOT lastCwd.
-// Claude --resume only finds sessions stored in the project directory.
-// The resume prompt tells Claude where the session last was (lastCwd).
+// CRITICAL: For required-path providers this always returns projectPath, NOT
+// lastCwd. Claude --resume only finds sessions stored in the project directory.
 //
 // DO NOT CHANGE THIS - see commits db2bc33 and 33050ea
-func ResolveWorkingDir(projectPath, lastCwd string) string {
+func ResolveWorkingDir(provider, projectPath, lastCwd string) string {
+	if recorded := recordedWorkingDir(provider, projectPath); recorded != "" {
+		return recorded
+	}
+	if lookupProvider(provider).WorkingDir == workingDirExistingPreferred {
+		cwd, err := os.Getwd()
+		if err == nil {
+			return cwd
+		}
+	}
 	return projectPath
+}
+
+// recordedWorkingDir returns the stored project path when the provider should
+// use it. An empty result means the provider can safely resume from the
+// caller's current directory.
+func recordedWorkingDir(provider, projectPath string) string {
+	if lookupProvider(provider).WorkingDir != workingDirExistingPreferred {
+		return projectPath
+	}
+	info, err := os.Stat(projectPath)
+	if err == nil && info.IsDir() {
+		return projectPath
+	}
+	return ""
 }
 
 // ValidateClaudeRunnable checks if 'claude' command can run from the given directory.

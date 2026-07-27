@@ -1,8 +1,10 @@
 package importer
 
 import (
+	"context"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,6 +16,21 @@ import (
 	"github.com/neilberkman/ccrider/pkg/ccsessions"
 	"github.com/zeebo/blake3"
 )
+
+type ImportFailure struct {
+	ID  string
+	Err error
+}
+
+type ImportResult struct {
+	Imported int
+	Skipped  int
+	Failures []ImportFailure
+}
+
+func (r *ImportResult) addFailure(id string, err error) {
+	r.Failures = append(r.Failures, ImportFailure{ID: id, Err: err})
+}
 
 // ParseFunc parses a session JSONL file and returns a ParsedSession.
 // Different providers (Claude, Codex) supply different implementations.
@@ -34,6 +51,13 @@ func New(database *db.DB) *Importer {
 // fileHash: pre-computed BLAKE3 hash from ImportDirectory (avoids double-hashing)
 // provider: identifies the agent (e.g. "claude", "codex")
 func (i *Importer) ImportSession(session *ccsessions.ParsedSession, existingMessageCount int, fileInode, fileDevice uint64, fileHash string, provider string) error {
+	return i.importSession(session, existingMessageCount, fileInode, fileDevice, fileHash, provider, false)
+}
+
+// importSession writes one parsed session. replaceMessages atomically replaces
+// the stored transcript for authoritative remote snapshots, removing messages
+// that disappeared upstream and their FTS entries.
+func (i *Importer) importSession(session *ccsessions.ParsedSession, existingMessageCount int, fileInode, fileDevice uint64, fileHash string, provider string, replaceMessages bool) error {
 	hash := fileHash
 
 	fileSessionID := sessionImportID(session)
@@ -54,8 +78,11 @@ func (i *Importer) ImportSession(session *ccsessions.ParsedSession, existingMess
 		projectPath = extractProjectInitiationPath(session.Messages)
 	}
 	if projectPath == "" {
-		// Fallback to decoding from directory name (legacy behavior)
-		projectPath = extractProjectPath(session.FilePath)
+		// Fallback to decoding from directory name for file-based providers.
+		// Remote sources use synthetic paths and must supply a real local path.
+		if !replaceMessages {
+			projectPath = extractProjectPath(session.FilePath)
+		}
 	}
 
 	// Extract last CWD (where user was last working) for resume prompt
@@ -135,6 +162,20 @@ func (i *Importer) ImportSession(session *ccsessions.ParsedSession, existingMess
 	err = tx.QueryRow("SELECT id FROM sessions WHERE session_id = ?", fileSessionID).Scan(&sessionDBID)
 	if err != nil {
 		return fmt.Errorf("failed to get session ID: %w", err)
+	}
+	if replaceMessages {
+		// Remote revisions are authoritative transcript snapshots. Invalidate all
+		// transcript-derived data in the same transaction so a failed replacement
+		// restores both the old messages and their caches.
+		for _, table := range []string{"messages", "session_summaries", "summary_chunks", "session_issues", "session_files"} {
+			if _, err := tx.Exec(`DELETE FROM `+table+` WHERE session_id = ?`, sessionDBID); err != nil {
+				return fmt.Errorf("failed to invalidate %s for replaced session: %w", table, err)
+			}
+		}
+		if _, err := tx.Exec(`UPDATE sessions SET llm_summary = NULL, llm_summary_at = NULL WHERE id = ?`, sessionDBID); err != nil {
+			return fmt.Errorf("failed to invalidate legacy summary for replaced session: %w", err)
+		}
+		existingMessageCount = 0
 	}
 
 	// Insert messages (use INSERT OR IGNORE to skip duplicates from resumed sessions)
@@ -236,8 +277,9 @@ func (i *Importer) ImportSession(session *ccsessions.ParsedSession, existingMess
 // If skipSubagents is true, skips files in subagents/ directories and agent-* files
 // parseFn controls how each JSONL file is parsed (e.g. ccsessions.ParseFile or codexsessions.ParseFile)
 // provider identifies the agent for DB storage (e.g. "claude", "codex")
-// Returns the number of skipped files and an error
-func (i *Importer) ImportDirectory(dirPath string, progress ProgressCallback, force bool, skipSubagents bool, parseFn ParseFunc, provider string) (int, error) {
+// Returns structured per-file outcomes and any fatal setup or cancellation error.
+func (i *Importer) ImportDirectory(ctx context.Context, dirPath string, progress ProgressCallback, force bool, skipSubagents bool, parseFn ParseFunc, provider string) (ImportResult, error) {
+	result := ImportResult{}
 	// Find all .jsonl files (optionally skipping subagents)
 	var files []string
 	err := filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
@@ -262,7 +304,7 @@ func (i *Importer) ImportDirectory(dirPath string, progress ProgressCallback, fo
 		return nil
 	})
 	if err != nil {
-		return 0, fmt.Errorf("failed to walk directory: %w", err)
+		return result, fmt.Errorf("failed to walk directory: %w", err)
 	}
 
 	// Pre-load all session metadata for fast lookups (avoids N queries)
@@ -279,7 +321,7 @@ func (i *Importer) ImportDirectory(dirPath string, progress ProgressCallback, fo
 		FROM sessions
 	`)
 	if err != nil {
-		return 0, fmt.Errorf("failed to load session metadata: %w", err)
+		return result, fmt.Errorf("failed to load session metadata: %w", err)
 	}
 
 	for rows.Next() {
@@ -290,7 +332,7 @@ func (i *Importer) ImportDirectory(dirPath string, progress ProgressCallback, fo
 		var hash string
 		if err := rows.Scan(&sid, &mtimeStr, &size, &msgCount, &hash); err != nil {
 			_ = rows.Close()
-			return 0, fmt.Errorf("failed to scan session metadata: %w", err)
+			return result, fmt.Errorf("failed to scan session metadata: %w", err)
 		}
 
 		var mtime time.Time
@@ -308,8 +350,6 @@ func (i *Importer) ImportDirectory(dirPath string, progress ProgressCallback, fo
 	}
 	_ = rows.Close()
 
-	var skipped, failed int
-
 	// Files that need no import still count as progress — a routine sync skips
 	// nearly everything, so a bar fed only by imports looks frozen.
 	advance := func() {
@@ -319,6 +359,9 @@ func (i *Importer) ImportDirectory(dirPath string, progress ProgressCallback, fo
 	}
 
 	for _, file := range files {
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
 		sessionID := filepath.Base(file)
 		sessionID = strings.TrimSuffix(sessionID, ".jsonl")
 
@@ -333,12 +376,11 @@ func (i *Importer) ImportDirectory(dirPath string, progress ProgressCallback, fo
 			fileInfo, err := os.Stat(file)
 			if err != nil {
 				if os.IsNotExist(err) {
-					skipped++
+					result.Skipped++
 					advance()
 					continue
 				}
-				fmt.Fprintf(os.Stderr, "WARN: Cannot stat file %s: %v\n", file, err)
-				failed++
+				result.addFailure(sessionID, fmt.Errorf("stat file: %w", err))
 				advance()
 				continue
 			}
@@ -349,7 +391,7 @@ func (i *Importer) ImportDirectory(dirPath string, progress ProgressCallback, fo
 				mtimeDiff = -mtimeDiff
 			}
 			if !metadata.mtime.IsZero() && mtimeDiff < time.Second && fileInfo.Size() == metadata.size {
-				skipped++
+				result.Skipped++
 				advance()
 				continue
 			}
@@ -359,12 +401,11 @@ func (i *Importer) ImportDirectory(dirPath string, progress ProgressCallback, fo
 		currentHash, err := computeFileHash(file)
 		if err != nil {
 			if os.IsNotExist(err) {
-				skipped++
+				result.Skipped++
 				advance()
 				continue
 			}
-			fmt.Fprintf(os.Stderr, "WARN: Cannot hash file %s: %v\n", file, err)
-			failed++
+			result.addFailure(sessionID, fmt.Errorf("hash file: %w", err))
 			advance()
 			continue
 		}
@@ -380,18 +421,19 @@ func (i *Importer) ImportDirectory(dirPath string, progress ProgressCallback, fo
 					`UPDATE sessions SET file_mtime = ?, file_size = ? WHERE session_id = ?`,
 					statInfo.ModTime(), statInfo.Size(), sessionID,
 				); err != nil {
-					fmt.Fprintf(os.Stderr, "WARN: Cannot refresh file metadata for %s: %v\n", file, err)
+					result.addFailure(sessionID, fmt.Errorf("refresh file metadata: %w", err))
+					advance()
+					continue
 				}
 			}
-			skipped++
+			result.Skipped++
 			advance()
 			continue
 		}
 
 		session, err := parseFn(file)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "WARN: Cannot parse file %s: %v\n", file, err)
-			failed++
+			result.addFailure(sessionID, fmt.Errorf("parse file: %w", err))
 			advance()
 			continue
 		}
@@ -399,11 +441,11 @@ func (i *Importer) ImportDirectory(dirPath string, progress ProgressCallback, fo
 		fileInode, fileDevice, _ := getFileIdentity(file)
 
 		if err := i.ImportSession(session, messageCount, fileInode, fileDevice, currentHash, provider); err != nil {
-			fmt.Fprintf(os.Stderr, "WARN: Cannot import session %s: %v\n", sessionID, err)
-			failed++
+			result.addFailure(sessionID, err)
 			advance()
 			continue
 		}
+		result.Imported++
 
 		if progress != nil {
 			firstMsg := ""
@@ -417,11 +459,7 @@ func (i *Importer) ImportDirectory(dirPath string, progress ProgressCallback, fo
 		}
 	}
 
-	if failed > 0 {
-		fmt.Fprintf(os.Stderr, "\nImport completed with %d failures (see warnings above)\n", failed)
-	}
-
-	return skipped, nil
+	return result, nil
 }
 
 // ImportEnumerated imports a slice of already-parsed sessions from a
@@ -429,34 +467,36 @@ func (i *Importer) ImportDirectory(dirPath string, progress ProgressCallback, fo
 //
 // Incremental sync uses a synthetic content hash (derived from the session's
 // last-updated time and message count) in place of a file hash: unchanged
-// sessions are skipped. Returns the number of skipped sessions.
-func (i *Importer) ImportEnumerated(sessions []*ccsessions.ParsedSession, progress ProgressCallback, force bool, provider string) (int, error) {
+// sessions are skipped. Returns structured per-session outcomes.
+func (i *Importer) ImportEnumerated(ctx context.Context, sessions []*ccsessions.ParsedSession, progress ProgressCallback, force bool, provider string) (ImportResult, error) {
+	result := ImportResult{}
 	// Pre-load existing session hashes for fast skip checks.
 	existingHash := make(map[string]string)
 
 	rows, err := i.db.Query(`SELECT session_id, COALESCE(file_hash, '') FROM sessions`)
 	if err != nil {
-		return 0, fmt.Errorf("failed to load session metadata: %w", err)
+		return result, fmt.Errorf("failed to load session metadata: %w", err)
 	}
 	for rows.Next() {
 		var sid, hash string
 		if err := rows.Scan(&sid, &hash); err != nil {
 			_ = rows.Close()
-			return 0, fmt.Errorf("failed to scan session metadata: %w", err)
+			return result, fmt.Errorf("failed to scan session metadata: %w", err)
 		}
 		existingHash[sid] = hash
 	}
 	_ = rows.Close()
 
-	var skipped, failed int
-
 	for _, session := range sessions {
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
 		sessionID := sessionImportID(session)
 
 		hash := enumeratedSessionHash(sessionID, session)
 
 		if !force && existingHash[sessionID] == hash {
-			skipped++
+			result.Skipped++
 			if progress != nil {
 				progress.Skip()
 			}
@@ -468,13 +508,13 @@ func (i *Importer) ImportEnumerated(sessions []*ccsessions.ParsedSession, progre
 		// messages while still inserting real new ones without relying on
 		// append-only ordering (which breaks when an earlier turn is backfilled).
 		if err := i.ImportSession(session, 0, 0, 0, hash, provider); err != nil {
-			fmt.Fprintf(os.Stderr, "WARN: Cannot import session %s: %v\n", sessionID, err)
-			failed++
+			result.addFailure(sessionID, err)
 			if progress != nil {
 				progress.Skip()
 			}
 			continue
 		}
+		result.Imported++
 
 		if progress != nil {
 			firstMsg := ""
@@ -488,11 +528,125 @@ func (i *Importer) ImportEnumerated(sessions []*ccsessions.ParsedSession, progre
 		}
 	}
 
-	if failed > 0 {
-		fmt.Fprintf(os.Stderr, "\nImport completed with %d failures (see warnings above)\n", failed)
+	return result, nil
+}
+
+// ImportRemote imports remote sessions using a cheap reference list and an
+// on-demand fetch function. The opaque reference revision is stored in the
+// existing file_hash column so unchanged remote sessions never need a full
+// export on subsequent syncs.
+func (i *Importer) ImportRemote(ctx context.Context, refs []RemoteSessionRef, fetch func(context.Context, RemoteSessionRef) (*ccsessions.ParsedSession, error), progress ProgressCallback, force bool, provider string) (ImportResult, error) {
+	result := ImportResult{}
+	existingHash := make(map[string]string)
+	rows, err := i.db.Query(`SELECT session_id, COALESCE(file_hash, '') FROM sessions`)
+	if err != nil {
+		return result, fmt.Errorf("failed to load remote session metadata: %w", err)
+	}
+	for rows.Next() {
+		var sessionID, hash string
+		if err := rows.Scan(&sessionID, &hash); err != nil {
+			_ = rows.Close()
+			return result, fmt.Errorf("failed to scan remote session metadata: %w", err)
+		}
+		existingHash[sessionID] = hash
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return result, fmt.Errorf("failed to read remote session metadata: %w", err)
+	}
+	_ = rows.Close()
+
+	for index, ref := range refs {
+		if err := ctx.Err(); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				for _, pending := range refs[index:] {
+					result.addFailure(pending.ImportID, err)
+					if progress != nil {
+						progress.Skip()
+					}
+				}
+			}
+			return result, err
+		}
+		ref.ImportID = strings.TrimSpace(ref.ImportID)
+		ref.Revision = strings.TrimSpace(ref.Revision)
+		if ref.ImportID == "" || ref.Revision == "" {
+			result.addFailure(ref.ImportID, errors.New("missing id or revision"))
+			if progress != nil {
+				progress.Skip()
+			}
+			continue
+		}
+		if !force && existingHash[ref.ImportID] == ref.Revision {
+			result.Skipped++
+			if progress != nil {
+				progress.Skip()
+			}
+			continue
+		}
+
+		session, err := fetch(ctx, ref)
+		if err != nil {
+			if ctx.Err() != nil {
+				if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+					for _, pending := range refs[index:] {
+						result.addFailure(pending.ImportID, ctx.Err())
+						if progress != nil {
+							progress.Skip()
+						}
+					}
+				}
+				return result, ctx.Err()
+			}
+			result.addFailure(ref.ImportID, err)
+			if progress != nil {
+				progress.Skip()
+			}
+			continue
+		}
+		if session == nil {
+			result.addFailure(ref.ImportID, errors.New("empty session"))
+			if progress != nil {
+				progress.Skip()
+			}
+			continue
+		}
+
+		if exportedID := strings.TrimSpace(session.SessionID); exportedID != "" && exportedID != ref.ImportID {
+			result.addFailure(ref.ImportID, fmt.Errorf("export contained session id %s", exportedID))
+			if progress != nil {
+				progress.Skip()
+			}
+			continue
+		}
+		// The listed id is the stable source of truth for the database key.
+		session.ImportID = ref.ImportID
+		if session.SessionID == "" {
+			session.SessionID = ref.ImportID
+		}
+		if err := i.importSession(session, 0, 0, 0, ref.Revision, provider, true); err != nil {
+			result.addFailure(ref.ImportID, err)
+			if progress != nil {
+				progress.Skip()
+			}
+			continue
+		}
+		existingHash[ref.ImportID] = ref.Revision
+		result.Imported++
+
+		if progress != nil {
+			firstMsg := ""
+			if len(session.Messages) > 0 {
+				firstMsg = session.Messages[0].TextContent
+				if len(firstMsg) > 100 {
+					firstMsg = firstMsg[:97] + "..."
+				}
+			}
+			progress.Update(session.Summary, firstMsg)
+		}
 	}
 
-	return skipped, nil
+	return result, nil
 }
 
 // sessionImportID returns the stable database key for a parsed session.

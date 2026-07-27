@@ -1,7 +1,10 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -9,6 +12,41 @@ import (
 	"github.com/neilberkman/ccrider/internal/core/db"
 	"github.com/neilberkman/ccrider/internal/core/search"
 )
+
+func TestSyncDatabaseServesCachedDataWhenSyncIsCanceled(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "cached.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := syncDatabase(ctx, database); err != nil {
+		t.Fatalf("syncDatabase() error = %v, want cached-data fallback", err)
+	}
+}
+
+func TestSyncDatabaseServesCachedDataAfterSessionFailure(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	sessionDir := filepath.Join(home, ".claude", "projects")
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sessionDir, "bad.jsonl"), []byte("not-json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	database, err := db.New(filepath.Join(t.TempDir(), "cached.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+
+	if err := syncDatabase(context.Background(), database); err != nil {
+		t.Fatalf("syncDatabase() error = %v, want cached-data fallback", err)
+	}
+}
 
 // Every session payload the MCP server returns must carry a pre-built
 // resume_command with the cd prefix. Agents consuming these tools were

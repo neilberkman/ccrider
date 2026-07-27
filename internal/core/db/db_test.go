@@ -359,3 +359,47 @@ func TestCascadeDelete(t *testing.T) {
 		t.Errorf("Expected 0 FTS entries after cascade delete, got %d", ftsCount)
 	}
 }
+
+func TestNeedsMigrationSyncIgnoresProvidersWithoutFileIdentity(t *testing.T) {
+	tmpfile, err := os.CreateTemp("", "test-migration-sync-*.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Remove(tmpfile.Name()) }()
+	_ = tmpfile.Close()
+
+	database, err := New(tmpfile.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+
+	if _, err := database.Exec(`
+		INSERT INTO sessions (session_id, project_path, provider, created_at, updated_at, file_inode)
+		VALUES ('T-amp', '/tmp', 'amp', datetime('now'), datetime('now'), 0)
+	`); err != nil {
+		t.Fatal(err)
+	}
+	fileIdentityProviders := []string{"claude", "codex", "pi"}
+	needsSync, err := database.NeedsMigrationSync(fileIdentityProviders)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if needsSync {
+		t.Fatal("Amp-only database incorrectly requires file identity migration")
+	}
+
+	if _, err := database.Exec(`
+		INSERT INTO sessions (session_id, project_path, provider, created_at, updated_at, file_inode)
+		VALUES ('claude-local', '/tmp', 'claude', datetime('now'), datetime('now'), 0)
+	`); err != nil {
+		t.Fatal(err)
+	}
+	needsSync, err = database.NeedsMigrationSync(fileIdentityProviders)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !needsSync {
+		t.Fatal("Claude session without file identity should require migration")
+	}
+}

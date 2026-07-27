@@ -5,18 +5,18 @@
 [![Homebrew](https://img.shields.io/badge/homebrew-neilberkman%2Ftap-orange)](https://github.com/neilberkman/homebrew-tap)
 [![Show HN](https://img.shields.io/badge/Show%20HN-black?logo=ycombinator)](https://news.ycombinator.com/item?id=46512501)
 
-Search, browse, and resume your Claude Code, Codex CLI, GitHub Copilot CLI, OpenCode, Pi, and Antigravity CLI sessions, plus MCP server to remember past context.
+Search, browse, and resume your Claude Code, Codex CLI, GitHub Copilot CLI, OpenCode, Pi, Antigravity CLI, and Amp sessions, plus MCP server to remember past context.
 
 When your coding agent forgets, tell it: _[see what you have done](#the-king)_.
 
 ## Why ccrider?
 
-You've got months of coding agent sessions sitting in `~/.claude/projects/`, `~/.codex/sessions/`, `~/.copilot/`, `~/.local/share/opencode/`, `~/.pi/agent/sessions/`, and `~/.gemini/antigravity-cli/brain/`. Finding that conversation where you fixed the authentication bug? Good luck grepping through nested JSON files.
+You've got months of coding agent sessions sitting in `~/.claude/projects/`, `~/.codex/sessions/`, `~/.copilot/`, `~/.local/share/opencode/`, `~/.pi/agent/sessions/`, `~/.gemini/antigravity-cli/brain/`, and your Amp account. Finding that conversation where you fixed the authentication bug? Good luck grepping through nested JSON files and separate tools.
 
-ccrider indexes Claude Code, Codex CLI, GitHub Copilot CLI, OpenCode, Pi, and Antigravity CLI sessions into a single searchable database, with a TUI browser, CLI search, and an MCP server so your agent can search past sessions too.
+ccrider indexes Claude Code, Codex CLI, GitHub Copilot CLI, OpenCode, Pi, Antigravity CLI, and Amp sessions into a single searchable database, with a TUI browser, CLI search, and an MCP server so your agent can search past sessions too.
 
 ```bash
-# Import sessions from Claude Code, Codex CLI, Copilot CLI, OpenCode, Pi, and Antigravity CLI
+# Import sessions from every detected local provider (and Amp when explicitly enabled)
 ccrider sync
 
 # Launch the TUI - browse, search, resume
@@ -80,7 +80,7 @@ Powered by SQLite FTS5 - search message content, filter by project or date, get 
 
 ### 3. Resume Sessions
 
-Press **r** in the TUI to launch the provider's resume command in the right directory with the right session. Use **c** to copy that command or **o** to open it in a new terminal. Pi resumes with `pi --session <id>` and forks with `pi --fork <id>`; Antigravity resumes with `agy --conversation <id>` and forks interactively with `/fork`.
+Press **r** in the TUI to launch the provider's resume command in the right directory with the right session. Use **c** to copy that command or **o** to open it in a new terminal. Pi resumes with `pi --session <id>` and forks with `pi --fork <id>`; Antigravity resumes with `agy --conversation <id>` and forks interactively with `/fork`; Amp resumes with `amp threads continue <id>`.
 
 ### 4. Incremental Sync
 
@@ -89,7 +89,9 @@ ccrider sync         # Import new sessions from all providers
 ccrider sync --force # Re-import everything
 ```
 
-Automatically discovers Claude Code (`~/.claude/projects/`), Codex CLI (`~/.codex/sessions/`), GitHub Copilot CLI (`~/.copilot/session-state/`), OpenCode (`~/.local/share/opencode/opencode*.db`), Pi (`~/.pi/agent/sessions/`), and Antigravity CLI (`~/.gemini/antigravity-cli/brain/`) sessions. Antigravity imports the canonical `transcript.jsonl` for each conversation, excluding the full diagnostic transcript. Detects ongoing sessions and imports new messages without re-processing everything.
+Automatically discovers Claude Code (`~/.claude/projects/`), Codex CLI (`~/.codex/sessions/`), GitHub Copilot CLI (`~/.copilot/session-state/`), OpenCode (`~/.local/share/opencode/opencode*.db`), Pi (`~/.pi/agent/sessions/`), and Antigravity CLI (`~/.gemini/antigravity-cli/brain/`) sessions. Antigravity imports each canonical `transcript.jsonl`, excluding its diagnostic transcript. To import Amp, set `amp_enabled = true` in `~/.config/ccrider/config.toml` and install/authenticate the `amp` CLI. ccrider then lists archived and active threads and exports only new or changed threads.
+
+Amp threads are cloud-backed. The integration is disabled by default because enabling it downloads searchable text into ccrider's local SQLite database. MCP requests never contact Amp; they search cached Amp data from an earlier CLI/TUI sync.
 
 ---
 
@@ -144,7 +146,7 @@ Use command `ccrider` with args `["serve-mcp"]`.
 - **get_session_messages** - Get messages from a session (supports tail mode, context around search matches)
 - **generate_session_anchor** - Generate a unique phrase to tag your session for later retrieval
 
-All tools support a `provider` parameter to filter by `claude`, `codex`, `copilot`, `opencode`, `pi`, or `antigravity`. The MCP server provides read-only access to your session database. Your conversations stay local.
+All tools support a `provider` parameter to filter by `claude`, `codex`, `copilot`, `opencode`, `pi`, `antigravity`, or `amp`. The MCP server provides read-only access to your local session database. Local providers are read from disk; Amp threads are fetched from your authenticated Amp account during sync and then stored locally.
 
 ---
 
@@ -204,7 +206,7 @@ Other coding agent session tools are broken:
 ccrider fixes this with:
 
 - 100% schema coverage - parses all message types correctly
-- Multi-provider - Claude Code, Codex CLI, GitHub Copilot CLI, OpenCode, Pi, and Antigravity CLI in one database
+- Multi-provider - Claude Code, Codex CLI, GitHub Copilot CLI, OpenCode, Pi, Antigravity CLI, and Amp in one database
 - SQLite FTS5 search - fast, powerful full-text search
 - Single binary - no npm, no pip, no dependencies
 - Native resume - one keystroke to resume sessions
@@ -223,7 +225,7 @@ cmd/ccrider/          # CLI entry point + MCP server
 internal/
   core/               # Business logic (no UI concerns)
     db/               # Database operations
-    importer/         # Session import/sync
+    importer/         # Session import/sync and Amp CLI client
     search/           # Full-text search
     session/          # Session launch logic
   interface/          # Thin UI wrappers
@@ -236,6 +238,7 @@ pkg/
   opencodesessions/   # OpenCode session parser (public API)
   pisessions/         # Pi session parser (public API)
   antigravitysessions/ # Antigravity CLI session parser (public API)
+  ampsessions/        # Pure Amp export parser (public API)
 ```
 
 ### Quick Build

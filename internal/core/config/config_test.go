@@ -54,6 +54,7 @@ func TestSaveRoundTripsPerProviderFlags(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	in := &Config{
+		AmpEnabled:    true,
 		ClaudeFlags:   []string{"--claude-only"},
 		CodexFlags:    []string{"--codex-only"},
 		CopilotFlags:  []string{"--copilot-only"},
@@ -82,5 +83,19 @@ func TestSaveRoundTripsPerProviderFlags(t *testing.T) {
 	}
 	if !reflect.DeepEqual(out.PiFlags, in.PiFlags) {
 		t.Errorf("PiFlags = %v, want %v", out.PiFlags, in.PiFlags)
+	}
+	if !out.AmpEnabled {
+		t.Error("AmpEnabled = false, want true")
+	}
+}
+
+func TestLoadAmpEnabledDefaultsFalse(t *testing.T) {
+	writeConfigToml(t, "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AmpEnabled {
+		t.Error("AmpEnabled = true by default")
 	}
 }

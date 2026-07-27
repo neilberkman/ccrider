@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/neilberkman/ccrider/internal/core/config"
 	"github.com/neilberkman/ccrider/internal/core/db"
 	"github.com/neilberkman/ccrider/internal/core/importer"
 	"github.com/neilberkman/ccrider/internal/core/session"
@@ -70,7 +71,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 
 	// Check if we need one-time migration sync
 	if !syncForce {
-		needsMigrationSync, err := database.NeedsMigrationSync()
+		needsMigrationSync, err := database.NeedsMigrationSync(session.FileIdentityProviderNames())
 		if err != nil {
 			return fmt.Errorf("failed to check migration status: %w", err)
 		}
@@ -95,11 +96,15 @@ func runSync(cmd *cobra.Command, args []string) error {
 			SkipSubagents: true,
 		}}
 	} else {
-		sources = importer.DefaultSources()
+		cfg, err := config.Load()
+		if err != nil {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+		sources = importer.DefaultSources(cfg.AmpEnabled)
 	}
 
 	for _, src := range sources {
-		prepared, err := imp.PrepareSource(src)
+		prepared, err := imp.PrepareSource(cmd.Context(), src)
 		if err != nil {
 			return fmt.Errorf("failed to prepare %s sessions: %w", src.Provider, err)
 		}
@@ -115,19 +120,22 @@ func runSync(cmd *cobra.Command, args []string) error {
 		stat, statErr := os.Stderr.Stat()
 		interactive := statErr == nil && stat.Mode()&os.ModeCharDevice != 0
 		progress := importer.NewProgressReporter(os.Stderr, prepared.Total, interactive)
-		skipped, err := prepared.Run(progress, syncForce)
+		result, err := prepared.Run(cmd.Context(), progress, syncForce)
 		if err != nil {
 			return fmt.Errorf("%s import failed: %w", src.Provider, err)
 		}
 		progress.Finish()
+		for _, failure := range result.Failures {
+			fmt.Fprintf(os.Stderr, "WARN: Cannot import %s session %s: %v\n", src.Provider, failure.ID, failure.Err)
+		}
 
-		if skipped > 0 && !syncForce {
-			skipRate := float64(skipped) / float64(prepared.Total) * 100
+		if result.Skipped > 0 && !syncForce {
+			skipRate := float64(result.Skipped) / float64(prepared.Total) * 100
 			unit := "files"
-			if src.EnumerateFn != nil {
+			if src.EnumerateFn != nil || src.Remote != nil {
 				unit = "sessions"
 			}
-			fmt.Fprintf(os.Stderr, "\nSkipped %d/%d %s %s (%.1f%% unchanged)\n", skipped, prepared.Total, src.Provider, unit, skipRate)
+			fmt.Fprintf(os.Stderr, "\nSkipped %d/%d %s %s (%.1f%% unchanged)\n", result.Skipped, prepared.Total, src.Provider, unit, skipRate)
 		}
 	}
 

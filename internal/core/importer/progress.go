@@ -56,7 +56,10 @@ func (p *ProgressReporter) Skip() {
 
 func (p *ProgressReporter) advance(sessionSummary string) {
 	p.current++
+	p.render(sessionSummary)
+}
 
+func (p *ProgressReporter) render(sessionSummary string) {
 	// Calculate progress percentage
 	pct := float64(p.current) / float64(p.total) * 100
 

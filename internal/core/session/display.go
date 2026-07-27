@@ -23,8 +23,7 @@ func ConfiguredFlags(provider string) []string {
 // provider's configured flags itself, so every interface (CLI, TUI, MCP)
 // emits the identical command and none can forget a step.
 func DisplayResumeCommand(provider, sessionID, projectPath, lastCwd string, fork bool) string {
-	workDir := ResolveWorkingDir(projectPath, lastCwd)
-	return ResumeCommandIn(workDir, provider, sessionID, "", fork, ConfiguredFlags(provider))
+	return ResumeCommandIn(projectPath, provider, sessionID, "", fork, ConfiguredFlags(provider))
 }
 
 // LaunchInfoSource looks up the stored launch info for a session id.
