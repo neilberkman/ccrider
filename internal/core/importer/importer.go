@@ -556,8 +556,16 @@ func (i *Importer) ImportRemote(ctx context.Context, refs []RemoteSessionRef, fe
 	}
 	_ = rows.Close()
 
-	for _, ref := range refs {
+	for index, ref := range refs {
 		if err := ctx.Err(); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				for _, pending := range refs[index:] {
+					result.addFailure(pending.ImportID, err)
+					if progress != nil {
+						progress.Skip()
+					}
+				}
+			}
 			return result, err
 		}
 		ref.ImportID = strings.TrimSpace(ref.ImportID)
@@ -580,6 +588,14 @@ func (i *Importer) ImportRemote(ctx context.Context, refs []RemoteSessionRef, fe
 		session, err := fetch(ctx, ref)
 		if err != nil {
 			if ctx.Err() != nil {
+				if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+					for _, pending := range refs[index:] {
+						result.addFailure(pending.ImportID, ctx.Err())
+						if progress != nil {
+							progress.Skip()
+						}
+					}
+				}
 				return result, ctx.Err()
 			}
 			result.addFailure(ref.ImportID, err)

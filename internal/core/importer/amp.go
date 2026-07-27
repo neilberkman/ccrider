@@ -38,14 +38,21 @@ func runAmp(ctx context.Context, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "amp", args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
-	output, err := cmd.Output()
-	if err == nil {
+	output, runErr := cmd.Output()
+	if runErr == nil {
 		return output, nil
 	}
-	if message := strings.TrimSpace(stderr.String()); message != "" {
-		return nil, fmt.Errorf("run amp command: %w: %s", err, message)
+	message := strings.TrimSpace(stderr.String())
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		if message != "" {
+			return nil, fmt.Errorf("run amp command: %w (process: %v): %s", ctxErr, runErr, message)
+		}
+		return nil, fmt.Errorf("run amp command: %w (process: %v)", ctxErr, runErr)
 	}
-	return nil, fmt.Errorf("run amp command: %w", err)
+	if message != "" {
+		return nil, fmt.Errorf("run amp command: %w: %s", runErr, message)
+	}
+	return nil, fmt.Errorf("run amp command: %w", runErr)
 }
 
 type ampThreadListItem struct {

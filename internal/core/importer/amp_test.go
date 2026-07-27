@@ -3,6 +3,8 @@ package importer
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -199,5 +201,35 @@ func TestAmpClientAddsPerCommandDeadline(t *testing.T) {
 	}
 	if _, err := client.listThreads(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRunAmpPreservesCommandStderr(t *testing.T) {
+	binDir := t.TempDir()
+	ampPath := filepath.Join(binDir, "amp")
+	if err := os.WriteFile(ampPath, []byte("#!/bin/sh\necho 'authentication required' >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+
+	_, err := runAmp(context.Background(), "threads", "list")
+	if err == nil || !strings.Contains(err.Error(), "authentication required") {
+		t.Fatalf("runAmp() error = %v, want command stderr", err)
+	}
+}
+
+func TestRunAmpPreservesDeadline(t *testing.T) {
+	binDir := t.TempDir()
+	ampPath := filepath.Join(binDir, "amp")
+	if err := os.WriteFile(ampPath, []byte("#!/bin/sh\necho 'export stalled' >&2\nexec /bin/sleep 10\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	_, err := runAmp(ctx, "threads", "export", "T-one")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("runAmp() error = %v, want deadline", err)
 	}
 }

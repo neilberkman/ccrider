@@ -182,6 +182,9 @@ func (i *Importer) PrepareSource(ctx context.Context, src Source) (PreparedSourc
 		refs, err := src.Remote.List(listCtx)
 		cancel()
 		if err != nil {
+			if src.Optional && errors.Is(err, context.DeadlineExceeded) {
+				return skippedPreparedSource(src, err), nil
+			}
 			if ctx.Err() != nil {
 				return PreparedSource{}, ctx.Err()
 			}
@@ -192,6 +195,9 @@ func (i *Importer) PrepareSource(ctx context.Context, src Source) (PreparedSourc
 		}
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
+			if src.Optional {
+				return skippedPreparedSource(src, context.DeadlineExceeded), nil
+			}
 			return PreparedSource{}, context.DeadlineExceeded
 		}
 		return PreparedSource{
@@ -203,7 +209,11 @@ func (i *Importer) PrepareSource(ctx context.Context, src Source) (PreparedSourc
 				// but not time a prepared source waits behind another provider.
 				remoteCtx, cancel := context.WithTimeout(ctx, remaining)
 				defer cancel()
-				return i.ImportRemote(remoteCtx, refs, src.Remote.Fetch, progress, force, src.Provider)
+				result, err := i.ImportRemote(remoteCtx, refs, src.Remote.Fetch, progress, force, src.Provider)
+				if src.Optional && errors.Is(err, context.DeadlineExceeded) {
+					return result, nil
+				}
+				return result, err
 			},
 		}, nil
 	}
@@ -290,7 +300,10 @@ func CountJSONLFiles(dirPath string, skipSubagents bool) (int, error) {
 	return count, err
 }
 
-// SyncAll imports from all default sources. Silent (nil progress) for background use.
+// SyncAll imports all supplied sources for background consumers and aggregates
+// individual failures for the interface to report. Callers that can serve
+// cached data should treat the returned error as a degraded refresh, not a
+// failed query.
 func (i *Importer) SyncAll(ctx context.Context, sources []Source, force bool) error {
 	var failures []error
 	for _, src := range sources {

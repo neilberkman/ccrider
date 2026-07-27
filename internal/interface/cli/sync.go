@@ -71,7 +71,7 @@ func runSync(cmd *cobra.Command, args []string) error {
 
 	// Check if we need one-time migration sync
 	if !syncForce {
-		needsMigrationSync, err := database.NeedsMigrationSync()
+		needsMigrationSync, err := database.NeedsMigrationSync(session.FileIdentityProviderNames())
 		if err != nil {
 			return fmt.Errorf("failed to check migration status: %w", err)
 		}

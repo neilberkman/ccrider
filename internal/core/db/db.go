@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -316,9 +317,10 @@ func (db *DB) FindSessionsByFilePath(filePath string) ([]int64, error) {
 	return ids, nil
 }
 
-// NeedsMigrationSync checks if we need to run a one-time sync after migration
+// NeedsMigrationSync checks whether file-backed providers need a one-time
+// inode/device backfill after migration.
 // Returns true if file_inode/device columns exist but are mostly unpopulated
-func (db *DB) NeedsMigrationSync() (bool, error) {
+func (db *DB) NeedsMigrationSync(fileIdentityProviders []string) (bool, error) {
 	// Check if columns exist
 	var count int
 	err := db.conn.QueryRow(`
@@ -331,16 +333,24 @@ func (db *DB) NeedsMigrationSync() (bool, error) {
 		// Columns don't exist yet, no migration needed
 		return false, nil
 	}
+	if len(fileIdentityProviders) == 0 {
+		return false, nil
+	}
 
 	// Check how many sessions have inode data
 	var total, withInode int
+	args := make([]any, len(fileIdentityProviders))
+	for index, provider := range fileIdentityProviders {
+		args[index] = provider
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(args)), ",")
 	err = db.conn.QueryRow(`
 		SELECT
 			COUNT(*) as total,
 			COUNT(CASE WHEN file_inode IS NOT NULL AND file_inode != 0 THEN 1 END) as with_inode
 		FROM sessions
-		WHERE provider IN ('claude', 'codex', 'pi')
-	`).Scan(&total, &withInode)
+		WHERE provider IN (`+placeholders+`)
+	`, args...).Scan(&total, &withInode)
 	if err != nil {
 		return false, err
 	}

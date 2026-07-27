@@ -85,6 +85,14 @@ func Parse(data []byte) (*ccsessions.ParsedSession, error) {
 			continue
 		}
 
+		text, blockTime, err := messageText(message.Content)
+		if err != nil {
+			return nil, fmt.Errorf("decode message %d content: %w", sequence+1, err)
+		}
+		if strings.TrimSpace(text) == "" {
+			continue
+		}
+
 		messageID, err := messageIdentity(message.MessageID, sequence+1)
 		if err != nil {
 			return nil, fmt.Errorf("decode message %d id: %w", sequence+1, err)
@@ -95,13 +103,6 @@ func Parse(data []byte) (*ccsessions.ParsedSession, error) {
 		}
 		seenIDs[uuid] = struct{}{}
 
-		text, blockTime, err := messageText(message.Content)
-		if err != nil {
-			return nil, fmt.Errorf("decode message %d content: %w", sequence+1, err)
-		}
-		if strings.TrimSpace(text) == "" {
-			continue
-		}
 		timestamp := parseFlexibleTime(message.Meta.SentAt)
 		if timestamp.IsZero() {
 			timestamp = blockTime

@@ -1,6 +1,7 @@
 package session
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -478,5 +479,12 @@ func TestResolveWorkingDir(t *testing.T) {
 	}
 	if got := ResolveWorkingDir(ProviderClaude, missingProject, "/ignored"); got != missingProject {
 		t.Errorf("ResolveWorkingDir(Claude) = %q, want required project %q", got, missingProject)
+	}
+}
+
+func TestFileIdentityProviderNames(t *testing.T) {
+	want := []string{ProviderClaude, ProviderCodex, ProviderPi}
+	if got := FileIdentityProviderNames(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("FileIdentityProviderNames() = %v, want %v", got, want)
 	}
 }

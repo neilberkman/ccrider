@@ -117,7 +117,11 @@ func execAgent(provider, sessionID, projectPath, lastCwd, updatedAt, summary str
 	workDir := session.ResolveWorkingDir(provider, projectPath, lastCwd)
 
 	// Show what we're doing
-	fmt.Fprintf(os.Stderr, "[ccrider] %s\n", session.ResumeCommandIn(projectPath, provider, sessionID, "", fork, flags))
+	displayCmd := cmd
+	if workDir != "" {
+		displayCmd = fmt.Sprintf("cd %s && %s", session.ShellQuote(workDir), cmd)
+	}
+	fmt.Fprintf(os.Stderr, "[ccrider] %s\n", displayCmd)
 
 	// Set terminal title before launching
 	updatedTime := session.ParseSessionTime(updatedAt)

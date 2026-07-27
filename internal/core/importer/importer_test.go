@@ -153,11 +153,11 @@ func TestDefaultSourcesOmitsAmpUntilEnabled(t *testing.T) {
 	}
 }
 
-type countingProgress struct{ current int }
+type unitProgress struct{ current int }
 
-func (p *countingProgress) Update(string, string)    { p.current++ }
-func (p *countingProgress) AdvanceSkipped(count int) { p.current += count }
-func (*countingProgress) Finish()                    {}
+func (p *unitProgress) Update(string, string) { p.current++ }
+func (p *unitProgress) Skip()                 { p.current++ }
+func (*unitProgress) Finish()                 {}
 
 func TestPreparedRemoteProgressIncludesFailures(t *testing.T) {
 	database, err := db.New(filepath.Join(t.TempDir(), "progress.db"))
@@ -181,13 +181,123 @@ func TestPreparedRemoteProgressIncludesFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	progress := &countingProgress{}
+	progress := &unitProgress{}
 	result, err := prepared.Run(context.Background(), progress, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result.Imported != 1 || len(result.Failures) != 1 || progress.current != 2 {
 		t.Fatalf("result = %+v, progress = %d; want one import, one failure, 2/2", result, progress.current)
+	}
+}
+
+func TestPreparedOptionalRemoteTimeoutKeepsPartialImport(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "partial-timeout.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+
+	stamp := time.Now().UTC()
+	source := Source{Provider: ampProvider, Optional: true, Remote: &RemoteSource{
+		List: func(context.Context) ([]RemoteSessionRef, error) {
+			return []RemoteSessionRef{
+				{ImportID: "imported", Revision: "1"},
+				{ImportID: "timed-out", Revision: "1"},
+				{ImportID: "not-attempted", Revision: "1"},
+			}, nil
+		},
+		Fetch: func(ctx context.Context, ref RemoteSessionRef) (*ccsessions.ParsedSession, error) {
+			if ref.ImportID == "timed-out" {
+				<-ctx.Done()
+				return nil, ctx.Err()
+			}
+			return &ccsessions.ParsedSession{
+				SessionID:   ref.ImportID,
+				ProjectPath: "/tmp",
+				FileMtime:   stamp,
+				Messages: []ccsessions.ParsedMessage{{
+					UUID: "partial-timeout-message", Type: "user", Sender: "human", TextContent: "hello", Timestamp: stamp,
+				}},
+			}, nil
+		},
+	}}
+
+	prepared, err := New(database).PrepareSource(context.Background(), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	progress := &unitProgress{}
+	result, err := prepared.Run(ctx, progress, false)
+	if err != nil {
+		t.Fatalf("Run() error = %v, want optional timeout to degrade", err)
+	}
+	if result.Imported != 1 || len(result.Failures) != 2 || progress.current != 3 {
+		t.Fatalf("result = %+v, progress = %d; want partial import, two pending failures, 3/3", result, progress.current)
+	}
+	wantFailureIDs := []string{"timed-out", "not-attempted"}
+	for index, failure := range result.Failures {
+		if failure.ID != wantFailureIDs[index] || !errors.Is(failure.Err, context.DeadlineExceeded) {
+			t.Fatalf("failure %d = %+v, want deadline for %q", index, failure, wantFailureIDs[index])
+		}
+	}
+}
+
+func TestImportRemoteCancellationDoesNotFailUntouchedSessions(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "remote-cancel.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	stamp := time.Now().UTC()
+	refs := []RemoteSessionRef{{ImportID: "imported", Revision: "1"}, {ImportID: "cancel", Revision: "1"}, {ImportID: "untouched", Revision: "1"}}
+	fetch := func(_ context.Context, ref RemoteSessionRef) (*ccsessions.ParsedSession, error) {
+		if ref.ImportID == "cancel" {
+			cancel()
+			return nil, context.Canceled
+		}
+		return &ccsessions.ParsedSession{
+			SessionID: ref.ImportID, ProjectPath: "/tmp", FileMtime: stamp,
+			Messages: []ccsessions.ParsedMessage{{
+				UUID: "remote-cancel-message", Type: "user", Sender: "human", TextContent: "hello", Timestamp: stamp,
+			}},
+		}, nil
+	}
+	progress := &unitProgress{}
+	result, err := New(database).ImportRemote(ctx, refs, fetch, progress, false, ampProvider)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("ImportRemote() error = %v, want context cancellation", err)
+	}
+	if result.Imported != 1 || len(result.Failures) != 0 || progress.current != 1 {
+		t.Fatalf("result = %+v, progress = %d; untouched sessions must not become failures", result, progress.current)
+	}
+}
+
+func TestSyncAllReportsPerSessionFailures(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "best-effort.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "bad.jsonl"), []byte("bad"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	source := Source{
+		Path:     dir,
+		Provider: "claude",
+		ParseFn: func(string) (*ccsessions.ParsedSession, error) {
+			return nil, errors.New("unsupported schema version")
+		},
+	}
+	err = New(database).SyncAll(context.Background(), []Source{source}, false)
+	if err == nil || !strings.Contains(err.Error(), "unsupported schema version") {
+		t.Fatalf("SyncAll() error = %v, want structured session failure", err)
 	}
 }
 
@@ -826,7 +936,7 @@ func TestImportDirectory_HashMatchRefreshesStat(t *testing.T) {
 	}
 
 	imp := New(database)
-	if _, err := imp.ImportDirectory(dir, nil, false, true, ccsessions.ParseFile, "claude"); err != nil {
+	if _, err := imp.ImportDirectory(context.Background(), dir, nil, false, true, ccsessions.ParseFile, "claude"); err != nil {
 		t.Fatalf("ImportDirectory() error = %v", err)
 	}
 
@@ -837,12 +947,12 @@ func TestImportDirectory_HashMatchRefreshesStat(t *testing.T) {
 	}
 
 	progress := &countingProgress{}
-	skipped, err := imp.ImportDirectory(dir, progress, false, true, ccsessions.ParseFile, "claude")
+	result, err := imp.ImportDirectory(context.Background(), dir, progress, false, true, ccsessions.ParseFile, "claude")
 	if err != nil {
 		t.Fatalf("ImportDirectory() second run error = %v", err)
 	}
-	if skipped != 1 {
-		t.Fatalf("second run skipped = %d, want 1 (content unchanged)", skipped)
+	if result.Skipped != 1 {
+		t.Fatalf("second run skipped = %d, want 1 (content unchanged)", result.Skipped)
 	}
 	if progress.skips != 1 || progress.updates != 0 {
 		t.Fatalf("second run progress = %d skips / %d updates, want 1/0", progress.skips, progress.updates)

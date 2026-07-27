@@ -160,6 +160,20 @@ func TestParseExportRejectsDuplicateMessageID(t *testing.T) {
 	}
 }
 
+func TestParseExportIgnoresDuplicateIDOnTextFreeEvent(t *testing.T) {
+	fixture := `{"id":"T-one","messages":[
+		{"role":"assistant","messageId":7,"content":[{"type":"tool_use","name":"shell_command"}]},
+		{"role":"assistant","messageId":7,"content":[{"type":"text","text":"Retained answer"}]}
+	]}`
+	session, err := Parse([]byte(fixture))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(session.Messages) != 1 || session.Messages[0].TextContent != "Retained answer" {
+		t.Fatalf("Messages = %#v, want one retained text message", session.Messages)
+	}
+}
+
 func TestParseExportRejectsMissingOrNullMessages(t *testing.T) {
 	for _, fixture := range []string{
 		`{"id":"T-one"}`,

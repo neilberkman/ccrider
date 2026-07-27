@@ -380,7 +380,8 @@ func TestNeedsMigrationSyncIgnoresProvidersWithoutFileIdentity(t *testing.T) {
 	`); err != nil {
 		t.Fatal(err)
 	}
-	needsSync, err := database.NeedsMigrationSync()
+	fileIdentityProviders := []string{"claude", "codex", "pi"}
+	needsSync, err := database.NeedsMigrationSync(fileIdentityProviders)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -394,7 +395,7 @@ func TestNeedsMigrationSyncIgnoresProvidersWithoutFileIdentity(t *testing.T) {
 	`); err != nil {
 		t.Fatal(err)
 	}
-	needsSync, err = database.NeedsMigrationSync()
+	needsSync, err = database.NeedsMigrationSync(fileIdentityProviders)
 	if err != nil {
 		t.Fatal(err)
 	}

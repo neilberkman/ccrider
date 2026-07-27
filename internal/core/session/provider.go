@@ -57,6 +57,9 @@ type providerInfo struct {
 	// resume. Cloud-backed providers can identify a session globally and only
 	// prefer the recorded directory when it exists on this machine.
 	WorkingDir workingDirPolicy
+	// UsesFileIdentity reports whether incremental imports track source files
+	// by inode and device and therefore participate in the one-time migration.
+	UsesFileIdentity bool
 }
 
 // providers lists every supported provider in display order. The first entry
@@ -81,7 +84,8 @@ var providers = []providerInfo{
 				AcceptsPrompt: true,
 			}
 		},
-		SupportsFork: true,
+		SupportsFork:     true,
+		UsesFileIdentity: true,
 	},
 	{
 		Name:        ProviderCodex,
@@ -102,7 +106,8 @@ var providers = []providerInfo{
 				AcceptsPrompt: true,
 			}
 		},
-		SupportsFork: true,
+		SupportsFork:     true,
+		UsesFileIdentity: true,
 	},
 	{
 		Name:        ProviderCopilot,
@@ -162,7 +167,8 @@ var providers = []providerInfo{
 				AcceptsPrompt: true,
 			}
 		},
-		SupportsFork: true,
+		SupportsFork:     true,
+		UsesFileIdentity: true,
 	},
 	{
 		Name:        ProviderAntigravity,
@@ -260,6 +266,18 @@ func ProviderNames() []string {
 	names := make([]string, len(providers))
 	for i, p := range providers {
 		names[i] = p.Name
+	}
+	return names
+}
+
+// FileIdentityProviderNames returns providers whose local session files need
+// inode/device backfill during the one-time incremental-sync migration.
+func FileIdentityProviderNames() []string {
+	var names []string
+	for _, p := range providers {
+		if p.UsesFileIdentity {
+			names = append(names, p.Name)
+		}
 	}
 	return names
 }
