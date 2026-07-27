@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [1.6.2] - 2026-07-27
+
+### Fixed
+
+- **Sync no longer re-reads unchanged sessions** — a transcript whose content was unchanged but whose recorded timestamp had drifted (an in-place rewrite, a restore, a cloud-drive resync) was fully re-read and re-hashed on every sync, forever. The cheap timestamp/size check now re-arms once the hash proves the file unchanged. On a store of ~3700 Codex transcripts this cut a routine sync from 26 seconds to 29 milliseconds
+- **Progress bar tracks the whole sync** — the bar only advanced on imports, so a routine sync that skips 98% of files sat at 0% for its entire run and looked hung. Skipped and unreadable files now advance it too
+- **Completion line reports real imports** — `Completed: Imported N sessions` printed the total file count rather than the number actually imported, claiming every file was imported when almost none were
+
 ## [1.6.1] - 2026-07-16
 
 ### Changed
