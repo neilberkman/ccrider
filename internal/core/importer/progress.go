@@ -10,6 +10,10 @@ import (
 // ProgressCallback defines the interface for progress reporting
 type ProgressCallback interface {
 	Update(sessionSummary string, firstMsg string)
+	// Skip advances progress for a unit that needed no import (unchanged, or
+	// unreadable). On a routine sync nearly every file is unchanged, so a bar
+	// fed only by Update sits at 0% for the whole run and reads as hung.
+	Skip()
 	Finish()
 }
 
@@ -18,6 +22,7 @@ type ProgressReporter struct {
 	writer      io.Writer
 	total       int
 	current     int
+	imported    int
 	startTime   time.Time
 	lastMsg     string
 	interactive bool
@@ -39,6 +44,17 @@ func NewProgressReporter(w io.Writer, total int, interactive bool) *ProgressRepo
 
 // Update updates the progress bar with current session info
 func (p *ProgressReporter) Update(sessionSummary string, firstMsg string) {
+	p.imported++
+	p.advance(sessionSummary)
+}
+
+// Skip advances the bar for a unit that required no import, keeping the last
+// imported session's label on screen.
+func (p *ProgressReporter) Skip() {
+	p.advance(p.lastMsg)
+}
+
+func (p *ProgressReporter) advance(sessionSummary string) {
 	p.current++
 
 	// Calculate progress percentage
@@ -82,5 +98,7 @@ func (p *ProgressReporter) Finish() {
 	if p.interactive {
 		_, _ = fmt.Fprintln(p.writer)
 	}
-	_, _ = fmt.Fprintf(p.writer, "Completed: Imported %d sessions in %s\n", p.total, elapsed.Round(time.Millisecond))
+	// Report actual imports, not the unit count: a routine sync skips nearly
+	// everything, and claiming every file was imported hides that.
+	_, _ = fmt.Fprintf(p.writer, "Completed: Imported %d sessions in %s\n", p.imported, elapsed.Round(time.Millisecond))
 }

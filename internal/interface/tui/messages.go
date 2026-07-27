@@ -274,18 +274,36 @@ func startSyncWithProgress(database *db.DB, filterByProject bool, projectPath st
 }
 
 type channelProgressReporter struct {
-	total   int
-	current int
-	ch      chan syncProgressMsg
+	total    int
+	current  int
+	lastName string
+	ch       chan syncProgressMsg
 }
 
 func (r *channelProgressReporter) Update(sessionSummary string, firstMsg string) {
 	r.current++
-	// Send progress update via channel immediately - no polling!
-	r.ch <- syncProgressMsg{
+	r.lastName = sessionSummary
+	r.send()
+}
+
+// Skip advances the counter for an unchanged file so the bar tracks the walk
+// rather than freezing at 0% through thousands of skipped files.
+func (r *channelProgressReporter) Skip() {
+	r.current++
+	r.send()
+}
+
+// send publishes progress without blocking: every message carries the absolute
+// counter, so dropping intermediate updates when the UI is behind costs nothing
+// but keeps the import from stalling on the render loop.
+func (r *channelProgressReporter) send() {
+	select {
+	case r.ch <- syncProgressMsg{
 		current:     r.current,
 		total:       r.total,
-		sessionName: sessionSummary,
+		sessionName: r.lastName,
+	}:
+	default:
 	}
 }
 

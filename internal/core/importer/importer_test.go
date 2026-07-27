@@ -654,3 +654,74 @@ func TestImportEnumeratedUsesExplicitImportID(t *testing.T) {
 		t.Fatalf("imported sessions = %v, want %v", got, want)
 	}
 }
+
+// countingProgress records how many units each import reported, so tests can
+// assert the bar advances for skipped files and not just imported ones.
+type countingProgress struct {
+	updates int
+	skips   int
+}
+
+func (c *countingProgress) Update(string, string) { c.updates++ }
+func (c *countingProgress) Skip()                 { c.skips++ }
+func (c *countingProgress) Finish()               {}
+
+// A file whose content is unchanged but whose mtime drifted (an in-place
+// rewrite, a restore, a cloud-drive resync) must re-arm the cheap stat check
+// after the hash proves it unchanged. Otherwise every later sync re-reads and
+// re-hashes the whole file forever — brutal for multi-hundred-MB transcripts.
+func TestImportDirectory_HashMatchRefreshesStat(t *testing.T) {
+	tmpfile, err := os.CreateTemp("", "test-rearm-*.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Remove(tmpfile.Name()) }()
+	_ = tmpfile.Close()
+
+	database, err := db.New(tmpfile.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+
+	srcData, err := os.ReadFile("../../../pkg/ccsessions/testdata/sample.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	sessionFile := filepath.Join(dir, "sample.jsonl")
+	if err := os.WriteFile(sessionFile, srcData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	imp := New(database)
+	if _, err := imp.ImportDirectory(dir, nil, false, true, ccsessions.ParseFile, "claude"); err != nil {
+		t.Fatalf("ImportDirectory() error = %v", err)
+	}
+
+	// Touch the file without changing a byte of content.
+	drifted := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(sessionFile, drifted, drifted); err != nil {
+		t.Fatal(err)
+	}
+
+	progress := &countingProgress{}
+	skipped, err := imp.ImportDirectory(dir, progress, false, true, ccsessions.ParseFile, "claude")
+	if err != nil {
+		t.Fatalf("ImportDirectory() second run error = %v", err)
+	}
+	if skipped != 1 {
+		t.Fatalf("second run skipped = %d, want 1 (content unchanged)", skipped)
+	}
+	if progress.skips != 1 || progress.updates != 0 {
+		t.Fatalf("second run progress = %d skips / %d updates, want 1/0", progress.skips, progress.updates)
+	}
+
+	var storedMtime time.Time
+	if err := database.QueryRow(`SELECT file_mtime FROM sessions WHERE session_id = ?`, "sample").Scan(&storedMtime); err != nil {
+		t.Fatal(err)
+	}
+	if diff := storedMtime.Sub(drifted); diff > time.Second || diff < -time.Second {
+		t.Fatalf("stored file_mtime = %v, want ~%v (fast path never re-arms)", storedMtime, drifted)
+	}
+}

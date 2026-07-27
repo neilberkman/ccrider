@@ -310,12 +310,21 @@ func (i *Importer) ImportDirectory(dirPath string, progress ProgressCallback, fo
 
 	var skipped, failed int
 
+	// Files that need no import still count as progress — a routine sync skips
+	// nearly everything, so a bar fed only by imports looks frozen.
+	advance := func() {
+		if progress != nil {
+			progress.Skip()
+		}
+	}
+
 	for _, file := range files {
 		sessionID := filepath.Base(file)
 		sessionID = strings.TrimSuffix(sessionID, ".jsonl")
 
 		metadata, exists := sessionMetadata[sessionID]
 		messageCount := 0
+		var statInfo os.FileInfo
 
 		if exists && !force {
 			messageCount = metadata.messageCount
@@ -325,12 +334,15 @@ func (i *Importer) ImportDirectory(dirPath string, progress ProgressCallback, fo
 			if err != nil {
 				if os.IsNotExist(err) {
 					skipped++
+					advance()
 					continue
 				}
 				fmt.Fprintf(os.Stderr, "WARN: Cannot stat file %s: %v\n", file, err)
 				failed++
+				advance()
 				continue
 			}
+			statInfo = fileInfo
 
 			mtimeDiff := fileInfo.ModTime().Sub(metadata.mtime)
 			if mtimeDiff < 0 {
@@ -338,6 +350,7 @@ func (i *Importer) ImportDirectory(dirPath string, progress ProgressCallback, fo
 			}
 			if !metadata.mtime.IsZero() && mtimeDiff < time.Second && fileInfo.Size() == metadata.size {
 				skipped++
+				advance()
 				continue
 			}
 		}
@@ -347,15 +360,31 @@ func (i *Importer) ImportDirectory(dirPath string, progress ProgressCallback, fo
 		if err != nil {
 			if os.IsNotExist(err) {
 				skipped++
+				advance()
 				continue
 			}
 			fmt.Fprintf(os.Stderr, "WARN: Cannot hash file %s: %v\n", file, err)
 			failed++
+			advance()
 			continue
 		}
 
 		if exists && !force && metadata.hash == currentHash {
+			// Content is unchanged, so only the recorded stat drifted (a rewrite
+			// that preserved bytes, a restore, a cloud-drive resync). Record the
+			// current stat so the cheap fast path re-arms — otherwise this file is
+			// re-read in full on every sync forever, which is what turns a routine
+			// sync of a few large transcripts into a multi-second read storm.
+			if statInfo != nil {
+				if _, err := i.db.Exec(
+					`UPDATE sessions SET file_mtime = ?, file_size = ? WHERE session_id = ?`,
+					statInfo.ModTime(), statInfo.Size(), sessionID,
+				); err != nil {
+					fmt.Fprintf(os.Stderr, "WARN: Cannot refresh file metadata for %s: %v\n", file, err)
+				}
+			}
 			skipped++
+			advance()
 			continue
 		}
 
@@ -363,6 +392,7 @@ func (i *Importer) ImportDirectory(dirPath string, progress ProgressCallback, fo
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "WARN: Cannot parse file %s: %v\n", file, err)
 			failed++
+			advance()
 			continue
 		}
 
@@ -371,6 +401,7 @@ func (i *Importer) ImportDirectory(dirPath string, progress ProgressCallback, fo
 		if err := i.ImportSession(session, messageCount, fileInode, fileDevice, currentHash, provider); err != nil {
 			fmt.Fprintf(os.Stderr, "WARN: Cannot import session %s: %v\n", sessionID, err)
 			failed++
+			advance()
 			continue
 		}
 
@@ -426,6 +457,9 @@ func (i *Importer) ImportEnumerated(sessions []*ccsessions.ParsedSession, progre
 
 		if !force && existingHash[sessionID] == hash {
 			skipped++
+			if progress != nil {
+				progress.Skip()
+			}
 			continue
 		}
 
@@ -436,6 +470,9 @@ func (i *Importer) ImportEnumerated(sessions []*ccsessions.ParsedSession, progre
 		if err := i.ImportSession(session, 0, 0, 0, hash, provider); err != nil {
 			fmt.Fprintf(os.Stderr, "WARN: Cannot import session %s: %v\n", sessionID, err)
 			failed++
+			if progress != nil {
+				progress.Skip()
+			}
 			continue
 		}
 
