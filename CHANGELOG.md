@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-08-04
+
 ### Added
 
 - **Sessions resolve by bare UUID everywhere** — providers whose primary keys embed a UUID in a longer ID (codex's `rollout-<timestamp>-<uuid>`) can now be addressed by the bare UUID alone in every interface: `view`, `export`, the TUI, and MCP `get_session_messages`. Resolution lives in core (`ResolveSessionID`): exact match wins, otherwise the input matches a full ID ending with `-<input>`; an ambiguous suffix is reported with the candidates rather than silently picking one
