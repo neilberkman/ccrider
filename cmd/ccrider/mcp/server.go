@@ -43,7 +43,7 @@ type ListRecentSessionsArgs struct {
 
 // GetSessionMessagesArgs defines arguments for the get_session_messages tool
 type GetSessionMessagesArgs struct {
-	SessionID      string `json:"session_id" jsonschema:"description=Session UUID to retrieve messages from,required"`
+	SessionID      string `json:"session_id" jsonschema:"description=Session ID to retrieve messages from. Full provider IDs (e.g. codex rollout-<timestamp>-<uuid>) and bare UUIDs both work; a bare UUID is resolved against full IDs that end with it,required"`
 	LastN          int    `json:"last_n,omitempty" jsonschema:"description=Return last N messages (tail mode)"`
 	AroundSequence int    `json:"around_sequence,omitempty" jsonschema:"description=Return messages around this sequence number (from search results)"`
 	ContextSize    int    `json:"context_size,omitempty" jsonschema:"description=Messages before/after around_sequence (default: 10)"`
@@ -227,7 +227,7 @@ func StartServer(dbPath string) error {
 		mcp.WithDescription("Get messages from a coding agent session. Use last_n for tail (e.g., 'where were we'), around_sequence for context around a search match, or neither for full transcript."),
 		mcp.WithString("session_id",
 			mcp.Required(),
-			mcp.Description("Session UUID to retrieve messages from")),
+			mcp.Description("Session ID to retrieve messages from. Full provider IDs (e.g. codex rollout-<timestamp>-<uuid>) and bare UUIDs both work; a bare UUID is resolved against full IDs that end with it")),
 		mcp.WithNumber("last_n",
 			mcp.Description("Return last N messages (tail mode, for 'where were we' or 'refresh memory')")),
 		mcp.WithNumber("around_sequence",
@@ -506,6 +506,14 @@ func makeGetSessionMessagesHandler(database *db.DB) func(context.Context, mcp.Ca
 			return mcp.NewToolResultError(fmt.Sprintf("invalid arguments: %v", err)), nil
 		}
 
+		// Resolve to the canonical session id (core handles bare-UUID
+		// suffix matching). Unknown ids are an explicit error, never an
+		// empty-but-success-shaped response.
+		sessionID, err := database.ResolveSessionID(args.SessionID)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to get messages: %v", err)), nil
+		}
+
 		// Convert to core options
 		opts := db.GetSessionMessagesOptions{
 			LastN:          args.LastN,
@@ -514,14 +522,14 @@ func makeGetSessionMessagesHandler(database *db.DB) func(context.Context, mcp.Ca
 		}
 
 		// Call core function
-		messages, totalCount, err := database.GetSessionMessages(args.SessionID, opts)
+		messages, totalCount, err := database.GetSessionMessages(sessionID, opts)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to get messages: %v", err)), nil
 		}
 
 		// Pre-baked resume command. Core decides the fallback when launch info
 		// can't be loaded (see session.DisplayResumeCommandFor).
-		resumeCmd := session.DisplayResumeCommandFor(database, args.SessionID)
+		resumeCmd := session.DisplayResumeCommandFor(database, sessionID)
 
 		// Convert to MCP format
 		var mcpMessages []MessageDetail
@@ -536,7 +544,7 @@ func makeGetSessionMessagesHandler(database *db.DB) func(context.Context, mcp.Ca
 
 		// Trim to fit token budget, measured against actual serialized JSON
 		originalCount := len(mcpMessages)
-		mcpMessages, truncated := trimMessagesToFit(mcpMessages, args.SessionID, totalCount, args.LastN > 0)
+		mcpMessages, truncated := trimMessagesToFit(mcpMessages, sessionID, totalCount, args.LastN > 0)
 
 		var returnedFrom, returnedTo int
 		if len(mcpMessages) > 0 {
@@ -545,7 +553,7 @@ func makeGetSessionMessagesHandler(database *db.DB) func(context.Context, mcp.Ca
 		}
 
 		response := SessionMessagesResponse{
-			SessionID:     args.SessionID,
+			SessionID:     sessionID,
 			ResumeCommand: resumeCmd,
 			TotalCount:    totalCount,
 			ReturnedFrom:  returnedFrom,

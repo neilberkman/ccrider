@@ -35,11 +35,13 @@ type LaunchInfoSource interface {
 // DisplayResumeCommandFor builds the display resume command for a session
 // looked up by id. When launch info cannot be loaded, it falls back to the
 // bare command with the missing-project comment rather than erroring, so
-// callers always have something to show.
+// callers always have something to show. The command uses the canonical
+// session id from the lookup, not the caller's input, so a session looked
+// up by bare UUID still resumes under its full provider id.
 func DisplayResumeCommandFor(src LaunchInfoSource, sessionID string) string {
 	info, lastCwd, err := src.GetSessionLaunchInfo(sessionID)
 	if err != nil {
 		return DisplayResumeCommand("", sessionID, "", "", false)
 	}
-	return DisplayResumeCommand(info.Provider, sessionID, info.ProjectPath, lastCwd, false)
+	return DisplayResumeCommand(info.Provider, info.SessionID, info.ProjectPath, lastCwd, false)
 }

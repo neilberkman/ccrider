@@ -4,11 +4,60 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
 // ErrSessionNotFound is returned when a session ID does not exist in the database
 var ErrSessionNotFound = errors.New("session not found")
+
+// ResolveSessionID maps user-supplied input to a canonical session_id.
+// An exact match always wins. Otherwise the input is treated as a bare
+// UUID and resolved by suffix match, so codex sessions whose primary key
+// is rollout-<timestamp>-<uuid> can be addressed by UUID alone — that is
+// the form agents see in summaries and in claude session IDs. Returns
+// ErrSessionNotFound when nothing matches, and an error naming the
+// candidates when more than one session shares the suffix.
+func (db *DB) ResolveSessionID(input string) (string, error) {
+	var id string
+	err := db.QueryRow(`SELECT session_id FROM sessions WHERE session_id = ?`, input).Scan(&id)
+	if err == nil {
+		return id, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
+
+	rows, err := db.Query(`
+		SELECT session_id FROM sessions
+		WHERE substr(session_id, -(length(?) + 1)) = '-' || ?
+		LIMIT 5
+	`, input, input)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var matches []string
+	for rows.Next() {
+		if err := rows.Scan(&id); err != nil {
+			return "", err
+		}
+		matches = append(matches, id)
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+
+	switch len(matches) {
+	case 0:
+		return "", fmt.Errorf("%w: %s", ErrSessionNotFound, input)
+	case 1:
+		return matches[0], nil
+	default:
+		return "", fmt.Errorf("ambiguous session id %s: matches %s", input, strings.Join(matches, ", "))
+	}
+}
 
 // Session represents a session returned from ListSessions
 type Session struct {
@@ -147,6 +196,11 @@ func (db *DB) ListSessions(projectPath string, provider ...string) ([]Session, e
 
 // GetSessionLaunchInfo returns the minimal info needed to launch/resume a session
 func (db *DB) GetSessionLaunchInfo(sessionID string) (*Session, string, error) {
+	sessionID, err := db.ResolveSessionID(sessionID)
+	if err != nil {
+		return nil, "", err
+	}
+
 	query := `
 		SELECT
 			s.session_id,
@@ -171,7 +225,7 @@ func (db *DB) GetSessionLaunchInfo(sessionID string) (*Session, string, error) {
 
 	var session Session
 	var lastCwd string
-	err := db.QueryRow(query, sessionID).Scan(
+	err = db.QueryRow(query, sessionID).Scan(
 		&session.SessionID,
 		&session.Summary,
 		&session.ProjectPath,
@@ -193,6 +247,11 @@ func (db *DB) GetSessionLaunchInfo(sessionID string) (*Session, string, error) {
 
 // GetSessionDetail returns full details for a single session
 func (db *DB) GetSessionDetail(sessionID string) (*SessionDetail, error) {
+	sessionID, err := db.ResolveSessionID(sessionID)
+	if err != nil {
+		return nil, err
+	}
+
 	// First get the session metadata
 	query := `
 		SELECT
@@ -216,7 +275,7 @@ func (db *DB) GetSessionDetail(sessionID string) (*SessionDetail, error) {
 	`
 
 	var detail SessionDetail
-	err := db.QueryRow(query, sessionID).Scan(
+	err = db.QueryRow(query, sessionID).Scan(
 		&detail.SessionID,
 		&detail.Summary,
 		&detail.ProjectPath,
@@ -301,6 +360,11 @@ type RecoveryContext struct {
 func (db *DB) GetRecoveryContext(sessionID string, contextMsgs int) (*RecoveryContext, error) {
 	if contextMsgs <= 0 {
 		contextMsgs = 5
+	}
+
+	sessionID, err := db.ResolveSessionID(sessionID)
+	if err != nil {
+		return nil, err
 	}
 
 	// Get session metadata
@@ -390,9 +454,14 @@ type GetSessionMessagesOptions struct {
 // - AroundSequence > 0: returns messages around that sequence (±ContextSize)
 // - Neither: returns all messages
 func (db *DB) GetSessionMessages(sessionID string, opts GetSessionMessagesOptions) ([]SessionMessage, int, error) {
+	sessionID, err := db.ResolveSessionID(sessionID)
+	if err != nil {
+		return nil, 0, err
+	}
+
 	// First get total message count
 	var totalCount int
-	err := db.QueryRow(`
+	err = db.QueryRow(`
 		SELECT COUNT(*) FROM messages
 		WHERE session_id = (SELECT id FROM sessions WHERE session_id = ?)
 	`, sessionID).Scan(&totalCount)

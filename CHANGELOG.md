@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Sessions resolve by bare UUID everywhere** — providers whose primary keys embed a UUID in a longer ID (codex's `rollout-<timestamp>-<uuid>`) can now be addressed by the bare UUID alone in every interface: `view`, `export`, the TUI, and MCP `get_session_messages`. Resolution lives in core (`ResolveSessionID`): exact match wins, otherwise the input matches a full ID ending with `-<input>`; an ambiguous suffix is reported with the candidates rather than silently picking one
+- **CLI search results include the session ID** — output previously showed summary, project, and match counts but no ID, so there was no way to go from a search hit to `view`/`export` without a second `list` pass. MCP search already included it
+
+### Fixed
+
+- **MCP `get_session_messages` errors on unknown session IDs** — an unknown ID previously returned `{"total_count": 0, "messages": null}` with success shape, indistinguishable from a real-but-empty session. Core `GetSessionMessages` now returns "session not found", which MCP surfaces as an explicit tool error
+- **Resume commands use the canonical session ID** — a session looked up by bare UUID previously produced a `resume_command` embedding the bare UUID, which the provider CLI could not resume; the command is now built from the stored full ID
+
 ## [1.7.0] - 2026-07-27
 
 ### Added

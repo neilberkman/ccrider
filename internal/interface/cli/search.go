@@ -87,6 +87,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		} else {
 			fmt.Printf("[No summary]\n")
 		}
+		fmt.Printf("ID: %s\n", session.SessionID)
 		fmt.Printf("%s | %d msgs | %s | %d matches\n",
 			session.LastCwd, session.MessageCount, formatTimeAgo(session.UpdatedAt), len(session.Matches))
 		fmt.Println()
