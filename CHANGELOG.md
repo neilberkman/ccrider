@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-08-05
+
 ### Added
 
 - **Official MCP registry listing** — ccrider is published to the official MCP registry (registry.modelcontextprotocol.io) as `io.github.neilberkman/ccrider` on every release, so MCP clients and registry aggregators (Glama, PulseMCP, mcp.so) can discover it
