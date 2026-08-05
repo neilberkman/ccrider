@@ -4,6 +4,11 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Existing release version to (re)publish to the MCP registry, e.g. 1.9.0'
+        required: true
 
 permissions:
   contents: write
@@ -11,6 +16,7 @@ permissions:
 
 jobs:
   test:
+    if: github.event_name == 'push'
     runs-on: macos-14
     steps:
       - name: Checkout
@@ -42,6 +48,7 @@ jobs:
         run: golangci-lint run --timeout=5m
 
   release:
+    if: github.event_name == 'push'
     needs: test
     runs-on: macos-14
     steps:
@@ -66,7 +73,10 @@ jobs:
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
 
   publish-mcp-registry:
+    # Runs after a tag release, or standalone via workflow_dispatch to
+    # (re)publish an existing release to the MCP registry
     needs: release
+    if: always() && (github.event_name == 'workflow_dispatch' || needs.release.result == 'success')
     runs-on: ubuntu-latest
     permissions:
       id-token: write # OIDC auth for the io.github.neilberkman namespace
@@ -81,8 +91,9 @@ jobs:
 
       - name: Generate server.json
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          URL="https://github.com/neilberkman/ccrider/releases/download/${GITHUB_REF_NAME}/ccrider_${VERSION}.mcpb"
+          VERSION="${{ github.event.inputs.version }}"
+          [ -z "$VERSION" ] && VERSION="${GITHUB_REF_NAME#v}"
+          URL="https://github.com/neilberkman/ccrider/releases/download/v${VERSION}/ccrider_${VERSION}.mcpb"
           curl -sSLf "$URL" -o ccrider.mcpb
           SHA=$(openssl dgst -sha256 -r ccrider.mcpb | cut -d' ' -f1)
           ./scripts/gen-server-json.sh "$VERSION" "$SHA" > server.json
