@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Official MCP registry listing** — ccrider is published to the official MCP registry (registry.modelcontextprotocol.io) as `io.github.neilberkman/ccrider` on every release, so MCP clients and registry aggregators (Glama, PulseMCP, mcp.so) can discover it
+- **MCPB bundle** — each release now ships `ccrider_<version>.mcpb`, a one-file MCP bundle installable directly by MCPB-capable clients (e.g. Claude Desktop). It carries a macOS universal binary plus linux and windows amd64 binaries and selects the right one per platform; linux/windows arm64 users should install via the existing packages instead
+
 ## [1.8.0] - 2026-08-04
 
 ### Added

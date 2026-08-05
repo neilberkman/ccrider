@@ -22,8 +22,23 @@ builds:
     ldflags:
       - -s -w -X main.Version={{.Version}} -X main.Commit={{.Commit}} -X main.Date={{.Date}}
 
+# Darwin universal binary feeds the MCPB bundle; per-arch archives are kept
+# (replace: false) so Homebrew and direct downloads are unchanged. The post
+# hook runs after all builds complete, which is what the bundle needs.
+universal_binaries:
+  - id: ccrider-universal
+    ids:
+      - ccrider
+    replace: false
+    hooks:
+      post:
+        - ./scripts/build-mcpb.sh {{ .Version }} dist
+
 archives:
   - id: ccrider
+    # Only the per-arch builds; the universal binary ships inside the .mcpb
+    ids:
+      - ccrider
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     formats:
       - tar.gz
@@ -56,6 +71,8 @@ release:
   prerelease: auto
   make_latest: true
   mode: replace
+  extra_files:
+    - glob: dist/*.mcpb
   header: |
     ## ccrider {{.Tag}}
 

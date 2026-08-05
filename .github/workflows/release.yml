@@ -64,3 +64,32 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+
+  publish-mcp-registry:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # OIDC auth for the io.github.neilberkman namespace
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install mcp-publisher
+        run: |
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+
+      - name: Generate server.json
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          URL="https://github.com/neilberkman/ccrider/releases/download/${GITHUB_REF_NAME}/ccrider_${VERSION}.mcpb"
+          curl -sSLf "$URL" -o ccrider.mcpb
+          SHA=$(openssl dgst -sha256 -r ccrider.mcpb | cut -d' ' -f1)
+          ./scripts/gen-server-json.sh "$VERSION" "$SHA" > server.json
+          cat server.json
+
+      - name: Login to MCP registry (OIDC)
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish to MCP registry
+        run: ./mcp-publisher publish
