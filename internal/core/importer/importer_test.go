@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -191,6 +192,49 @@ func TestPreparedRemoteProgressIncludesFailures(t *testing.T) {
 	}
 }
 
+func TestPreparedRemoteUsesCallerControlledLifetime(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "caller-lifetime.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+
+	assertNoDeadline := func(ctx context.Context) {
+		t.Helper()
+		if deadline, ok := ctx.Deadline(); ok {
+			t.Fatalf("remote context has internal deadline %v; want caller-controlled lifetime", deadline)
+		}
+	}
+	stamp := time.Now().UTC()
+	source := Source{Provider: ampProvider, Remote: &RemoteSource{
+		List: func(ctx context.Context) ([]RemoteSessionRef, error) {
+			assertNoDeadline(ctx)
+			return []RemoteSessionRef{{ImportID: "one", Revision: "1"}}, nil
+		},
+		Fetch: func(ctx context.Context, ref RemoteSessionRef) (*ccsessions.ParsedSession, error) {
+			assertNoDeadline(ctx)
+			return &ccsessions.ParsedSession{
+				SessionID: ref.ImportID, ProjectPath: "/tmp", FileMtime: stamp,
+				Messages: []ccsessions.ParsedMessage{{
+					UUID: "caller-lifetime-message", Type: "user", Sender: "human", TextContent: "hello", Timestamp: stamp,
+				}},
+			}, nil
+		},
+	}}
+
+	prepared, err := New(database).PrepareSource(context.Background(), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := prepared.Run(context.Background(), nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Imported != 1 {
+		t.Fatalf("result = %+v, want one import", result)
+	}
+}
+
 func TestPreparedOptionalRemoteTimeoutKeepsPartialImport(t *testing.T) {
 	database, err := db.New(filepath.Join(t.TempDir(), "partial-timeout.db"))
 	if err != nil {
@@ -234,14 +278,84 @@ func TestPreparedOptionalRemoteTimeoutKeepsPartialImport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run() error = %v, want optional timeout to degrade", err)
 	}
-	if result.Imported != 1 || len(result.Failures) != 2 || progress.current != 3 {
-		t.Fatalf("result = %+v, progress = %d; want partial import, two pending failures, 3/3", result, progress.current)
+	if result.Imported != 1 || result.Deferred != 2 || len(result.Failures) != 0 || progress.current != 3 {
+		t.Fatalf("result = %+v, progress = %d; want partial import, two deferred, 3/3", result, progress.current)
 	}
-	wantFailureIDs := []string{"timed-out", "not-attempted"}
-	for index, failure := range result.Failures {
-		if failure.ID != wantFailureIDs[index] || !errors.Is(failure.Err, context.DeadlineExceeded) {
-			t.Fatalf("failure %d = %+v, want deadline for %q", index, failure, wantFailureIDs[index])
+	var imported int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM sessions WHERE session_id = 'imported'`).Scan(&imported); err != nil {
+		t.Fatal(err)
+	}
+	if imported != 1 {
+		t.Fatalf("committed imported sessions = %d, want 1", imported)
+	}
+}
+
+func TestImportRemoteChildDeadlineIsPerSessionFailure(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "child-timeout.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+
+	refs := []RemoteSessionRef{{ImportID: "timed-out", Revision: "1"}, {ImportID: "next", Revision: "1"}}
+	stamp := time.Now().UTC()
+	fetch := func(_ context.Context, ref RemoteSessionRef) (*ccsessions.ParsedSession, error) {
+		if ref.ImportID == "timed-out" {
+			return nil, fmt.Errorf("command timeout: %w", context.DeadlineExceeded)
 		}
+		return &ccsessions.ParsedSession{
+			SessionID: ref.ImportID, ProjectPath: "/tmp", FileMtime: stamp,
+			Messages: []ccsessions.ParsedMessage{{
+				UUID: "after-child-timeout", Type: "user", Sender: "human", TextContent: "hello", Timestamp: stamp,
+			}},
+		}, nil
+	}
+
+	result, err := New(database).ImportRemote(context.Background(), refs, fetch, nil, false, ampProvider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Imported != 1 || result.Deferred != 0 || len(result.Failures) != 1 {
+		t.Fatalf("result = %+v, want one import and one per-session failure", result)
+	}
+	if result.Failures[0].ID != "timed-out" || !errors.Is(result.Failures[0].Err, context.DeadlineExceeded) {
+		t.Fatalf("failure = %+v, want timed-out deadline", result.Failures[0])
+	}
+}
+
+func TestImportRemoteDoesNotCommitFetchCompletedAfterCallerDeadline(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "late-success.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	stamp := time.Now().UTC()
+	refs := []RemoteSessionRef{{ImportID: "late", Revision: "1"}}
+	fetch := func(_ context.Context, ref RemoteSessionRef) (*ccsessions.ParsedSession, error) {
+		cancel()
+		return &ccsessions.ParsedSession{
+			SessionID: ref.ImportID, ProjectPath: "/tmp", FileMtime: stamp,
+			Messages: []ccsessions.ParsedMessage{{
+				UUID: "late-success", Type: "user", Sender: "human", TextContent: "hello", Timestamp: stamp,
+			}},
+		}, nil
+	}
+
+	result, err := New(database).ImportRemote(ctx, refs, fetch, nil, false, ampProvider)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("ImportRemote() error = %v, want cancellation", err)
+	}
+	if result.Imported != 0 || result.Deferred != 0 || len(result.Failures) != 0 {
+		t.Fatalf("result = %+v, want no committed or synthetic outcome", result)
+	}
+	var count int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM sessions WHERE session_id = 'late'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("late session count = %d, want 0", count)
 	}
 }
 

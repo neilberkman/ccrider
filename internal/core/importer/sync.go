@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/neilberkman/ccrider/pkg/antigravitysessions"
 	"github.com/neilberkman/ccrider/pkg/ccsessions"
@@ -17,8 +16,6 @@ import (
 	"github.com/neilberkman/ccrider/pkg/opencodesessions"
 	"github.com/neilberkman/ccrider/pkg/pisessions"
 )
-
-const remoteSyncTimeout = 2 * time.Minute
 
 // EnumerateFunc returns all parsed sessions for a database/event-log-backed
 // provider (e.g. Copilot, OpenCode) that does not store one JSONL file per
@@ -34,7 +31,9 @@ type RemoteSessionRef struct {
 
 // RemoteSource lists lightweight remote references and fetches one full
 // session on demand. This avoids downloading every remote transcript before
-// the importer can determine which ones are unchanged.
+// the importer can determine which ones are unchanged. Implementations must
+// honor caller cancellation and independently bound each blocking external
+// operation; the importer does not impose an account-wide timeout.
 type RemoteSource struct {
 	List  func(context.Context) ([]RemoteSessionRef, error)
 	Fetch func(context.Context, RemoteSessionRef) (*ccsessions.ParsedSession, error)
@@ -177,10 +176,10 @@ func (i *Importer) PrepareSource(ctx context.Context, src Source) (PreparedSourc
 		return PreparedSource{}, err
 	}
 	if src.Remote != nil {
-		deadline := time.Now().Add(remoteSyncTimeout)
-		listCtx, cancel := context.WithDeadline(ctx, deadline)
-		refs, err := src.Remote.List(listCtx)
-		cancel()
+		// Remote clients bound each network command. Keep the overall lifetime
+		// caller-controlled so an interactive initial sync can scale to accounts
+		// with more sessions than an arbitrary account-wide timeout permits.
+		refs, err := src.Remote.List(ctx)
 		if err != nil {
 			if src.Optional && errors.Is(err, context.DeadlineExceeded) {
 				return skippedPreparedSource(src, err), nil
@@ -193,23 +192,12 @@ func (i *Importer) PrepareSource(ctx context.Context, src Source) (PreparedSourc
 			}
 			return PreparedSource{}, err
 		}
-		remaining := time.Until(deadline)
-		if remaining <= 0 {
-			if src.Optional {
-				return skippedPreparedSource(src, context.DeadlineExceeded), nil
-			}
-			return PreparedSource{}, context.DeadlineExceeded
-		}
 		return PreparedSource{
 			Provider: src.Provider,
 			Path:     src.Path,
 			Total:    len(refs),
 			run: func(ctx context.Context, progress ProgressCallback, force bool) (ImportResult, error) {
-				// Count list and export execution toward the whole remote budget,
-				// but not time a prepared source waits behind another provider.
-				remoteCtx, cancel := context.WithTimeout(ctx, remaining)
-				defer cancel()
-				result, err := i.ImportRemote(remoteCtx, refs, src.Remote.Fetch, progress, force, src.Provider)
+				result, err := i.ImportRemote(ctx, refs, src.Remote.Fetch, progress, force, src.Provider)
 				if src.Optional && errors.Is(err, context.DeadlineExceeded) {
 					return result, nil
 				}

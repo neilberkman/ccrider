@@ -128,6 +128,9 @@ func runSync(cmd *cobra.Command, args []string) error {
 		for _, failure := range result.Failures {
 			fmt.Fprintf(os.Stderr, "WARN: Cannot import %s session %s: %v\n", src.Provider, failure.ID, failure.Err)
 		}
+		if result.Deferred > 0 {
+			fmt.Fprintf(os.Stderr, "WARN: %s sync deadline reached; deferred %d sessions until the next sync\n", src.Provider, result.Deferred)
+		}
 
 		if result.Skipped > 0 && !syncForce {
 			skipRate := float64(result.Skipped) / float64(prepared.Total) * 100

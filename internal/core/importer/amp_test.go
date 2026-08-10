@@ -191,15 +191,21 @@ func TestAmpClientAddsPerCommandDeadline(t *testing.T) {
 	client := &ampClient{
 		pageSize: 100,
 		timeout:  time.Second,
-		run: func(ctx context.Context, _ ...string) ([]byte, error) {
+		run: func(ctx context.Context, args ...string) ([]byte, error) {
 			deadline, ok := ctx.Deadline()
 			if !ok || time.Until(deadline) > time.Second {
 				t.Fatalf("command deadline = %v, ok = %v", deadline, ok)
+			}
+			if len(args) >= 2 && args[1] == "export" {
+				return []byte(`{"id":"T-one","messages":[]}`), nil
 			}
 			return []byte("[]"), nil
 		},
 	}
 	if _, err := client.listThreads(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.exportThread(context.Background(), "T-one"); err != nil {
 		t.Fatal(err)
 	}
 }

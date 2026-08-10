@@ -17,9 +17,10 @@ import (
 )
 
 const (
-	ampProvider        = "amp"
-	ampDefaultPageSize = 100
-	ampCommandTimeout  = 30 * time.Second
+	ampProvider         = "amp"
+	ampDefaultPageSize  = 100
+	ampCommandTimeout   = 30 * time.Second
+	ampProcessWaitDelay = 2 * time.Second
 )
 
 type ampRunFunc func(context.Context, ...string) ([]byte, error)
@@ -36,6 +37,7 @@ func newAmpClient() *ampClient {
 
 func runAmp(ctx context.Context, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "amp", args...)
+	cmd.WaitDelay = ampProcessWaitDelay
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	output, runErr := cmd.Output()

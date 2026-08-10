@@ -25,6 +25,7 @@ type ImportFailure struct {
 type ImportResult struct {
 	Imported int
 	Skipped  int
+	Deferred int
 	Failures []ImportFailure
 }
 
@@ -537,6 +538,14 @@ func (i *Importer) ImportEnumerated(ctx context.Context, sessions []*ccsessions.
 // export on subsequent syncs.
 func (i *Importer) ImportRemote(ctx context.Context, refs []RemoteSessionRef, fetch func(context.Context, RemoteSessionRef) (*ccsessions.ParsedSession, error), progress ProgressCallback, force bool, provider string) (ImportResult, error) {
 	result := ImportResult{}
+	deferRemaining := func(index int) {
+		result.Deferred += len(refs) - index
+		for range refs[index:] {
+			if progress != nil {
+				progress.Skip()
+			}
+		}
+	}
 	existingHash := make(map[string]string)
 	rows, err := i.db.Query(`SELECT session_id, COALESCE(file_hash, '') FROM sessions`)
 	if err != nil {
@@ -559,12 +568,7 @@ func (i *Importer) ImportRemote(ctx context.Context, refs []RemoteSessionRef, fe
 	for index, ref := range refs {
 		if err := ctx.Err(); err != nil {
 			if errors.Is(err, context.DeadlineExceeded) {
-				for _, pending := range refs[index:] {
-					result.addFailure(pending.ImportID, err)
-					if progress != nil {
-						progress.Skip()
-					}
-				}
+				deferRemaining(index)
 			}
 			return result, err
 		}
@@ -586,15 +590,16 @@ func (i *Importer) ImportRemote(ctx context.Context, refs []RemoteSessionRef, fe
 		}
 
 		session, err := fetch(ctx, ref)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			if errors.Is(ctxErr, context.DeadlineExceeded) {
+				deferRemaining(index)
+			}
+			return result, ctxErr
+		}
 		if err != nil {
 			if ctx.Err() != nil {
 				if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-					for _, pending := range refs[index:] {
-						result.addFailure(pending.ImportID, ctx.Err())
-						if progress != nil {
-							progress.Skip()
-						}
-					}
+					deferRemaining(index)
 				}
 				return result, ctx.Err()
 			}
@@ -643,6 +648,12 @@ func (i *Importer) ImportRemote(ctx context.Context, refs []RemoteSessionRef, fe
 				}
 			}
 			progress.Update(session.Summary, firstMsg)
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			if errors.Is(ctxErr, context.DeadlineExceeded) {
+				deferRemaining(index + 1)
+			}
+			return result, ctxErr
 		}
 	}
 
