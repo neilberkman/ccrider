@@ -139,13 +139,22 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Toggle project filter
 		m.projectFilterEnabled = !m.projectFilterEnabled
 		// Reload sessions with new filter
-		return m, loadSessions(m.db, m.projectFilterEnabled, m.currentDirectory)
+		m.sessionsLoadGeneration++
+		return m, loadSessions(m.db, m.projectFilterEnabled, m.currentDirectory, m.sessionsLoadGeneration)
 
 	case "s":
+		if m.syncing {
+			return m, nil
+		}
 		// Trigger sync - save cursor position first
 		m.syncing = true
 		m.savedCursorIndex = m.list.Index()
-		return m, syncSessions(m.db, m.projectFilterEnabled, m.currentDirectory)
+		if selected, ok := m.list.SelectedItem().(sessionListItem); ok {
+			m.savedSessionID = selected.session.ID
+		} else {
+			m.savedSessionID = ""
+		}
+		return m, syncSessions(m.syncManager, m.db)
 
 	case "e":
 		// Open export dialog with repo-aware default path

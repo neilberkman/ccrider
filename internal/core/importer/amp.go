@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strconv"
@@ -36,12 +37,19 @@ func newAmpClient() *ampClient {
 }
 
 func runAmp(ctx context.Context, args ...string) ([]byte, error) {
+	return runAmpWithWaitDelay(ctx, ampProcessWaitDelay, args...)
+}
+
+func runAmpWithWaitDelay(ctx context.Context, waitDelay time.Duration, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "amp", args...)
-	cmd.WaitDelay = ampProcessWaitDelay
+	cmd.WaitDelay = waitDelay
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	output, runErr := cmd.Output()
 	if runErr == nil {
+		return output, nil
+	}
+	if ctx.Err() == nil && errors.Is(runErr, exec.ErrWaitDelay) && cmd.ProcessState != nil && cmd.ProcessState.Success() {
 		return output, nil
 	}
 	message := strings.TrimSpace(stderr.String())

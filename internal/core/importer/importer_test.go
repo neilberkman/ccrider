@@ -160,6 +160,12 @@ func (p *unitProgress) Update(string, string) { p.current++ }
 func (p *unitProgress) Skip()                 { p.current++ }
 func (*unitProgress) Finish()                 {}
 
+type cancelOnUpdateProgress struct{ cancel context.CancelFunc }
+
+func (p *cancelOnUpdateProgress) Update(string, string) { p.cancel() }
+func (*cancelOnUpdateProgress) Skip()                   {}
+func (*cancelOnUpdateProgress) Finish()                 {}
+
 func TestPreparedRemoteProgressIncludesFailures(t *testing.T) {
 	database, err := db.New(filepath.Join(t.TempDir(), "progress.db"))
 	if err != nil {
@@ -278,7 +284,7 @@ func TestPreparedOptionalRemoteTimeoutKeepsPartialImport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run() error = %v, want optional timeout to degrade", err)
 	}
-	if result.Imported != 1 || result.Deferred != 2 || len(result.Failures) != 0 || progress.current != 3 {
+	if result.Imported != 1 || !reflect.DeepEqual(result.Deferred, []string{"timed-out", "not-attempted"}) || len(result.Failures) != 0 || progress.current != 3 {
 		t.Fatalf("result = %+v, progress = %d; want partial import, two deferred, 3/3", result, progress.current)
 	}
 	var imported int
@@ -315,7 +321,7 @@ func TestImportRemoteChildDeadlineIsPerSessionFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Imported != 1 || result.Deferred != 0 || len(result.Failures) != 1 {
+	if result.Imported != 1 || len(result.Deferred) != 0 || len(result.Failures) != 1 {
 		t.Fatalf("result = %+v, want one import and one per-session failure", result)
 	}
 	if result.Failures[0].ID != "timed-out" || !errors.Is(result.Failures[0].Err, context.DeadlineExceeded) {
@@ -347,8 +353,8 @@ func TestImportRemoteDoesNotCommitFetchCompletedAfterCallerDeadline(t *testing.T
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("ImportRemote() error = %v, want cancellation", err)
 	}
-	if result.Imported != 0 || result.Deferred != 0 || len(result.Failures) != 0 {
-		t.Fatalf("result = %+v, want no committed or synthetic outcome", result)
+	if result.Imported != 0 || !reflect.DeepEqual(result.Deferred, []string{"late"}) || len(result.Failures) != 0 {
+		t.Fatalf("result = %+v, want late session deferred", result)
 	}
 	var count int
 	if err := database.QueryRow(`SELECT COUNT(*) FROM sessions WHERE session_id = 'late'`).Scan(&count); err != nil {
@@ -359,7 +365,7 @@ func TestImportRemoteDoesNotCommitFetchCompletedAfterCallerDeadline(t *testing.T
 	}
 }
 
-func TestImportRemoteCancellationDoesNotFailUntouchedSessions(t *testing.T) {
+func TestImportRemoteCancellationDefersChangedAndSkipsUnchangedSessions(t *testing.T) {
 	database, err := db.New(filepath.Join(t.TempDir(), "remote-cancel.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -368,7 +374,20 @@ func TestImportRemoteCancellationDoesNotFailUntouchedSessions(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	stamp := time.Now().UTC()
-	refs := []RemoteSessionRef{{ImportID: "imported", Revision: "1"}, {ImportID: "cancel", Revision: "1"}, {ImportID: "untouched", Revision: "1"}}
+	imp := New(database)
+	unchanged := []RemoteSessionRef{{ImportID: "unchanged", Revision: "1"}}
+	if _, err := imp.ImportRemote(context.Background(), unchanged, func(_ context.Context, ref RemoteSessionRef) (*ccsessions.ParsedSession, error) {
+		return &ccsessions.ParsedSession{
+			SessionID: ref.ImportID, ProjectPath: "/tmp", FileMtime: stamp,
+			Messages: []ccsessions.ParsedMessage{{
+				UUID: "unchanged-message", Type: "user", Sender: "human", TextContent: "hello", Timestamp: stamp,
+			}},
+		}, nil
+	}, nil, false, ampProvider); err != nil {
+		t.Fatal(err)
+	}
+
+	refs := []RemoteSessionRef{{ImportID: "imported", Revision: "1"}, {ImportID: "cancel", Revision: "1"}, {ImportID: "unchanged", Revision: "1"}, {ImportID: "untouched", Revision: "1"}}
 	fetch := func(_ context.Context, ref RemoteSessionRef) (*ccsessions.ParsedSession, error) {
 		if ref.ImportID == "cancel" {
 			cancel()
@@ -382,12 +401,40 @@ func TestImportRemoteCancellationDoesNotFailUntouchedSessions(t *testing.T) {
 		}, nil
 	}
 	progress := &unitProgress{}
-	result, err := New(database).ImportRemote(ctx, refs, fetch, progress, false, ampProvider)
+	result, err := imp.ImportRemote(ctx, refs, fetch, progress, false, ampProvider)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("ImportRemote() error = %v, want context cancellation", err)
 	}
-	if result.Imported != 1 || len(result.Failures) != 0 || progress.current != 1 {
-		t.Fatalf("result = %+v, progress = %d; untouched sessions must not become failures", result, progress.current)
+	if result.Imported != 1 || result.Skipped != 1 || !reflect.DeepEqual(result.Deferred, []string{"cancel", "untouched"}) || len(result.Failures) != 0 || progress.current != 4 {
+		t.Fatalf("result = %+v, progress = %d; want changed sessions deferred and unchanged session skipped", result, progress.current)
+	}
+}
+
+func TestImportRemoteCancellationAfterFinalCommitStillSucceeds(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "final-commit-cancel.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	stamp := time.Now().UTC()
+	refs := []RemoteSessionRef{{ImportID: "final", Revision: "1"}}
+	fetch := func(_ context.Context, ref RemoteSessionRef) (*ccsessions.ParsedSession, error) {
+		return &ccsessions.ParsedSession{
+			SessionID: ref.ImportID, ProjectPath: "/tmp", FileMtime: stamp,
+			Messages: []ccsessions.ParsedMessage{{
+				UUID: "final-message", Type: "user", Sender: "human", TextContent: "hello", Timestamp: stamp,
+			}},
+		}, nil
+	}
+
+	result, err := New(database).ImportRemote(ctx, refs, fetch, &cancelOnUpdateProgress{cancel: cancel}, false, ampProvider)
+	if err != nil {
+		t.Fatalf("ImportRemote() error = %v, want successful completed import", err)
+	}
+	if result.Imported != 1 || len(result.Deferred) != 0 || len(result.Failures) != 0 {
+		t.Fatalf("result = %+v, want final session committed without deferral", result)
 	}
 }
 
@@ -412,6 +459,79 @@ func TestSyncAllReportsPerSessionFailures(t *testing.T) {
 	err = New(database).SyncAll(context.Background(), []Source{source}, false)
 	if err == nil || !strings.Contains(err.Error(), "unsupported schema version") {
 		t.Fatalf("SyncAll() error = %v, want structured session failure", err)
+	}
+}
+
+func TestSyncAllReportsDeferredRemoteSessions(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "deferred-sync.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+
+	source := Source{Provider: ampProvider, Optional: true, Remote: &RemoteSource{
+		List: func(context.Context) ([]RemoteSessionRef, error) {
+			return []RemoteSessionRef{{ImportID: "blocked", Revision: "1"}, {ImportID: "pending", Revision: "1"}}, nil
+		},
+		Fetch: func(ctx context.Context, _ RemoteSessionRef) (*ccsessions.ParsedSession, error) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+	}}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	err = New(database).SyncAll(ctx, []Source{source}, false)
+	if err == nil || !strings.Contains(err.Error(), "2 sessions deferred (blocked, pending)") {
+		t.Fatalf("SyncAll() error = %v, want deferred session signal", err)
+	}
+}
+
+func TestSyncAllReportsCallerDeadlineDuringRemoteList(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "list-deadline-sync.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+
+	source := Source{Provider: ampProvider, Optional: true, Remote: &RemoteSource{
+		List: func(ctx context.Context) ([]RemoteSessionRef, error) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+	}}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	err = New(database).SyncAll(ctx, []Source{source}, false)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("SyncAll() error = %v, want caller deadline", err)
+	}
+}
+
+func TestSyncAllPreservesDeferredDetailsWhenNextPreparationFails(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "joined-sync-errors.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+
+	deferredSource := Source{Provider: ampProvider, Optional: true, Remote: &RemoteSource{
+		List: func(context.Context) ([]RemoteSessionRef, error) {
+			return []RemoteSessionRef{{ImportID: "pending", Revision: "1"}}, nil
+		},
+		Fetch: func(ctx context.Context, _ RemoteSessionRef) (*ccsessions.ParsedSession, error) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+	}}
+	nextSource := Source{Provider: "next", Path: t.TempDir()}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	err = New(database).SyncAll(ctx, []Source{deferredSource, nextSource}, false)
+	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "1 sessions deferred (pending)") {
+		t.Fatalf("SyncAll() error = %v, want deferred details joined with caller deadline", err)
 	}
 }
 

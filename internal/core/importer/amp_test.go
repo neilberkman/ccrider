@@ -239,3 +239,40 @@ func TestRunAmpPreservesDeadline(t *testing.T) {
 		t.Fatalf("runAmp() error = %v, want deadline", err)
 	}
 }
+
+func TestRunAmpUsesOutputAfterCleanExitWaitDelay(t *testing.T) {
+	binDir := t.TempDir()
+	ampPath := filepath.Join(binDir, "amp")
+	if err := os.WriteFile(ampPath, []byte("#!/bin/sh\n(sleep 5) &\nprintf '[]'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	started := time.Now()
+	output, err := runAmpWithWaitDelay(context.Background(), 20*time.Millisecond, "threads", "list")
+	if err != nil {
+		t.Fatalf("runAmpWithWaitDelay() error = %v, want clean output", err)
+	}
+	if string(output) != "[]" {
+		t.Fatalf("output = %q, want []", output)
+	}
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("clean process with inherited pipe returned after %s, want bounded wait", elapsed)
+	}
+}
+
+func TestRunAmpCallerDeadlineTakesPrecedenceOverCleanExitWaitDelay(t *testing.T) {
+	binDir := t.TempDir()
+	ampPath := filepath.Join(binDir, "amp")
+	if err := os.WriteFile(ampPath, []byte("#!/bin/sh\n(sleep 5) &\nprintf '[]'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	_, err := runAmpWithWaitDelay(ctx, time.Second, "threads", "list")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("runAmpWithWaitDelay() error = %v, want caller deadline", err)
+	}
+}

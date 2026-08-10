@@ -25,7 +25,7 @@ type ImportFailure struct {
 type ImportResult struct {
 	Imported int
 	Skipped  int
-	Deferred int
+	Deferred []string
 	Failures []ImportFailure
 }
 
@@ -538,14 +538,6 @@ func (i *Importer) ImportEnumerated(ctx context.Context, sessions []*ccsessions.
 // export on subsequent syncs.
 func (i *Importer) ImportRemote(ctx context.Context, refs []RemoteSessionRef, fetch func(context.Context, RemoteSessionRef) (*ccsessions.ParsedSession, error), progress ProgressCallback, force bool, provider string) (ImportResult, error) {
 	result := ImportResult{}
-	deferRemaining := func(index int) {
-		result.Deferred += len(refs) - index
-		for range refs[index:] {
-			if progress != nil {
-				progress.Skip()
-			}
-		}
-	}
 	existingHash := make(map[string]string)
 	rows, err := i.db.Query(`SELECT session_id, COALESCE(file_hash, '') FROM sessions`)
 	if err != nil {
@@ -564,12 +556,27 @@ func (i *Importer) ImportRemote(ctx context.Context, refs []RemoteSessionRef, fe
 		return result, fmt.Errorf("failed to read remote session metadata: %w", err)
 	}
 	_ = rows.Close()
+	deferIfInterrupted := func(index int) error {
+		if err := ctx.Err(); err != nil {
+			for _, pending := range refs[index:] {
+				id := strings.TrimSpace(pending.ImportID)
+				revision := strings.TrimSpace(pending.Revision)
+				if id != "" && revision != "" && !force && existingHash[id] == revision {
+					result.Skipped++
+				} else {
+					result.Deferred = append(result.Deferred, id)
+				}
+				if progress != nil {
+					progress.Skip()
+				}
+			}
+			return err
+		}
+		return nil
+	}
 
 	for index, ref := range refs {
-		if err := ctx.Err(); err != nil {
-			if errors.Is(err, context.DeadlineExceeded) {
-				deferRemaining(index)
-			}
+		if err := deferIfInterrupted(index); err != nil {
 			return result, err
 		}
 		ref.ImportID = strings.TrimSpace(ref.ImportID)
@@ -590,19 +597,10 @@ func (i *Importer) ImportRemote(ctx context.Context, refs []RemoteSessionRef, fe
 		}
 
 		session, err := fetch(ctx, ref)
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			if errors.Is(ctxErr, context.DeadlineExceeded) {
-				deferRemaining(index)
-			}
-			return result, ctxErr
+		if interruptErr := deferIfInterrupted(index); interruptErr != nil {
+			return result, interruptErr
 		}
 		if err != nil {
-			if ctx.Err() != nil {
-				if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-					deferRemaining(index)
-				}
-				return result, ctx.Err()
-			}
 			result.addFailure(ref.ImportID, err)
 			if progress != nil {
 				progress.Skip()
@@ -648,12 +646,6 @@ func (i *Importer) ImportRemote(ctx context.Context, refs []RemoteSessionRef, fe
 				}
 			}
 			progress.Update(session.Summary, firstMsg)
-		}
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			if errors.Is(ctxErr, context.DeadlineExceeded) {
-				deferRemaining(index + 1)
-			}
-			return result, ctxErr
 		}
 	}
 

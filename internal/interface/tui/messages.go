@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -19,7 +20,13 @@ type errMsg struct {
 }
 
 type sessionsLoadedMsg struct {
-	sessions []sessionItem
+	sessions   []sessionItem
+	generation uint64
+}
+
+type sessionsLoadFailedMsg struct {
+	err        error
+	generation uint64
 }
 
 type sessionDetailLoadedMsg struct {
@@ -94,49 +101,48 @@ func performSearch(database *db.DB, query string, seq uint64) tea.Cmd {
 	}
 }
 
-func loadSessions(database *db.DB, filterByProject bool, projectPath string) tea.Cmd {
+func loadSessions(database *db.DB, filterByProject bool, projectPath string, generation uint64) tea.Cmd {
 	return func() tea.Msg {
-		// Use core function to get sessions
-		filterPath := ""
-		if filterByProject {
-			filterPath = projectPath
-		}
-
-		coreSessions, err := database.ListSessions(filterPath)
-		if err != nil {
-			return errMsg{err}
-		}
-
-		// Convert core sessions to TUI session items (interface-specific presentation)
-		var sessions []sessionItem
-		for _, cs := range coreSessions {
-			// Core already handles summary fallback, just format for display
-			summary := cs.Summary
-			if summary != "" {
-				summary = firstLine(summary, 80)
-			}
-
-			s := sessionItem{
-				ID:           cs.SessionID,
-				Summary:      summary,
-				Project:      cs.ProjectPath,
-				LastCwd:      cs.LastCwd,
-				MessageCount: cs.MessageCount,
-				UpdatedAt:    cs.UpdatedAt.Format(time.RFC3339),
-				CreatedAt:    cs.CreatedAt.Format(time.RFC3339),
-				Provider:     cs.Provider,
-			}
-
-			// Check if session's last cwd matches current directory (for highlighting)
-			if projectPath != "" && strings.Contains(s.LastCwd, projectPath) {
-				s.MatchesCurrentDir = true
-			}
-
-			sessions = append(sessions, s)
-		}
-
-		return sessionsLoadedMsg{sessions}
+		return loadSessionsNow(database, filterByProject, projectPath, generation)
 	}
+}
+
+func loadSessionsNow(database *db.DB, filterByProject bool, projectPath string, generation uint64) tea.Msg {
+	filterPath := ""
+	if filterByProject {
+		filterPath = projectPath
+	}
+
+	coreSessions, err := database.ListSessions(filterPath)
+	if err != nil {
+		return sessionsLoadFailedMsg{err: err, generation: generation}
+	}
+
+	var sessions []sessionItem
+	for _, cs := range coreSessions {
+		summary := cs.Summary
+		if summary != "" {
+			summary = firstLine(summary, 80)
+		}
+
+		s := sessionItem{
+			ID:           cs.SessionID,
+			Summary:      summary,
+			Project:      cs.ProjectPath,
+			LastCwd:      cs.LastCwd,
+			MessageCount: cs.MessageCount,
+			UpdatedAt:    cs.UpdatedAt.Format(time.RFC3339),
+			CreatedAt:    cs.CreatedAt.Format(time.RFC3339),
+			Provider:     cs.Provider,
+		}
+
+		if projectPath != "" && strings.Contains(s.LastCwd, projectPath) {
+			s.MatchesCurrentDir = true
+		}
+		sessions = append(sessions, s)
+	}
+
+	return sessionsLoadedMsg{sessions: sessions, generation: generation}
 }
 
 func firstLine(s string, maxLen int) string {
@@ -215,70 +221,115 @@ func loadSessionDetail(database *db.DB, sessionID string) tea.Cmd {
 }
 
 type syncProgressMsg struct {
-	current         int
-	total           int
-	sessionName     string
-	ch              chan syncProgressMsg
-	db              *db.DB
-	filterByProject bool
-	projectPath     string
+	current     int
+	total       int
+	sessionName string
+	ch          chan syncProgressMsg
 }
 
-// StartSyncWithProgress initiates a sync and returns a command that listens for progress
-func startSyncWithProgress(database *db.DB, filterByProject bool, projectPath string) tea.Cmd {
-	return func() tea.Msg {
-		imp := importer.New(database)
-		ctx := context.Background()
+type syncFinishedMsg struct{}
 
-		// Resolve each source (count work + import action) via core. Sources that
-		// fail to prepare (e.g. an unreadable Copilot store) are surfaced as a
-		// warning rather than silently dropped.
-		var prepared []importer.PreparedSource
-		var total int
+const defaultRemoteSyncTimeout = 10 * time.Minute
+
+type syncManager struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+	mu     sync.Mutex
+	wg     sync.WaitGroup
+	active bool
+	closed bool
+}
+
+func newSyncManager(parent context.Context) *syncManager {
+	ctx, cancel := context.WithCancel(parent)
+	return &syncManager{ctx: ctx, cancel: cancel}
+}
+
+func (m *syncManager) start(work func(context.Context), onDone func()) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.active || m.closed {
+		return false
+	}
+	m.active = true
+	m.wg.Add(1)
+	go func() {
+		defer m.wg.Done()
+		work(m.ctx)
+		m.mu.Lock()
+		m.active = false
+		m.mu.Unlock()
+		if onDone != nil {
+			onDone()
+		}
+	}()
+	return true
+}
+
+func (m *syncManager) close() {
+	m.mu.Lock()
+	m.closed = true
+	m.cancel()
+	m.mu.Unlock()
+	m.wg.Wait()
+}
+
+// startSyncWithProgress starts one tracked sync and listens for its progress.
+func startSyncWithProgress(manager *syncManager, database *db.DB) tea.Cmd {
+	progressCh := make(chan syncProgressMsg, 100)
+	if !manager.start(func(parent context.Context) {
+		imp := importer.New(database)
+		progress := &channelProgressReporter{ch: progressCh}
 		cfg, _ := config.Load()
-		for _, src := range importer.DefaultSources(cfg.AmpEnabled) {
-			p, err := imp.PrepareSource(ctx, src)
+		sources := importer.DefaultSources(cfg.AmpEnabled)
+		var remoteSources []importer.Source
+
+		runSource := func(sourceCtx context.Context, src importer.Source) {
+			p, err := imp.PrepareSource(sourceCtx, src)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "WARN: %s sync skipped: %v\n", src.Provider, err)
-				continue
+				return
 			}
 			if p.Warning != nil {
 				fmt.Fprintf(os.Stderr, "WARN: %s sync skipped: %v\n", p.Provider, p.Warning)
+				return
+			}
+			progress.addTotal(p.Total)
+			result, err := p.Run(sourceCtx, progress, false)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "WARN: %s sync failed: %v\n", p.Provider, err)
+			}
+			for _, failure := range result.Failures {
+				fmt.Fprintf(os.Stderr, "WARN: Cannot import %s session %s: %v\n", p.Provider, failure.ID, failure.Err)
+			}
+			if len(result.Deferred) > 0 {
+				fmt.Fprintf(os.Stderr, "WARN: %s sync interrupted; deferred %d changed sessions until the next sync (%s)\n", p.Provider, len(result.Deferred), deferredIDs(result.Deferred, 5))
+			}
+		}
+
+		// Run local providers first without consuming a remote provider's budget.
+		for _, src := range sources {
+			if src.Remote != nil {
+				remoteSources = append(remoteSources, src)
 				continue
 			}
-			prepared = append(prepared, p)
-			total += p.Total
-		}
-
-		progressCh := make(chan syncProgressMsg, 100)
-		progressCh <- syncProgressMsg{
-			current:     0,
-			total:       total,
-			sessionName: "",
-		}
-
-		go func() {
-			progress := &channelProgressReporter{
-				total:   total,
-				current: 0,
-				ch:      progressCh,
+			runSource(parent, src)
+			if parent.Err() != nil {
+				return
 			}
-
-			for _, p := range prepared {
-				result, err := p.Run(ctx, progress, false)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "WARN: %s sync failed: %v\n", p.Provider, err)
-				}
-				for _, failure := range result.Failures {
-					fmt.Fprintf(os.Stderr, "WARN: Cannot import %s session %s: %v\n", p.Provider, failure.ID, failure.Err)
-				}
+		}
+		for _, src := range remoteSources {
+			sourceCtx, cancel := context.WithTimeout(parent, defaultRemoteSyncTimeout)
+			runSource(sourceCtx, src)
+			cancel()
+			if parent.Err() != nil {
+				return
 			}
-
-			close(progressCh)
-		}()
-
-		return syncSubscribe(progressCh, database, filterByProject, projectPath)()
+		}
+	}, func() { close(progressCh) }) {
+		return nil
 	}
+	return syncSubscribe(progressCh)
 }
 
 type channelProgressReporter struct {
@@ -301,6 +352,11 @@ func (r *channelProgressReporter) Skip() {
 	r.send()
 }
 
+func (r *channelProgressReporter) addTotal(count int) {
+	r.total += count
+	r.send()
+}
+
 // send publishes progress without blocking: every message carries the absolute
 // counter, so dropping intermediate updates when the UI is behind costs nothing
 // but keeps the import from stalling on the render loop.
@@ -318,22 +374,27 @@ func (r *channelProgressReporter) send() {
 func (r *channelProgressReporter) Finish() {}
 
 // syncSubscribe listens to the progress channel and returns the next message
-func syncSubscribe(progressCh chan syncProgressMsg, database *db.DB, filterByProject bool, projectPath string) tea.Cmd {
+func syncSubscribe(progressCh chan syncProgressMsg) tea.Cmd {
 	return func() tea.Msg {
 		msg, ok := <-progressCh
 		if !ok {
-			// Channel closed, sync is done
-			return loadSessions(database, filterByProject, projectPath)()
+			return syncFinishedMsg{}
 		}
-		// Add the channel and db info so we can chain the next subscription
 		msg.ch = progressCh
-		msg.db = database
-		msg.filterByProject = filterByProject
-		msg.projectPath = projectPath
 		return msg
 	}
 }
 
-func syncSessions(database *db.DB, filterByProject bool, projectPath string) tea.Cmd {
-	return startSyncWithProgress(database, filterByProject, projectPath)
+func syncSessions(manager *syncManager, database *db.DB) tea.Cmd {
+	return startSyncWithProgress(manager, database)
+}
+
+func deferredIDs(ids []string, limit int) string {
+	shown := ids
+	suffix := ""
+	if len(shown) > limit {
+		shown = shown[:limit]
+		suffix = fmt.Sprintf(", and %d more", len(ids)-limit)
+	}
+	return strings.Join(shown, ", ") + suffix
 }

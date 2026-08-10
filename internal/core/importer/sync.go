@@ -181,11 +181,11 @@ func (i *Importer) PrepareSource(ctx context.Context, src Source) (PreparedSourc
 		// with more sessions than an arbitrary account-wide timeout permits.
 		refs, err := src.Remote.List(ctx)
 		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return PreparedSource{}, ctxErr
+			}
 			if src.Optional && errors.Is(err, context.DeadlineExceeded) {
 				return skippedPreparedSource(src, err), nil
-			}
-			if ctx.Err() != nil {
-				return PreparedSource{}, ctx.Err()
 			}
 			if src.Optional {
 				return skippedPreparedSource(src, err), nil
@@ -297,18 +297,30 @@ func (i *Importer) SyncAll(ctx context.Context, sources []Source, force bool) er
 	for _, src := range sources {
 		prepared, err := i.PrepareSource(ctx, src)
 		if err != nil {
-			return err
+			failures = append(failures, err)
+			return errors.Join(failures...)
 		}
 		if prepared.Warning != nil {
 			continue
 		}
-		result, err := prepared.Run(ctx, nil, force)
-		if err != nil {
-			return err
-		}
+		result, runErr := prepared.Run(ctx, nil, force)
 		for _, failure := range result.Failures {
 			failures = append(failures, fmt.Errorf("%s %s: %w", src.Provider, failure.ID, failure.Err))
 		}
+		if len(result.Deferred) > 0 {
+			failures = append(failures, fmt.Errorf("%s sync incomplete: %d sessions deferred (%s)", src.Provider, len(result.Deferred), summarizeIDs(result.Deferred, 5)))
+		}
+		if runErr != nil {
+			failures = append(failures, runErr)
+			return errors.Join(failures...)
+		}
 	}
 	return errors.Join(failures...)
+}
+
+func summarizeIDs(ids []string, limit int) string {
+	if len(ids) <= limit {
+		return strings.Join(ids, ", ")
+	}
+	return fmt.Sprintf("%s, and %d more", strings.Join(ids[:limit], ", "), len(ids)-limit)
 }

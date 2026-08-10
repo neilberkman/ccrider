@@ -1,9 +1,13 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/neilberkman/ccrider/internal/core/config"
 	"github.com/neilberkman/ccrider/internal/core/db"
@@ -14,8 +18,11 @@ import (
 )
 
 var (
-	syncForce bool
+	syncForce   bool
+	syncTimeout time.Duration
 )
+
+const defaultRemoteSyncTimeout = 10 * time.Minute
 
 var syncCmd = &cobra.Command{
 	Use:   "sync [path]",
@@ -33,10 +40,14 @@ Use --force to re-import all sessions (fixes stale project_path values).`,
 
 func init() {
 	syncCmd.Flags().BoolVarP(&syncForce, "force", "f", false, "Force re-import of all sessions")
+	syncCmd.Flags().DurationVar(&syncTimeout, "sync-timeout", defaultRemoteSyncTimeout, "Maximum time per remote provider sync (0 disables)")
 	rootCmd.AddCommand(syncCmd)
 }
 
 func runSync(cmd *cobra.Command, args []string) error {
+	if syncTimeout < 0 {
+		return errors.New("sync timeout must not be negative")
+	}
 	// Determine source path for explicit Claude JSONL imports.
 	sourcePath := ""
 	if len(args) > 0 {
@@ -104,15 +115,23 @@ func runSync(cmd *cobra.Command, args []string) error {
 	}
 
 	for _, src := range sources {
-		prepared, err := imp.PrepareSource(cmd.Context(), src)
+		sourceCtx := cmd.Context()
+		cancel := func() {}
+		if src.Remote != nil && syncTimeout > 0 {
+			sourceCtx, cancel = context.WithTimeout(sourceCtx, syncTimeout)
+		}
+		prepared, err := imp.PrepareSource(sourceCtx, src)
 		if err != nil {
+			cancel()
 			return fmt.Errorf("failed to prepare %s sessions: %w", src.Provider, err)
 		}
 		if prepared.Warning != nil {
+			cancel()
 			fmt.Fprintf(os.Stderr, "WARN: %s sync skipped: %v\n", prepared.Provider, prepared.Warning)
 			continue
 		}
 		if prepared.Total == 0 {
+			cancel()
 			continue
 		}
 
@@ -120,16 +139,14 @@ func runSync(cmd *cobra.Command, args []string) error {
 		stat, statErr := os.Stderr.Stat()
 		interactive := statErr == nil && stat.Mode()&os.ModeCharDevice != 0
 		progress := importer.NewProgressReporter(os.Stderr, prepared.Total, interactive)
-		result, err := prepared.Run(cmd.Context(), progress, syncForce)
-		if err != nil {
-			return fmt.Errorf("%s import failed: %w", src.Provider, err)
-		}
+		result, runErr := prepared.Run(sourceCtx, progress, syncForce)
+		cancel()
 		progress.Finish()
 		for _, failure := range result.Failures {
 			fmt.Fprintf(os.Stderr, "WARN: Cannot import %s session %s: %v\n", src.Provider, failure.ID, failure.Err)
 		}
-		if result.Deferred > 0 {
-			fmt.Fprintf(os.Stderr, "WARN: %s sync deadline reached; deferred %d sessions until the next sync\n", src.Provider, result.Deferred)
+		if len(result.Deferred) > 0 {
+			fmt.Fprintf(os.Stderr, "WARN: %s sync interrupted; deferred %d changed sessions until the next sync (%s)\n", src.Provider, len(result.Deferred), deferredIDs(result.Deferred, 5))
 		}
 
 		if result.Skipped > 0 && !syncForce {
@@ -140,7 +157,20 @@ func runSync(cmd *cobra.Command, args []string) error {
 			}
 			fmt.Fprintf(os.Stderr, "\nSkipped %d/%d %s %s (%.1f%% unchanged)\n", result.Skipped, prepared.Total, src.Provider, unit, skipRate)
 		}
+		if runErr != nil {
+			return fmt.Errorf("%s import failed: %w", src.Provider, runErr)
+		}
 	}
 
 	return nil
+}
+
+func deferredIDs(ids []string, limit int) string {
+	shown := ids
+	suffix := ""
+	if len(shown) > limit {
+		shown = shown[:limit]
+		suffix = fmt.Sprintf(", and %d more", len(ids)-limit)
+	}
+	return strings.Join(shown, ", ") + suffix
 }

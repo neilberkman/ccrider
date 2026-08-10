@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -25,13 +26,14 @@ const (
 )
 
 type Model struct {
-	db       *db.DB
-	mode     viewMode
-	list     list.Model
-	viewport viewport.Model
-	width    int
-	height   int
-	err      error
+	db          *db.DB
+	syncManager *syncManager
+	mode        viewMode
+	list        list.Model
+	viewport    viewport.Model
+	width       int
+	height      int
+	err         error
 
 	// Current session data
 	sessions       []sessionItem
@@ -85,11 +87,13 @@ type Model struct {
 	initialLoad bool // True until first sessionsLoadedMsg arrives
 
 	// Sync progress state
-	syncing          bool
-	syncCurrentFile  string
-	syncTotal        int
-	syncCurrent      int
-	savedCursorIndex int // Preserve cursor position during sync
+	syncing                bool
+	syncCurrentFile        string
+	syncTotal              int
+	syncCurrent            int
+	savedCursorIndex       int // Preserve cursor position during sync
+	savedSessionID         string
+	sessionsLoadGeneration uint64
 }
 
 type sessionItem struct {
@@ -137,6 +141,14 @@ type matchOccurrenceInfo struct {
 }
 
 func New(database *db.DB) Model {
+	return NewWithContext(context.Background(), database)
+}
+
+// NewWithContext creates a model whose background syncs stop when ctx does.
+func NewWithContext(ctx context.Context, database *db.DB) Model {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	ti := textinput.New()
 	ti.Placeholder = "Search messages..."
 	ti.Focus()
@@ -161,16 +173,35 @@ func New(database *db.DB) Model {
 	currentDir, _ := os.Getwd()
 
 	return Model{
-		db:                   database,
-		mode:                 listView,
-		list:                 emptyList,
-		searchInput:          ti,
-		inSessionSearch:      inSessionTi,
-		exportInput:          exportTi,
-		projectFilterEnabled: false, // Disabled by default
-		currentDirectory:     currentDir,
-		initialLoad:          true, // True until first sessionsLoadedMsg
-		syncing:              true, // Start with syncing=true
+		db:                     database,
+		syncManager:            newSyncManager(ctx),
+		mode:                   listView,
+		list:                   emptyList,
+		searchInput:            ti,
+		inSessionSearch:        inSessionTi,
+		exportInput:            exportTi,
+		projectFilterEnabled:   false, // Disabled by default
+		currentDirectory:       currentDir,
+		initialLoad:            true, // True until first sessionsLoadedMsg
+		syncing:                true, // Start with syncing=true
+		sessionsLoadGeneration: 1,
+	}
+}
+
+func (m *Model) applySessions(sessions []sessionItem, restoreSelection bool) {
+	m.sessions = sessions
+	m.list = createSessionList(sessions, m.width, m.height)
+	if !restoreSelection {
+		return
+	}
+	for index, session := range sessions {
+		if session.ID == m.savedSessionID {
+			m.list.Select(index)
+			return
+		}
+	}
+	if m.savedCursorIndex >= 0 && m.savedCursorIndex < len(sessions) {
+		m.list.Select(m.savedCursorIndex)
 	}
 }
 
@@ -186,9 +217,16 @@ func (m Model) Init() tea.Cmd {
 	}
 
 	return tea.Batch(
-		loadSessions(m.db, m.projectFilterEnabled, m.currentDirectory),
-		syncSessions(m.db, m.projectFilterEnabled, m.currentDirectory),
+		loadSessions(m.db, m.projectFilterEnabled, m.currentDirectory, m.sessionsLoadGeneration),
+		syncSessions(m.syncManager, m.db),
 	)
+}
+
+// Close cancels and joins any active sync before its database is closed.
+func (m Model) Close() {
+	if m.syncManager != nil {
+		m.syncManager.close()
+	}
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -316,22 +354,38 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncTotal = msg.total
 		m.syncCurrentFile = msg.sessionName
 		// Chain another command to keep waiting for progress via channel
-		return m, syncSubscribe(msg.ch, msg.db, msg.filterByProject, msg.projectPath)
+		return m, syncSubscribe(msg.ch)
 
 	case sessionsLoadedMsg:
-		m.initialLoad = false
-		m.sessions = msg.sessions
-		m.list = createSessionList(msg.sessions, m.width, m.height)
-
-		// If we were syncing, restore cursor position and clear sync flag
-		if m.syncing {
-			m.syncing = false
-			// Restore cursor position if valid
-			if m.savedCursorIndex >= 0 && m.savedCursorIndex < len(msg.sessions) {
-				m.list.Select(m.savedCursorIndex)
-			}
+		if msg.generation != m.sessionsLoadGeneration {
+			return m, nil
 		}
+		m.initialLoad = false
+		m.applySessions(msg.sessions, false)
 		return m, nil
+
+	case sessionsLoadFailedMsg:
+		if msg.generation != m.sessionsLoadGeneration {
+			return m, nil
+		}
+		m.err = msg.err
+		return m, nil
+
+	case syncFinishedMsg:
+		m.sessionsLoadGeneration++
+		loaded := loadSessionsNow(m.db, m.projectFilterEnabled, m.currentDirectory, m.sessionsLoadGeneration)
+		m.syncing = false
+		switch loaded := loaded.(type) {
+		case sessionsLoadedMsg:
+			m.initialLoad = false
+			m.applySessions(loaded.sessions, true)
+			return m, nil
+		case sessionsLoadFailedMsg:
+			m.err = loaded.err
+			return m, nil
+		default:
+			return m, nil
+		}
 
 	case sessionDetailLoadedMsg:
 		m.currentSession = &msg.detail

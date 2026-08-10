@@ -34,17 +34,18 @@ func runTUI(cmd *cobra.Command, args []string) error {
 	}
 	defer func() { _ = database.Close() }()
 
-	model := tui.New(database)
+	model := tui.NewWithContext(cmd.Context(), database)
 	p := tea.NewProgram(
 		model,
+		tea.WithContext(cmd.Context()),
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),
 	)
 
 	finalModel, err := p.Run()
+	model.Close()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error running TUI: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("error running TUI: %w", err)
 	}
 
 	// Check if user wants to launch a session
