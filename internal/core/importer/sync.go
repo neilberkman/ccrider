@@ -181,16 +181,18 @@ func (i *Importer) PrepareSource(ctx context.Context, src Source) (PreparedSourc
 		return PreparedSource{}, err
 	}
 	if src.Remote != nil {
-		// Remote clients bound each network command. Keep the overall lifetime
-		// caller-controlled so an interactive initial sync can scale to accounts
-		// with more sessions than an arbitrary account-wide timeout permits.
+		// Remote clients bound each network command. The caller (normally
+		// SyncSources) controls the source-wide lifetime.
 		refs, err := src.Remote.List(ctx)
 		if err != nil {
-			if ctxErr := ctx.Err(); ctxErr != nil {
-				return PreparedSource{}, ctxErr
-			}
+			// A source-wide deadline is an expected degraded outcome for an
+			// optional remote provider. Parent cancellation is still propagated
+			// by SyncSources after the callback returns.
 			if src.Optional && errors.Is(err, context.DeadlineExceeded) {
 				return skippedPreparedSource(src, err), nil
+			}
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return PreparedSource{}, ctxErr
 			}
 			if src.Optional {
 				return skippedPreparedSource(src, err), nil
@@ -293,6 +295,9 @@ func SyncSources(ctx context.Context, sources []Source, remoteTimeout time.Durat
 			err := syncSource(sourceCtx, src)
 			cancel()
 			if err != nil {
+				return err
+			}
+			if err := ctx.Err(); err != nil {
 				return err
 			}
 		}

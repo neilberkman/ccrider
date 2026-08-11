@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -258,6 +259,23 @@ func TestRunAmpUsesOutputAfterCleanExitWaitDelay(t *testing.T) {
 	}
 	if elapsed := time.Since(started); elapsed > 2*time.Second {
 		t.Fatalf("clean process with inherited pipe returned after %s, want bounded wait", elapsed)
+	}
+}
+
+func TestRunAmpRejectsIncompleteOutputAfterCleanExitWaitDelay(t *testing.T) {
+	binDir := t.TempDir()
+	ampPath := filepath.Join(binDir, "amp")
+	if err := os.WriteFile(ampPath, []byte("#!/bin/sh\n(sleep 1; printf ']') &\nprintf '['\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	output, err := runAmpWithWaitDelay(context.Background(), 20*time.Millisecond, "threads", "list")
+	if !errors.Is(err, exec.ErrWaitDelay) || !strings.Contains(err.Error(), "incomplete JSON output") {
+		t.Fatalf("runAmpWithWaitDelay() error = %v, want incomplete WaitDelay output error", err)
+	}
+	if output != nil {
+		t.Fatalf("output = %q, want rejected incomplete output", output)
 	}
 }
 

@@ -140,7 +140,7 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.projectFilterEnabled = !m.projectFilterEnabled
 		// Reload sessions with new filter
 		m.sessionsLoadGeneration++
-		return m, loadSessions(m.db, m.projectFilterEnabled, m.currentDirectory, m.sessionsLoadGeneration)
+		return m, loadSessions(m.db, m.projectFilterEnabled, m.currentDirectory, m.sessionsLoadGeneration, false)
 
 	case "s":
 		if m.syncing {

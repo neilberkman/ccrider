@@ -561,7 +561,9 @@ func (i *Importer) ImportRemote(ctx context.Context, refs []RemoteSessionRef, fe
 			for _, pending := range refs[index:] {
 				id := strings.TrimSpace(pending.ImportID)
 				revision := strings.TrimSpace(pending.Revision)
-				if id != "" && revision != "" && !force && existingHash[id] == revision {
+				if id == "" || revision == "" {
+					result.addFailure(id, errors.New("missing id or revision"))
+				} else if !force && existingHash[id] == revision {
 					result.Skipped++
 				} else {
 					result.Deferred = append(result.Deferred, id)

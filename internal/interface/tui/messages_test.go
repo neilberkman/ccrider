@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -63,8 +64,23 @@ func TestSyncManagerPreventsOverlapAndAllowsRestart(t *testing.T) {
 	}
 }
 
+func TestSyncManagerOnDoneRunsAfterManagerBecomesRestartable(t *testing.T) {
+	manager := newSyncManager(context.Background())
+	defer manager.close()
+
+	restartAccepted := make(chan bool, 1)
+	if !manager.start(func(context.Context) {}, func() {
+		restartAccepted <- manager.start(func(context.Context) {}, nil)
+	}) {
+		t.Fatal("initial start() = false, want true")
+	}
+	if accepted := <-restartAccepted; !accepted {
+		t.Fatal("manager remained active when completion became observable")
+	}
+}
+
 func TestChannelProgressReporterDoesNotBlockWhenFull(t *testing.T) {
-	progressCh := make(chan syncProgressMsg, 1)
+	progressCh := make(chan syncEvent, 2)
 	reporter := &channelProgressReporter{ch: progressCh}
 	reporter.send()
 
@@ -82,7 +98,7 @@ func TestChannelProgressReporterDoesNotBlockWhenFull(t *testing.T) {
 }
 
 func TestChannelProgressReporterScopesEachProvider(t *testing.T) {
-	progressCh := make(chan syncProgressMsg, 5)
+	progressCh := make(chan syncEvent, 6)
 	reporter := &channelProgressReporter{ch: progressCh}
 
 	reporter.beginSource("claude", 2)
@@ -103,10 +119,23 @@ func TestChannelProgressReporterScopesEachProvider(t *testing.T) {
 		{provider: "amp", current: 1, total: 1},
 	}
 	for index, expected := range want {
-		got := <-progressCh
+		got := (<-progressCh).progress
 		if got.provider != expected.provider || got.current != expected.current || got.total != expected.total {
 			t.Fatalf("progress message %d = %+v, want provider %q at %d/%d", index, got, expected.provider, expected.current, expected.total)
 		}
+	}
+}
+
+func TestChannelProgressReporterCompletionCarriesWarningsWhenFull(t *testing.T) {
+	progressCh := make(chan syncEvent, 1)
+	reporter := &channelProgressReporter{ch: progressCh}
+	reporter.send()
+	reporter.complete([]string{"amp sync timed out"})
+
+	msg := syncSubscribe(progressCh)()
+	finished, ok := msg.(syncFinishedMsg)
+	if !ok || !reflect.DeepEqual(finished.warnings, []string{"amp sync timed out"}) {
+		t.Fatalf("completion message = %#v, want visible sync warning", msg)
 	}
 }
 
@@ -170,7 +199,7 @@ func TestApplySessionsRestoresSelectedSessionByID(t *testing.T) {
 	}
 }
 
-func TestSyncFinishedReloadsBeforeReturning(t *testing.T) {
+func TestSyncFinishedReloadsAsynchronouslyAndShowsWarnings(t *testing.T) {
 	database, err := db.New(filepath.Join(t.TempDir(), "sync-finished.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -179,11 +208,19 @@ func TestSyncFinishedReloadsBeforeReturning(t *testing.T) {
 
 	model := NewWithContext(context.Background(), database)
 	defer model.Close()
-	updated, cmd := model.Update(syncFinishedMsg{})
-	if cmd != nil {
-		t.Fatal("syncFinishedMsg returned asynchronous command, want owned synchronous reload")
+	updated, cmd := model.Update(syncFinishedMsg{warnings: []string{"amp sync timed out"}})
+	if cmd == nil {
+		t.Fatal("syncFinishedMsg returned nil command, want asynchronous reload")
 	}
-	if updated.(Model).syncing {
+	got := updated.(Model)
+	if got.syncing {
 		t.Fatal("syncing remains true after synchronous reload")
+	}
+	if !strings.Contains(got.View(), "amp sync timed out") {
+		t.Fatalf("View() = %q, want user-visible sync warning", got.View())
+	}
+	loaded, ok := cmd().(sessionsLoadedMsg)
+	if !ok || !loaded.restoreSelection {
+		t.Fatalf("reload message = %#v, want selection-restoring session load", loaded)
 	}
 }

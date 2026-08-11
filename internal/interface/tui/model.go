@@ -218,7 +218,7 @@ func (m Model) Init() tea.Cmd {
 	}
 
 	return tea.Batch(
-		loadSessions(m.db, m.projectFilterEnabled, m.currentDirectory, m.sessionsLoadGeneration),
+		loadSessions(m.db, m.projectFilterEnabled, m.currentDirectory, m.sessionsLoadGeneration, false),
 		syncSessions(m.syncManager, m.db),
 	)
 }
@@ -363,7 +363,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.initialLoad = false
-		m.applySessions(msg.sessions, false)
+		m.applySessions(msg.sessions, msg.restoreSelection)
 		return m, nil
 
 	case sessionsLoadFailedMsg:
@@ -375,19 +375,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case syncFinishedMsg:
 		m.sessionsLoadGeneration++
-		loaded := loadSessionsNow(m.db, m.projectFilterEnabled, m.currentDirectory, m.sessionsLoadGeneration)
 		m.syncing = false
-		switch loaded := loaded.(type) {
-		case sessionsLoadedMsg:
-			m.initialLoad = false
-			m.applySessions(loaded.sessions, true)
-			return m, nil
-		case sessionsLoadFailedMsg:
-			m.err = loaded.err
-			return m, nil
-		default:
-			return m, nil
+		if len(msg.warnings) > 0 {
+			m.statusMsg = "Sync completed with warnings:\n\n- " + strings.Join(msg.warnings, "\n- ")
 		}
+		return m, loadSessions(m.db, m.projectFilterEnabled, m.currentDirectory, m.sessionsLoadGeneration, true)
 
 	case sessionDetailLoadedMsg:
 		m.currentSession = &msg.detail

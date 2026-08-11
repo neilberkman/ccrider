@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -20,8 +19,9 @@ type errMsg struct {
 }
 
 type sessionsLoadedMsg struct {
-	sessions   []sessionItem
-	generation uint64
+	sessions         []sessionItem
+	generation       uint64
+	restoreSelection bool
 }
 
 type sessionsLoadFailedMsg struct {
@@ -101,13 +101,13 @@ func performSearch(database *db.DB, query string, seq uint64) tea.Cmd {
 	}
 }
 
-func loadSessions(database *db.DB, filterByProject bool, projectPath string, generation uint64) tea.Cmd {
+func loadSessions(database *db.DB, filterByProject bool, projectPath string, generation uint64, restoreSelection bool) tea.Cmd {
 	return func() tea.Msg {
-		return loadSessionsNow(database, filterByProject, projectPath, generation)
+		return loadSessionsNow(database, filterByProject, projectPath, generation, restoreSelection)
 	}
 }
 
-func loadSessionsNow(database *db.DB, filterByProject bool, projectPath string, generation uint64) tea.Msg {
+func loadSessionsNow(database *db.DB, filterByProject bool, projectPath string, generation uint64, restoreSelection bool) tea.Msg {
 	filterPath := ""
 	if filterByProject {
 		filterPath = projectPath
@@ -142,7 +142,7 @@ func loadSessionsNow(database *db.DB, filterByProject bool, projectPath string, 
 		sessions = append(sessions, s)
 	}
 
-	return sessionsLoadedMsg{sessions: sessions, generation: generation}
+	return sessionsLoadedMsg{sessions: sessions, generation: generation, restoreSelection: restoreSelection}
 }
 
 func firstLine(s string, maxLen int) string {
@@ -225,10 +225,17 @@ type syncProgressMsg struct {
 	total       int
 	provider    string
 	sessionName string
-	ch          chan syncProgressMsg
+	ch          chan syncEvent
 }
 
-type syncFinishedMsg struct{}
+type syncFinishedMsg struct {
+	warnings []string
+}
+
+type syncEvent struct {
+	progress *syncProgressMsg
+	finished *syncFinishedMsg
+}
 
 type syncManager struct {
 	ctx    context.Context
@@ -275,37 +282,50 @@ func (m *syncManager) close() {
 
 // startSyncWithProgress starts one tracked sync and listens for its progress.
 func startSyncWithProgress(manager *syncManager, database *db.DB) tea.Cmd {
-	progressCh := make(chan syncProgressMsg, 100)
+	progressCh := make(chan syncEvent, 100)
+	progress := &channelProgressReporter{ch: progressCh}
+	var warnings []string
 	if !manager.start(func(parent context.Context) {
 		imp := importer.New(database)
-		progress := &channelProgressReporter{ch: progressCh}
 		cfg, _ := config.Load()
 		sources := importer.DefaultSources(cfg.AmpEnabled)
 
-		_ = importer.SyncSources(parent, sources, importer.DefaultRemoteSyncTimeout, func(sourceCtx context.Context, src importer.Source) error {
+		err := importer.SyncSources(parent, sources, importer.DefaultRemoteSyncTimeout, func(sourceCtx context.Context, src importer.Source) error {
 			p, err := imp.PrepareSource(sourceCtx, src)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "WARN: %s sync skipped: %v\n", src.Provider, err)
+				warnings = append(warnings, fmt.Sprintf("%s sync skipped: %v", src.Provider, err))
 				return nil
 			}
 			if p.Warning != nil {
-				fmt.Fprintf(os.Stderr, "WARN: %s sync skipped: %v\n", p.Provider, p.Warning)
+				warnings = append(warnings, fmt.Sprintf("%s sync skipped: %v", p.Provider, p.Warning))
 				return nil
 			}
 			progress.beginSource(p.Provider, p.Total)
 			result, err := p.Run(sourceCtx, progress, false)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "WARN: %s sync failed: %v\n", p.Provider, err)
+				warnings = append(warnings, fmt.Sprintf("%s sync failed: %v", p.Provider, err))
 			}
-			for _, failure := range result.Failures {
-				fmt.Fprintf(os.Stderr, "WARN: Cannot import %s session %s: %v\n", p.Provider, failure.ID, failure.Err)
+			for index, failure := range result.Failures {
+				if index == 5 {
+					warnings = append(warnings, fmt.Sprintf("%s: %d additional sessions failed", p.Provider, len(result.Failures)-index))
+					break
+				}
+				warnings = append(warnings, fmt.Sprintf("Cannot import %s session %s: %v", p.Provider, failure.ID, failure.Err))
 			}
 			if len(result.Deferred) > 0 {
-				fmt.Fprintf(os.Stderr, "WARN: %s sync interrupted; deferred %d changed sessions until the next sync (%s)\n", p.Provider, len(result.Deferred), deferredIDs(result.Deferred, 5))
+				warnings = append(warnings, fmt.Sprintf("%s sync interrupted; deferred %d changed sessions until the next sync (%s)", p.Provider, len(result.Deferred), deferredIDs(result.Deferred, 5)))
 			}
 			return nil
 		})
-	}, func() { close(progressCh) }) {
+		if err != nil && parent.Err() == nil {
+			warnings = append(warnings, fmt.Sprintf("sync stopped: %v", err))
+		}
+	}, func() {
+		// The manager is inactive before completion becomes observable, so an
+		// immediate follow-up sync cannot be rejected and leave the UI stuck.
+		progress.complete(warnings)
+		close(progressCh)
+	}) {
 		return nil
 	}
 	return syncSubscribe(progressCh)
@@ -316,7 +336,7 @@ type channelProgressReporter struct {
 	current  int
 	provider string
 	lastName string
-	ch       chan syncProgressMsg
+	ch       chan syncEvent
 }
 
 func (r *channelProgressReporter) Update(sessionSummary string, firstMsg string) {
@@ -342,28 +362,44 @@ func (r *channelProgressReporter) beginSource(provider string, total int) {
 
 // send publishes progress without blocking: every message carries the absolute
 // counter, so dropping intermediate updates when the UI is behind costs nothing
-// but keeps the import from stalling on the render loop.
+// but keeps the import from stalling on the render loop. One buffer slot stays
+// reserved for the completion event so warnings cannot be lost.
 func (r *channelProgressReporter) send() {
-	select {
-	case r.ch <- syncProgressMsg{
+	msg := syncProgressMsg{
 		current:     r.current,
 		total:       r.total,
 		provider:    r.provider,
 		sessionName: r.lastName,
-	}:
+	}
+	if len(r.ch) >= cap(r.ch)-1 {
+		return
+	}
+	select {
+	case r.ch <- syncEvent{progress: &msg}:
 	default:
 	}
+}
+
+// complete uses the slot reserved by send so the terminal event is guaranteed
+// to reach the UI even when it fell behind on progress updates.
+func (r *channelProgressReporter) complete(warnings []string) {
+	finished := syncFinishedMsg{warnings: warnings}
+	r.ch <- syncEvent{finished: &finished}
 }
 
 func (r *channelProgressReporter) Finish() {}
 
 // syncSubscribe listens to the progress channel and returns the next message
-func syncSubscribe(progressCh chan syncProgressMsg) tea.Cmd {
+func syncSubscribe(progressCh chan syncEvent) tea.Cmd {
 	return func() tea.Msg {
-		msg, ok := <-progressCh
+		event, ok := <-progressCh
 		if !ok {
 			return syncFinishedMsg{}
 		}
+		if event.finished != nil {
+			return *event.finished
+		}
+		msg := *event.progress
 		msg.ch = progressCh
 		return msg
 	}
