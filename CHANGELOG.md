@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-08-11
+
+### Added
+
+- **`--sync-timeout` flag** — `ccrider sync` bounds each remote provider's sync at 10 minutes by default (`0` disables); the TUI applies the same core default. The lifetime policy and local-providers-first ordering live in core (`SyncSources`), so every interface behaves identically
+- **Deferred session reporting** — when a sync is interrupted (timeout or Ctrl-C), sessions that were not reached are reported as deferred work with a bounded ID sample rather than as per-session failures, in the CLI, the TUI (in-app status view), and `SyncAll` consumers. Unchanged sessions count as skipped, not deferred, so the numbers reflect real pending work
+
+### Fixed
+
+- **Amp sync scales to large accounts** — thread listing and per-thread exports no longer share a fixed two-minute budget that stopped healthy initial syncs partway and reported every untouched thread as a failure. Each amp command keeps its 30-second deadline; a per-source timeout expiring during thread listing degrades to a skip-with-warning instead of failing the whole sync
+- **Interrupted syncs report accurately** — a fully completed import is no longer reported as a failure when cancellation lands just after the last session commits, and malformed refs (missing id/revision) are reported as permanent failures rather than retryable deferred work
+- **Amp subprocess cleanup is bounded** — a finite wait delay with a JSON-completeness guard, so a forked child holding the output pipe can neither hang the sync nor smuggle truncated output through as success
+- **TUI sync feedback** — warnings and deferral notices render in the TUI itself instead of vanishing under the alternate screen, progress is provider-scoped (no more backwards-jumping totals), and the post-sync session reload is asynchronous so the UI no longer freezes on large databases
+
+Thanks to @oliver-kriska for the entire release ([#24](https://github.com/neilberkman/ccrider/pull/24))
+
 ## [1.9.0] - 2026-08-05
 
 ### Added
