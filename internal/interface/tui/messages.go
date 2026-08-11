@@ -223,13 +223,12 @@ func loadSessionDetail(database *db.DB, sessionID string) tea.Cmd {
 type syncProgressMsg struct {
 	current     int
 	total       int
+	provider    string
 	sessionName string
 	ch          chan syncProgressMsg
 }
 
 type syncFinishedMsg struct{}
-
-const defaultRemoteSyncTimeout = 10 * time.Minute
 
 type syncManager struct {
 	ctx    context.Context
@@ -282,19 +281,18 @@ func startSyncWithProgress(manager *syncManager, database *db.DB) tea.Cmd {
 		progress := &channelProgressReporter{ch: progressCh}
 		cfg, _ := config.Load()
 		sources := importer.DefaultSources(cfg.AmpEnabled)
-		var remoteSources []importer.Source
 
-		runSource := func(sourceCtx context.Context, src importer.Source) {
+		_ = importer.SyncSources(parent, sources, importer.DefaultRemoteSyncTimeout, func(sourceCtx context.Context, src importer.Source) error {
 			p, err := imp.PrepareSource(sourceCtx, src)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "WARN: %s sync skipped: %v\n", src.Provider, err)
-				return
+				return nil
 			}
 			if p.Warning != nil {
 				fmt.Fprintf(os.Stderr, "WARN: %s sync skipped: %v\n", p.Provider, p.Warning)
-				return
+				return nil
 			}
-			progress.addTotal(p.Total)
+			progress.beginSource(p.Provider, p.Total)
 			result, err := p.Run(sourceCtx, progress, false)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "WARN: %s sync failed: %v\n", p.Provider, err)
@@ -305,27 +303,8 @@ func startSyncWithProgress(manager *syncManager, database *db.DB) tea.Cmd {
 			if len(result.Deferred) > 0 {
 				fmt.Fprintf(os.Stderr, "WARN: %s sync interrupted; deferred %d changed sessions until the next sync (%s)\n", p.Provider, len(result.Deferred), deferredIDs(result.Deferred, 5))
 			}
-		}
-
-		// Run local providers first without consuming a remote provider's budget.
-		for _, src := range sources {
-			if src.Remote != nil {
-				remoteSources = append(remoteSources, src)
-				continue
-			}
-			runSource(parent, src)
-			if parent.Err() != nil {
-				return
-			}
-		}
-		for _, src := range remoteSources {
-			sourceCtx, cancel := context.WithTimeout(parent, defaultRemoteSyncTimeout)
-			runSource(sourceCtx, src)
-			cancel()
-			if parent.Err() != nil {
-				return
-			}
-		}
+			return nil
+		})
 	}, func() { close(progressCh) }) {
 		return nil
 	}
@@ -335,6 +314,7 @@ func startSyncWithProgress(manager *syncManager, database *db.DB) tea.Cmd {
 type channelProgressReporter struct {
 	total    int
 	current  int
+	provider string
 	lastName string
 	ch       chan syncProgressMsg
 }
@@ -352,8 +332,11 @@ func (r *channelProgressReporter) Skip() {
 	r.send()
 }
 
-func (r *channelProgressReporter) addTotal(count int) {
-	r.total += count
+func (r *channelProgressReporter) beginSource(provider string, total int) {
+	r.provider = provider
+	r.total = total
+	r.current = 0
+	r.lastName = ""
 	r.send()
 }
 
@@ -365,6 +348,7 @@ func (r *channelProgressReporter) send() {
 	case r.ch <- syncProgressMsg{
 		current:     r.current,
 		total:       r.total,
+		provider:    r.provider,
 		sessionName: r.lastName,
 	}:
 	default:

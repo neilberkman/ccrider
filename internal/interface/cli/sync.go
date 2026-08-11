@@ -22,8 +22,6 @@ var (
 	syncTimeout time.Duration
 )
 
-const defaultRemoteSyncTimeout = 10 * time.Minute
-
 var syncCmd = &cobra.Command{
 	Use:   "sync [path]",
 	Short: "Import/sync coding agent sessions",
@@ -40,7 +38,7 @@ Use --force to re-import all sessions (fixes stale project_path values).`,
 
 func init() {
 	syncCmd.Flags().BoolVarP(&syncForce, "force", "f", false, "Force re-import of all sessions")
-	syncCmd.Flags().DurationVar(&syncTimeout, "sync-timeout", defaultRemoteSyncTimeout, "Maximum time per remote provider sync (0 disables)")
+	syncCmd.Flags().DurationVar(&syncTimeout, "sync-timeout", importer.DefaultRemoteSyncTimeout, "Maximum time per remote provider sync (0 disables)")
 	rootCmd.AddCommand(syncCmd)
 }
 
@@ -114,25 +112,17 @@ func runSync(cmd *cobra.Command, args []string) error {
 		sources = importer.DefaultSources(cfg.AmpEnabled)
 	}
 
-	for _, src := range sources {
-		sourceCtx := cmd.Context()
-		cancel := func() {}
-		if src.Remote != nil && syncTimeout > 0 {
-			sourceCtx, cancel = context.WithTimeout(sourceCtx, syncTimeout)
-		}
+	return importer.SyncSources(cmd.Context(), sources, syncTimeout, func(sourceCtx context.Context, src importer.Source) error {
 		prepared, err := imp.PrepareSource(sourceCtx, src)
 		if err != nil {
-			cancel()
 			return fmt.Errorf("failed to prepare %s sessions: %w", src.Provider, err)
 		}
 		if prepared.Warning != nil {
-			cancel()
 			fmt.Fprintf(os.Stderr, "WARN: %s sync skipped: %v\n", prepared.Provider, prepared.Warning)
-			continue
+			return nil
 		}
 		if prepared.Total == 0 {
-			cancel()
-			continue
+			return nil
 		}
 
 		fmt.Fprintf(os.Stderr, "Syncing %s sessions from: %s\n", prepared.Provider, prepared.Path)
@@ -140,7 +130,6 @@ func runSync(cmd *cobra.Command, args []string) error {
 		interactive := statErr == nil && stat.Mode()&os.ModeCharDevice != 0
 		progress := importer.NewProgressReporter(os.Stderr, prepared.Total, interactive)
 		result, runErr := prepared.Run(sourceCtx, progress, syncForce)
-		cancel()
 		progress.Finish()
 		for _, failure := range result.Failures {
 			fmt.Fprintf(os.Stderr, "WARN: Cannot import %s session %s: %v\n", src.Provider, failure.ID, failure.Err)
@@ -160,9 +149,8 @@ func runSync(cmd *cobra.Command, args []string) error {
 		if runErr != nil {
 			return fmt.Errorf("%s import failed: %w", src.Provider, runErr)
 		}
-	}
-
-	return nil
+		return nil
+	})
 }
 
 func deferredIDs(ids []string, limit int) string {

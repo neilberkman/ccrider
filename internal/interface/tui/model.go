@@ -89,6 +89,7 @@ type Model struct {
 	// Sync progress state
 	syncing                bool
 	syncCurrentFile        string
+	syncProvider           string
 	syncTotal              int
 	syncCurrent            int
 	savedCursorIndex       int // Preserve cursor position during sync
@@ -352,6 +353,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncing = true // Set syncing flag so progress bar shows
 		m.syncCurrent = msg.current
 		m.syncTotal = msg.total
+		m.syncProvider = msg.provider
 		m.syncCurrentFile = msg.sessionName
 		// Chain another command to keep waiting for progress via channel
 		return m, syncSubscribe(msg.ch)

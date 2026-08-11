@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/neilberkman/ccrider/pkg/antigravitysessions"
 	"github.com/neilberkman/ccrider/pkg/ccsessions"
@@ -16,6 +17,10 @@ import (
 	"github.com/neilberkman/ccrider/pkg/opencodesessions"
 	"github.com/neilberkman/ccrider/pkg/pisessions"
 )
+
+// DefaultRemoteSyncTimeout is the standard total budget for one remote source.
+// Interfaces may override it when their protocol has a different lifetime.
+const DefaultRemoteSyncTimeout = 10 * time.Minute
 
 // EnumerateFunc returns all parsed sessions for a database/event-log-backed
 // provider (e.g. Copilot, OpenCode) that does not store one JSONL file per
@@ -264,6 +269,37 @@ func skippedPreparedSource(src Source, warning error) PreparedSource {
 	}
 }
 
+// SyncSources runs local sources first, then gives each remote source its own
+// total budget. A zero timeout disables the remote budget. The callback owns
+// source preparation, import, and interface-specific reporting.
+func SyncSources(ctx context.Context, sources []Source, remoteTimeout time.Duration, syncSource func(context.Context, Source) error) error {
+	if remoteTimeout < 0 {
+		return errors.New("remote sync timeout must not be negative")
+	}
+	for _, remote := range []bool{false, true} {
+		for _, src := range sources {
+			if (src.Remote != nil) != remote {
+				continue
+			}
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+
+			sourceCtx := ctx
+			cancel := func() {}
+			if remote && remoteTimeout > 0 {
+				sourceCtx, cancel = context.WithTimeout(ctx, remoteTimeout)
+			}
+			err := syncSource(sourceCtx, src)
+			cancel()
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // CountJSONLFiles counts importable .jsonl files under dirPath, applying the
 // same subagent/edit-conflict exclusions ImportDirectory uses.
 func CountJSONLFiles(dirPath string, skipSubagents bool) (int, error) {
@@ -301,6 +337,7 @@ func (i *Importer) SyncAll(ctx context.Context, sources []Source, force bool) er
 			return errors.Join(failures...)
 		}
 		if prepared.Warning != nil {
+			failures = append(failures, fmt.Errorf("%s sync skipped: %w", prepared.Provider, prepared.Warning))
 			continue
 		}
 		result, runErr := prepared.Run(ctx, nil, force)

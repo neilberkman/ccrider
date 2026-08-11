@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -77,6 +78,50 @@ func TestChannelProgressReporterDoesNotBlockWhenFull(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("send() blocked on a full progress channel")
+	}
+}
+
+func TestChannelProgressReporterScopesEachProvider(t *testing.T) {
+	progressCh := make(chan syncProgressMsg, 5)
+	reporter := &channelProgressReporter{ch: progressCh}
+
+	reporter.beginSource("claude", 2)
+	reporter.Update("first", "")
+	reporter.Update("second", "")
+	reporter.beginSource("amp", 1)
+	reporter.Skip()
+
+	want := []struct {
+		provider string
+		current  int
+		total    int
+	}{
+		{provider: "claude", current: 0, total: 2},
+		{provider: "claude", current: 1, total: 2},
+		{provider: "claude", current: 2, total: 2},
+		{provider: "amp", current: 0, total: 1},
+		{provider: "amp", current: 1, total: 1},
+	}
+	for index, expected := range want {
+		got := <-progressCh
+		if got.provider != expected.provider || got.current != expected.current || got.total != expected.total {
+			t.Fatalf("progress message %d = %+v, want provider %q at %d/%d", index, got, expected.provider, expected.current, expected.total)
+		}
+	}
+}
+
+func TestViewListNamesSyncProvider(t *testing.T) {
+	model := Model{
+		initialLoad:  false,
+		syncing:      true,
+		syncProvider: "amp",
+		syncCurrent:  1,
+		syncTotal:    2,
+		width:        80,
+	}
+
+	if got := model.viewList(); !strings.Contains(got, "Syncing amp") {
+		t.Fatalf("viewList() = %q, want provider-scoped sync status", got)
 	}
 }
 

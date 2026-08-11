@@ -154,6 +154,76 @@ func TestDefaultSourcesOmitsAmpUntilEnabled(t *testing.T) {
 	}
 }
 
+func TestSyncSourcesRunsLocalsFirstAndBudgetsEachRemote(t *testing.T) {
+	remoteTimeout := time.Second
+	sources := []Source{
+		{Provider: "remote-one", Remote: &RemoteSource{}},
+		{Provider: "local"},
+		{Provider: "remote-two", Remote: &RemoteSource{}},
+	}
+	var order []string
+	var remoteDeadlines []time.Time
+
+	err := SyncSources(context.Background(), sources, remoteTimeout, func(ctx context.Context, src Source) error {
+		order = append(order, src.Provider)
+		deadline, hasDeadline := ctx.Deadline()
+		if src.Remote == nil {
+			if hasDeadline {
+				t.Fatalf("local source received remote deadline %v", deadline)
+			}
+			return nil
+		}
+		if !hasDeadline {
+			t.Fatalf("remote source %s has no deadline", src.Provider)
+		}
+		if remaining := time.Until(deadline); remaining <= 0 || remaining > remoteTimeout {
+			t.Fatalf("remote source %s deadline has remaining budget %v, want (0, %v]", src.Provider, remaining, remoteTimeout)
+		}
+		remoteDeadlines = append(remoteDeadlines, deadline)
+		if src.Provider == "remote-one" {
+			time.Sleep(10 * time.Millisecond)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"local", "remote-one", "remote-two"}; !reflect.DeepEqual(order, want) {
+		t.Fatalf("source order = %v, want %v", order, want)
+	}
+	if len(remoteDeadlines) != 2 || !remoteDeadlines[1].After(remoteDeadlines[0]) {
+		t.Fatalf("remote deadlines = %v, want a fresh budget for each remote source", remoteDeadlines)
+	}
+}
+
+func TestSyncSourcesZeroDisablesRemoteTimeout(t *testing.T) {
+	err := SyncSources(context.Background(), []Source{{Provider: "remote", Remote: &RemoteSource{}}}, 0, func(ctx context.Context, _ Source) error {
+		if deadline, ok := ctx.Deadline(); ok {
+			t.Fatalf("zero timeout added remote deadline %v", deadline)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSyncSourcesChecksCancellationBeforeStartingNextSource(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	var visited []string
+	err := SyncSources(ctx, []Source{{Provider: "first"}, {Provider: "second"}}, DefaultRemoteSyncTimeout, func(_ context.Context, src Source) error {
+		visited = append(visited, src.Provider)
+		cancel()
+		return nil
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("SyncSources() error = %v, want context cancellation", err)
+	}
+	if want := []string{"first"}; !reflect.DeepEqual(visited, want) {
+		t.Fatalf("visited sources = %v, want %v", visited, want)
+	}
+}
+
 type unitProgress struct{ current int }
 
 func (p *unitProgress) Update(string, string) { p.current++ }
@@ -459,6 +529,43 @@ func TestSyncAllReportsPerSessionFailures(t *testing.T) {
 	err = New(database).SyncAll(context.Background(), []Source{source}, false)
 	if err == nil || !strings.Contains(err.Error(), "unsupported schema version") {
 		t.Fatalf("SyncAll() error = %v, want structured session failure", err)
+	}
+}
+
+func TestSyncAllReportsOptionalPreparationWarningsAndContinues(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "optional-warning.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+
+	listErr := errors.New("Amp authentication failed")
+	continued := false
+	sources := []Source{
+		{
+			Provider: ampProvider,
+			Optional: true,
+			Remote: &RemoteSource{
+				List: func(context.Context) ([]RemoteSessionRef, error) { return nil, listErr },
+			},
+		},
+		{
+			Provider: "later",
+			Remote: &RemoteSource{
+				List: func(context.Context) ([]RemoteSessionRef, error) {
+					continued = true
+					return nil, nil
+				},
+			},
+		},
+	}
+
+	err = New(database).SyncAll(context.Background(), sources, false)
+	if !continued {
+		t.Fatal("SyncAll() stopped after optional preparation warning")
+	}
+	if !errors.Is(err, listErr) || !strings.Contains(err.Error(), "amp sync skipped") {
+		t.Fatalf("SyncAll() error = %v, want provider-qualified optional warning", err)
 	}
 }
 
