@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -191,15 +192,21 @@ func TestAmpClientAddsPerCommandDeadline(t *testing.T) {
 	client := &ampClient{
 		pageSize: 100,
 		timeout:  time.Second,
-		run: func(ctx context.Context, _ ...string) ([]byte, error) {
+		run: func(ctx context.Context, args ...string) ([]byte, error) {
 			deadline, ok := ctx.Deadline()
 			if !ok || time.Until(deadline) > time.Second {
 				t.Fatalf("command deadline = %v, ok = %v", deadline, ok)
+			}
+			if len(args) >= 2 && args[1] == "export" {
+				return []byte(`{"id":"T-one","messages":[]}`), nil
 			}
 			return []byte("[]"), nil
 		},
 	}
 	if _, err := client.listThreads(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.exportThread(context.Background(), "T-one"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -231,5 +238,59 @@ func TestRunAmpPreservesDeadline(t *testing.T) {
 	_, err := runAmp(ctx, "threads", "export", "T-one")
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("runAmp() error = %v, want deadline", err)
+	}
+}
+
+func TestRunAmpUsesOutputAfterCleanExitWaitDelay(t *testing.T) {
+	binDir := t.TempDir()
+	ampPath := filepath.Join(binDir, "amp")
+	if err := os.WriteFile(ampPath, []byte("#!/bin/sh\n(sleep 5) &\nprintf '[]'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	started := time.Now()
+	output, err := runAmpWithWaitDelay(context.Background(), 20*time.Millisecond, "threads", "list")
+	if err != nil {
+		t.Fatalf("runAmpWithWaitDelay() error = %v, want clean output", err)
+	}
+	if string(output) != "[]" {
+		t.Fatalf("output = %q, want []", output)
+	}
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("clean process with inherited pipe returned after %s, want bounded wait", elapsed)
+	}
+}
+
+func TestRunAmpRejectsIncompleteOutputAfterCleanExitWaitDelay(t *testing.T) {
+	binDir := t.TempDir()
+	ampPath := filepath.Join(binDir, "amp")
+	if err := os.WriteFile(ampPath, []byte("#!/bin/sh\n(sleep 1; printf ']') &\nprintf '['\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	output, err := runAmpWithWaitDelay(context.Background(), 20*time.Millisecond, "threads", "list")
+	if !errors.Is(err, exec.ErrWaitDelay) || !strings.Contains(err.Error(), "incomplete JSON output") {
+		t.Fatalf("runAmpWithWaitDelay() error = %v, want incomplete WaitDelay output error", err)
+	}
+	if output != nil {
+		t.Fatalf("output = %q, want rejected incomplete output", output)
+	}
+}
+
+func TestRunAmpCallerDeadlineTakesPrecedenceOverCleanExitWaitDelay(t *testing.T) {
+	binDir := t.TempDir()
+	ampPath := filepath.Join(binDir, "amp")
+	if err := os.WriteFile(ampPath, []byte("#!/bin/sh\n(sleep 5) &\nprintf '[]'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	_, err := runAmpWithWaitDelay(ctx, time.Second, "threads", "list")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("runAmpWithWaitDelay() error = %v, want caller deadline", err)
 	}
 }

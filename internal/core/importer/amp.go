@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strconv"
@@ -17,9 +18,10 @@ import (
 )
 
 const (
-	ampProvider        = "amp"
-	ampDefaultPageSize = 100
-	ampCommandTimeout  = 30 * time.Second
+	ampProvider         = "amp"
+	ampDefaultPageSize  = 100
+	ampCommandTimeout   = 30 * time.Second
+	ampProcessWaitDelay = 2 * time.Second
 )
 
 type ampRunFunc func(context.Context, ...string) ([]byte, error)
@@ -35,12 +37,26 @@ func newAmpClient() *ampClient {
 }
 
 func runAmp(ctx context.Context, args ...string) ([]byte, error) {
+	return runAmpWithWaitDelay(ctx, ampProcessWaitDelay, args...)
+}
+
+func runAmpWithWaitDelay(ctx context.Context, waitDelay time.Duration, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "amp", args...)
+	cmd.WaitDelay = waitDelay
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	output, runErr := cmd.Output()
 	if runErr == nil {
 		return output, nil
+	}
+	if ctx.Err() == nil && errors.Is(runErr, exec.ErrWaitDelay) && cmd.ProcessState != nil && cmd.ProcessState.Success() {
+		// WaitDelay can close stdout while a forked child is still writing.
+		// Every Amp command consumed here returns one JSON value, so only accept
+		// output that was complete before the pipe was closed.
+		if json.Valid(output) {
+			return output, nil
+		}
+		return nil, fmt.Errorf("run amp command: %w: incomplete JSON output", runErr)
 	}
 	message := strings.TrimSpace(stderr.String())
 	if ctxErr := ctx.Err(); ctxErr != nil {

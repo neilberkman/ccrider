@@ -139,13 +139,26 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Toggle project filter
 		m.projectFilterEnabled = !m.projectFilterEnabled
 		// Reload sessions with new filter
-		return m, loadSessions(m.db, m.projectFilterEnabled, m.currentDirectory)
+		m.sessionsLoadGeneration++
+		return m, loadSessions(m.db, m.projectFilterEnabled, m.currentDirectory, m.sessionsLoadGeneration, false)
 
 	case "s":
+		if m.syncing {
+			return m, nil
+		}
 		// Trigger sync - save cursor position first
 		m.syncing = true
+		m.syncCurrent = 0
+		m.syncTotal = 0
+		m.syncProvider = ""
+		m.syncCurrentFile = ""
 		m.savedCursorIndex = m.list.Index()
-		return m, syncSessions(m.db, m.projectFilterEnabled, m.currentDirectory)
+		if selected, ok := m.list.SelectedItem().(sessionListItem); ok {
+			m.savedSessionID = selected.session.ID
+		} else {
+			m.savedSessionID = ""
+		}
+		return m, syncSessions(m.syncManager, m.db)
 
 	case "e":
 		// Open export dialog with repo-aware default path
@@ -181,8 +194,16 @@ func (m Model) viewList() string {
 	// Build help text / sync status
 	var helpText string
 	if m.syncing && m.syncTotal > 0 {
-		// Show full progress bar like CLI
-		progressBar := renderProgressBar(m.syncCurrent, m.syncTotal, m.width)
+		// Account for the provider label when sizing the progress bar.
+		progressWidth := m.width
+		if m.syncProvider != "" {
+			progressWidth -= len("Syncing " + m.syncProvider + " ")
+		}
+		progressBar := renderProgressBar(m.syncCurrent, m.syncTotal, progressWidth)
+		progressStatus := progressBar
+		if m.syncProvider != "" {
+			progressStatus = fmt.Sprintf("Syncing %s %s", m.syncProvider, progressBar)
+		}
 		sessionInfo := ""
 		if m.syncCurrentFile != "" {
 			sessionInfo = " | " + m.syncCurrentFile
@@ -191,7 +212,7 @@ func (m Model) viewList() string {
 			// Account for progress bar length (already uses most of m.width)
 			// Progress bar format: "[====>    ] 5/10" is roughly 20 chars + bar width
 			// Leave room for the separator and ensure no overflow
-			maxSessionLen := m.width - len(progressBar) - 3 // -3 for safety margin
+			maxSessionLen := m.width - len(progressStatus) - 3 // -3 for safety margin
 			if maxSessionLen < 10 {
 				maxSessionLen = 10 // Minimum useful length
 			}
@@ -199,7 +220,7 @@ func (m Model) viewList() string {
 				sessionInfo = sessionInfo[:maxSessionLen-3] + "..."
 			}
 		}
-		helpText = progressBar + sessionInfo
+		helpText = progressStatus + sessionInfo
 	} else if m.syncing {
 		helpText = "⏳ Syncing..."
 	} else {

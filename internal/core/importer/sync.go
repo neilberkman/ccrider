@@ -18,7 +18,9 @@ import (
 	"github.com/neilberkman/ccrider/pkg/pisessions"
 )
 
-const remoteSyncTimeout = 2 * time.Minute
+// DefaultRemoteSyncTimeout is the standard total budget for one remote source.
+// Interfaces may override it when their protocol has a different lifetime.
+const DefaultRemoteSyncTimeout = 10 * time.Minute
 
 // EnumerateFunc returns all parsed sessions for a database/event-log-backed
 // provider (e.g. Copilot, OpenCode) that does not store one JSONL file per
@@ -34,7 +36,9 @@ type RemoteSessionRef struct {
 
 // RemoteSource lists lightweight remote references and fetches one full
 // session on demand. This avoids downloading every remote transcript before
-// the importer can determine which ones are unchanged.
+// the importer can determine which ones are unchanged. Implementations must
+// honor caller cancellation and independently bound each blocking external
+// operation; the importer does not impose an account-wide timeout.
 type RemoteSource struct {
 	List  func(context.Context) ([]RemoteSessionRef, error)
 	Fetch func(context.Context, RemoteSessionRef) (*ccsessions.ParsedSession, error)
@@ -177,39 +181,30 @@ func (i *Importer) PrepareSource(ctx context.Context, src Source) (PreparedSourc
 		return PreparedSource{}, err
 	}
 	if src.Remote != nil {
-		deadline := time.Now().Add(remoteSyncTimeout)
-		listCtx, cancel := context.WithDeadline(ctx, deadline)
-		refs, err := src.Remote.List(listCtx)
-		cancel()
+		// Remote clients bound each network command. The caller (normally
+		// SyncSources) controls the source-wide lifetime.
+		refs, err := src.Remote.List(ctx)
 		if err != nil {
+			// A source-wide deadline is an expected degraded outcome for an
+			// optional remote provider. Parent cancellation is still propagated
+			// by SyncSources after the callback returns.
 			if src.Optional && errors.Is(err, context.DeadlineExceeded) {
 				return skippedPreparedSource(src, err), nil
 			}
-			if ctx.Err() != nil {
-				return PreparedSource{}, ctx.Err()
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return PreparedSource{}, ctxErr
 			}
 			if src.Optional {
 				return skippedPreparedSource(src, err), nil
 			}
 			return PreparedSource{}, err
 		}
-		remaining := time.Until(deadline)
-		if remaining <= 0 {
-			if src.Optional {
-				return skippedPreparedSource(src, context.DeadlineExceeded), nil
-			}
-			return PreparedSource{}, context.DeadlineExceeded
-		}
 		return PreparedSource{
 			Provider: src.Provider,
 			Path:     src.Path,
 			Total:    len(refs),
 			run: func(ctx context.Context, progress ProgressCallback, force bool) (ImportResult, error) {
-				// Count list and export execution toward the whole remote budget,
-				// but not time a prepared source waits behind another provider.
-				remoteCtx, cancel := context.WithTimeout(ctx, remaining)
-				defer cancel()
-				result, err := i.ImportRemote(remoteCtx, refs, src.Remote.Fetch, progress, force, src.Provider)
+				result, err := i.ImportRemote(ctx, refs, src.Remote.Fetch, progress, force, src.Provider)
 				if src.Optional && errors.Is(err, context.DeadlineExceeded) {
 					return result, nil
 				}
@@ -276,6 +271,40 @@ func skippedPreparedSource(src Source, warning error) PreparedSource {
 	}
 }
 
+// SyncSources runs local sources first, then gives each remote source its own
+// total budget. A zero timeout disables the remote budget. The callback owns
+// source preparation, import, and interface-specific reporting.
+func SyncSources(ctx context.Context, sources []Source, remoteTimeout time.Duration, syncSource func(context.Context, Source) error) error {
+	if remoteTimeout < 0 {
+		return errors.New("remote sync timeout must not be negative")
+	}
+	for _, remote := range []bool{false, true} {
+		for _, src := range sources {
+			if (src.Remote != nil) != remote {
+				continue
+			}
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+
+			sourceCtx := ctx
+			cancel := func() {}
+			if remote && remoteTimeout > 0 {
+				sourceCtx, cancel = context.WithTimeout(ctx, remoteTimeout)
+			}
+			err := syncSource(sourceCtx, src)
+			cancel()
+			if err != nil {
+				return err
+			}
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // CountJSONLFiles counts importable .jsonl files under dirPath, applying the
 // same subagent/edit-conflict exclusions ImportDirectory uses.
 func CountJSONLFiles(dirPath string, skipSubagents bool) (int, error) {
@@ -309,18 +338,31 @@ func (i *Importer) SyncAll(ctx context.Context, sources []Source, force bool) er
 	for _, src := range sources {
 		prepared, err := i.PrepareSource(ctx, src)
 		if err != nil {
-			return err
+			failures = append(failures, err)
+			return errors.Join(failures...)
 		}
 		if prepared.Warning != nil {
+			failures = append(failures, fmt.Errorf("%s sync skipped: %w", prepared.Provider, prepared.Warning))
 			continue
 		}
-		result, err := prepared.Run(ctx, nil, force)
-		if err != nil {
-			return err
-		}
+		result, runErr := prepared.Run(ctx, nil, force)
 		for _, failure := range result.Failures {
 			failures = append(failures, fmt.Errorf("%s %s: %w", src.Provider, failure.ID, failure.Err))
 		}
+		if len(result.Deferred) > 0 {
+			failures = append(failures, fmt.Errorf("%s sync incomplete: %d sessions deferred (%s)", src.Provider, len(result.Deferred), summarizeIDs(result.Deferred, 5)))
+		}
+		if runErr != nil {
+			failures = append(failures, runErr)
+			return errors.Join(failures...)
+		}
 	}
 	return errors.Join(failures...)
+}
+
+func summarizeIDs(ids []string, limit int) string {
+	if len(ids) <= limit {
+		return strings.Join(ids, ", ")
+	}
+	return fmt.Sprintf("%s, and %d more", strings.Join(ids[:limit], ", "), len(ids)-limit)
 }

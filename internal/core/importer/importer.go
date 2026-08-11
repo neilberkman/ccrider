@@ -25,6 +25,7 @@ type ImportFailure struct {
 type ImportResult struct {
 	Imported int
 	Skipped  int
+	Deferred []string
 	Failures []ImportFailure
 }
 
@@ -555,17 +556,29 @@ func (i *Importer) ImportRemote(ctx context.Context, refs []RemoteSessionRef, fe
 		return result, fmt.Errorf("failed to read remote session metadata: %w", err)
 	}
 	_ = rows.Close()
-
-	for index, ref := range refs {
+	deferIfInterrupted := func(index int) error {
 		if err := ctx.Err(); err != nil {
-			if errors.Is(err, context.DeadlineExceeded) {
-				for _, pending := range refs[index:] {
-					result.addFailure(pending.ImportID, err)
-					if progress != nil {
-						progress.Skip()
-					}
+			for _, pending := range refs[index:] {
+				id := strings.TrimSpace(pending.ImportID)
+				revision := strings.TrimSpace(pending.Revision)
+				if id == "" || revision == "" {
+					result.addFailure(id, errors.New("missing id or revision"))
+				} else if !force && existingHash[id] == revision {
+					result.Skipped++
+				} else {
+					result.Deferred = append(result.Deferred, id)
+				}
+				if progress != nil {
+					progress.Skip()
 				}
 			}
+			return err
+		}
+		return nil
+	}
+
+	for index, ref := range refs {
+		if err := deferIfInterrupted(index); err != nil {
 			return result, err
 		}
 		ref.ImportID = strings.TrimSpace(ref.ImportID)
@@ -586,18 +599,10 @@ func (i *Importer) ImportRemote(ctx context.Context, refs []RemoteSessionRef, fe
 		}
 
 		session, err := fetch(ctx, ref)
+		if interruptErr := deferIfInterrupted(index); interruptErr != nil {
+			return result, interruptErr
+		}
 		if err != nil {
-			if ctx.Err() != nil {
-				if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-					for _, pending := range refs[index:] {
-						result.addFailure(pending.ImportID, ctx.Err())
-						if progress != nil {
-							progress.Skip()
-						}
-					}
-				}
-				return result, ctx.Err()
-			}
 			result.addFailure(ref.ImportID, err)
 			if progress != nil {
 				progress.Skip()
