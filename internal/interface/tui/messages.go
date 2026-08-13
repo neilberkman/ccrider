@@ -11,6 +11,7 @@ import (
 	"github.com/neilberkman/ccrider/internal/core/config"
 	"github.com/neilberkman/ccrider/internal/core/db"
 	"github.com/neilberkman/ccrider/internal/core/importer"
+	"github.com/neilberkman/ccrider/internal/core/liveness"
 	"github.com/neilberkman/ccrider/internal/core/search"
 )
 
@@ -118,6 +119,12 @@ func loadSessionsNow(database *db.DB, filterByProject bool, projectPath string, 
 		return sessionsLoadFailedMsg{err: err, generation: generation}
 	}
 
+	// Best-effort liveness: a failed scan means no badges, never a failed load.
+	liveIDs := make(map[string]liveness.LiveSession)
+	if live, err := liveness.Scan(context.Background(), liveness.SystemSource{}, database); err == nil {
+		liveIDs = liveness.BySessionID(live)
+	}
+
 	var sessions []sessionItem
 	for _, cs := range coreSessions {
 		summary := cs.Summary
@@ -135,6 +142,7 @@ func loadSessionsNow(database *db.DB, filterByProject bool, projectPath string, 
 			CreatedAt:    cs.CreatedAt.Format(time.RFC3339),
 			Provider:     cs.Provider,
 		}
+		_, s.Live = liveIDs[cs.SessionID]
 
 		if projectPath != "" && strings.Contains(s.LastCwd, projectPath) {
 			s.MatchesCurrentDir = true

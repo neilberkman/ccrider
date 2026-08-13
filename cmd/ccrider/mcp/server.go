@@ -15,6 +15,7 @@ import (
 	"github.com/neilberkman/ccrider/internal/core/config"
 	"github.com/neilberkman/ccrider/internal/core/db"
 	"github.com/neilberkman/ccrider/internal/core/importer"
+	"github.com/neilberkman/ccrider/internal/core/liveness"
 	"github.com/neilberkman/ccrider/internal/core/search"
 	"github.com/neilberkman/ccrider/internal/core/session"
 	"github.com/sethvargo/go-diceware/diceware"
@@ -68,6 +69,11 @@ type SessionMatch struct {
 	ResumeCommand string         `json:"resume_command"`
 	MatchCount    int            `json:"match_count"`
 	Matches       []MatchSnippet `json:"matches"`
+	// Live is present (true) when a running agent process is attached to
+	// this session right now. Absent means unknown or not live — resuming a
+	// live session opens it in a second window.
+	Live    bool   `json:"live,omitempty"`
+	LiveTTY string `json:"live_tty,omitempty"`
 }
 
 // MatchSnippet represents a message match within a session
@@ -94,12 +100,16 @@ type SessionSummary struct {
 	Provider      string `json:"provider"`
 	ResumeCommand string `json:"resume_command"`
 	MessageCount  int    `json:"message_count"`
+	Live          bool   `json:"live,omitempty"`
+	LiveTTY       string `json:"live_tty,omitempty"`
 }
 
 // SessionMessagesResponse represents the response from get_session_messages
 type SessionMessagesResponse struct {
 	SessionID        string          `json:"session_id"`
 	ResumeCommand    string          `json:"resume_command"`
+	Live             bool            `json:"live,omitempty"`
+	LiveTTY          string          `json:"live_tty,omitempty"`
 	TotalCount       int             `json:"total_count"`
 	ReturnedFrom     int             `json:"returned_from"` // First sequence in response
 	ReturnedTo       int             `json:"returned_to"`   // Last sequence in response
@@ -171,6 +181,10 @@ func StartServer(dbPath string) error {
 		"1.0.0",
 	)
 
+	// One liveness cache per server: a request that annotates results and a
+	// list_open_sessions call moments later share one process scan.
+	liveCache := &liveness.Cache{}
+
 	// Register search_sessions tool
 	searchTool := mcp.NewTool("search_sessions",
 		mcp.WithReadOnlyHintAnnotation(true),
@@ -200,7 +214,7 @@ func StartServer(dbPath string) error {
 		mcp.WithString("provider",
 			mcp.Description(providerFilterDescription())),
 	)
-	s.AddTool(searchTool, makeSearchSessionsHandler(database))
+	s.AddTool(searchTool, makeSearchSessionsHandler(database, liveCache))
 
 	// Register list_recent_sessions tool
 	listTool := mcp.NewTool("list_recent_sessions",
@@ -216,7 +230,7 @@ func StartServer(dbPath string) error {
 		mcp.WithString("provider",
 			mcp.Description(providerFilterDescription())),
 	)
-	s.AddTool(listTool, makeListRecentSessionsHandler(database))
+	s.AddTool(listTool, makeListRecentSessionsHandler(database, liveCache))
 
 	// Register get_session_messages tool
 	messagesTool := mcp.NewTool("get_session_messages",
@@ -235,7 +249,17 @@ func StartServer(dbPath string) error {
 		mcp.WithNumber("context_size",
 			mcp.Description("Messages before/after around_sequence (default: 10)")),
 	)
-	s.AddTool(messagesTool, makeGetSessionMessagesHandler(database))
+	s.AddTool(messagesTool, makeGetSessionMessagesHandler(database, liveCache))
+
+	// Register list_open_sessions tool
+	openTool := mcp.NewTool("list_open_sessions",
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithOpenWorldHintAnnotation(false),
+		mcp.WithIdempotentHintAnnotation(false),
+		mcp.WithDescription("List coding agent sessions that currently have a live process attached, grouped by project and annotated with idle time. Use this to see what's open right now, find stale sessions, or check whether a session is already open before suggesting its resume_command."),
+	)
+	s.AddTool(openTool, makeListOpenSessionsHandler(database, liveCache))
 
 	// Register generate_session_anchor tool
 	anchorTool := mcp.NewTool("generate_session_anchor",
@@ -273,7 +297,18 @@ func syncDatabase(ctx context.Context, database *db.DB) error {
 	return nil
 }
 
-func makeSearchSessionsHandler(database *db.DB) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+// liveIndex returns the live-session index for annotating results, or nil
+// when the scan fails — an absent live field means unknown, never "not live".
+func liveIndex(ctx context.Context, cache *liveness.Cache, database *db.DB) map[string]liveness.LiveSession {
+	live, err := cache.Snapshot(ctx, database)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "WARN: liveness scan failed; omitting live annotations: %v\n", err)
+		return nil
+	}
+	return liveness.BySessionID(live)
+}
+
+func makeSearchSessionsHandler(database *db.DB, liveCache *liveness.Cache) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		// Sync database before running query (fast incremental check)
 		if err := syncDatabase(ctx, database); err != nil {
@@ -419,6 +454,16 @@ func makeSearchSessionsHandler(database *db.DB) func(context.Context, mcp.CallTo
 			}
 		}
 
+		if len(results) > 0 {
+			liveByID := liveIndex(ctx, liveCache, database)
+			for i := range results {
+				if l, ok := liveByID[results[i].SessionID]; ok {
+					results[i].Live = true
+					results[i].LiveTTY = l.TTY
+				}
+			}
+		}
+
 		// Trim to fit token budget
 		results, _ = trimSearchResultsToFit(results)
 
@@ -434,7 +479,7 @@ func makeSearchSessionsHandler(database *db.DB) func(context.Context, mcp.CallTo
 	}
 }
 
-func makeListRecentSessionsHandler(database *db.DB) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func makeListRecentSessionsHandler(database *db.DB, liveCache *liveness.Cache) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		// Sync database before running query
 		if err := syncDatabase(ctx, database); err != nil {
@@ -475,6 +520,16 @@ func makeListRecentSessionsHandler(database *db.DB) func(context.Context, mcp.Ca
 			sessions = append(sessions, toSessionSummary(cs, cfg))
 		}
 
+		if len(sessions) > 0 {
+			liveByID := liveIndex(ctx, liveCache, database)
+			for i := range sessions {
+				if l, ok := liveByID[sessions[i].SessionID]; ok {
+					sessions[i].Live = true
+					sessions[i].LiveTTY = l.TTY
+				}
+			}
+		}
+
 		// Trim to fit token budget
 		sessions, _ = trimSessionSummariesToFit(sessions)
 
@@ -490,7 +545,7 @@ func makeListRecentSessionsHandler(database *db.DB) func(context.Context, mcp.Ca
 	}
 }
 
-func makeGetSessionMessagesHandler(database *db.DB) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func makeGetSessionMessagesHandler(database *db.DB, liveCache *liveness.Cache) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		// Sync database before running query
 		if err := syncDatabase(ctx, database); err != nil {
@@ -560,6 +615,10 @@ func makeGetSessionMessagesHandler(database *db.DB) func(context.Context, mcp.Ca
 			ReturnedTo:    returnedTo,
 			Messages:      mcpMessages,
 		}
+		if l, ok := liveIndex(ctx, liveCache, database)[sessionID]; ok {
+			response.Live = true
+			response.LiveTTY = l.TTY
+		}
 
 		if truncated {
 			response.Truncated = true
@@ -571,6 +630,63 @@ func makeGetSessionMessagesHandler(database *db.DB) func(context.Context, mcp.Ca
 			return mcp.NewToolResultError(fmt.Sprintf("failed to marshal results: %v", err)), nil
 		}
 
+		return mcp.NewToolResultText(string(resultJSON)), nil
+	}
+}
+
+// OpenSession is one live agent process in the list_open_sessions response.
+type OpenSession struct {
+	Provider    string `json:"provider"`
+	SessionID   string `json:"session_id,omitempty"`
+	Summary     string `json:"summary,omitempty"`
+	TTY         string `json:"tty,omitempty"`
+	PID         int32  `json:"pid"`
+	Match       string `json:"match"` // argv | cwd | none
+	IdleSeconds int64  `json:"idle_seconds"`
+}
+
+// OpenSessionGroup buckets open sessions by project path.
+type OpenSessionGroup struct {
+	Project  string        `json:"project"`
+	Sessions []OpenSession `json:"sessions"`
+}
+
+func makeListOpenSessionsHandler(database *db.DB, liveCache *liveness.Cache) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		// Sync so idle times reflect the latest transcripts
+		if err := syncDatabase(ctx, database); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("sync failed: %v", err)), nil
+		}
+
+		live, err := liveCache.Snapshot(ctx, database)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("process scan failed: %v", err)), nil
+		}
+
+		now := time.Now()
+		var groups []OpenSessionGroup
+		for _, g := range liveness.GroupByProject(live) {
+			group := OpenSessionGroup{Project: g.ProjectPath}
+			for _, l := range g.Sessions {
+				group.Sessions = append(group.Sessions, OpenSession{
+					Provider:    l.Provider,
+					SessionID:   l.SessionID,
+					Summary:     l.Summary,
+					TTY:         l.TTY,
+					PID:         l.PID,
+					Match:       l.Match,
+					IdleSeconds: int64(l.IdleFor(now).Seconds()),
+				})
+			}
+			groups = append(groups, group)
+		}
+
+		resultJSON, err := json.Marshal(map[string]interface{}{
+			"groups": groups,
+		})
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to marshal results: %v", err)), nil
+		}
 		return mcp.NewToolResultText(string(resultJSON)), nil
 	}
 }

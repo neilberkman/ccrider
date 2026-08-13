@@ -31,6 +31,9 @@ func (i sessionListItem) Title() string {
 	if i.session.Provider != "" {
 		title = "[" + i.session.Provider + "] " + title
 	}
+	if i.session.Live {
+		title = "● " + title
+	}
 	return title
 }
 

@@ -73,47 +73,54 @@ type Session struct {
 
 // ListSessions returns all sessions, optionally filtered by project path and provider.
 // Sessions with no meaningful content (warmup-only, etc) are excluded.
+// summaryExpr computes a session's display summary with fallbacks: the LLM
+// one-line summary, then the stored llm_summary, then — when the recorded
+// summary is a placeholder — the first meaningful user message. It requires
+// `sessions s LEFT JOIN session_summaries ss` aliases in the enclosing query.
+const summaryExpr = `COALESCE(
+	NULLIF(ss.one_line_summary, ''),
+	NULLIF(s.llm_summary, ''),
+	CASE
+		WHEN s.summary LIKE '<user%prompt%>' OR s.summary = '<user_prompt>' OR TRIM(COALESCE(s.summary, '')) = ''
+		THEN COALESCE(
+			(SELECT
+				CASE
+					WHEN text_content LIKE '<%'
+					THEN LTRIM(SUBSTR(text_content, INSTR(text_content, '>') + 1), char(10) || char(13) || char(9) || ' ')
+					ELSE text_content
+				END
+			 FROM messages
+			 WHERE session_id = s.id
+			   AND type = 'user'
+			   AND text_content NOT LIKE 'This session is being continued%'
+			   AND text_content NOT LIKE 'Resuming session from%'
+			   AND text_content NOT LIKE '[Image %'
+			   AND text_content NOT LIKE '%Request interrupted by user%'
+			   AND text_content NOT LIKE 'Warmup'
+			   AND text_content NOT LIKE 'Base directory for this skill:%'
+			   AND text_content NOT LIKE 'Caveat: The messages below%'
+			   AND LENGTH(LTRIM(
+			     CASE
+			       WHEN text_content LIKE '<%'
+			       THEN LTRIM(SUBSTR(text_content, INSTR(text_content, '>') + 1), char(10) || char(13) || char(9) || ' ')
+			       ELSE text_content
+			     END,
+			     char(10) || char(13) || char(9) || ' '
+			   )) > 0
+			 ORDER BY sequence ASC
+			 LIMIT 1),
+			''
+		)
+		ELSE s.summary
+	END,
+	''
+)`
+
 func (db *DB) ListSessions(projectPath string, provider ...string) ([]Session, error) {
 	query := `
 		SELECT
 			s.session_id,
-			COALESCE(
-				NULLIF(ss.one_line_summary, ''),
-				NULLIF(s.llm_summary, ''),
-				CASE
-					WHEN s.summary LIKE '<user%prompt%>' OR s.summary = '<user_prompt>' OR TRIM(COALESCE(s.summary, '')) = ''
-					THEN COALESCE(
-						(SELECT
-							CASE
-								WHEN text_content LIKE '<%'
-								THEN LTRIM(SUBSTR(text_content, INSTR(text_content, '>') + 1), char(10) || char(13) || char(9) || ' ')
-								ELSE text_content
-							END
-						 FROM messages
-						 WHERE session_id = s.id
-						   AND type = 'user'
-						   AND text_content NOT LIKE 'This session is being continued%'
-						   AND text_content NOT LIKE 'Resuming session from%'
-						   AND text_content NOT LIKE '[Image %'
-						   AND text_content NOT LIKE '%Request interrupted by user%'
-						   AND text_content NOT LIKE 'Warmup'
-						   AND text_content NOT LIKE 'Base directory for this skill:%'
-						   AND LENGTH(LTRIM(
-						     CASE
-						       WHEN text_content LIKE '<%'
-						       THEN LTRIM(SUBSTR(text_content, INSTR(text_content, '>') + 1), char(10) || char(13) || char(9) || ' ')
-						       ELSE text_content
-						     END,
-						     char(10) || char(13) || char(9) || ' '
-						   )) > 0
-						 ORDER BY sequence ASC
-						 LIMIT 1),
-						''
-					)
-					ELSE s.summary
-				END,
-				''
-			) as summary,
+			` + summaryExpr + ` as summary,
 			s.project_path,
 			COALESCE(
 				(SELECT cwd FROM messages
@@ -319,6 +326,80 @@ func (db *DB) GetSessionDetail(sessionID string) (*SessionDetail, error) {
 	}
 
 	return &detail, rows.Err()
+}
+
+// SessionsForProjectPath returns sessions whose project_path exactly matches
+// projectPath, most recently updated first. Used by liveness matching to pair
+// a running agent process (identified only by its working directory) with the
+// session it most plausibly hosts; timestamp comparison happens in Go so the
+// stored datetime text format never leaks into query semantics.
+func (db *DB) SessionsForProjectPath(projectPath string, limit int) ([]Session, error) {
+	if limit <= 0 {
+		limit = 5
+	}
+	query := `
+		SELECT
+			s.session_id,
+			` + summaryExpr + ` as summary,
+			s.project_path,
+			(SELECT COUNT(*) FROM messages WHERE session_id = s.id) as message_count,
+			s.updated_at,
+			s.created_at,
+			COALESCE(s.provider, 'claude') as provider
+		FROM sessions s
+		LEFT JOIN session_summaries ss ON s.id = ss.session_id
+		WHERE s.project_path = ?
+		ORDER BY s.updated_at DESC
+		LIMIT ?
+	`
+	rows, err := db.Query(query, projectPath, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var sessions []Session
+	for rows.Next() {
+		var s Session
+		if err := rows.Scan(&s.SessionID, &s.Summary, &s.ProjectPath, &s.MessageCount, &s.UpdatedAt, &s.CreatedAt, &s.Provider); err != nil {
+			return nil, err
+		}
+		sessions = append(sessions, s)
+	}
+	return sessions, rows.Err()
+}
+
+// GetSessionOverview returns one session with its display summary (same
+// fallback chain as ListSessions). Lighter than GetSessionDetail — no
+// messages are loaded — and unlike GetSessionLaunchInfo it resolves the
+// display summary, so callers presenting the session get a usable title.
+func (db *DB) GetSessionOverview(sessionID string) (*Session, error) {
+	sessionID, err := db.ResolveSessionID(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	query := `
+		SELECT
+			s.session_id,
+			` + summaryExpr + ` as summary,
+			s.project_path,
+			(SELECT COUNT(*) FROM messages WHERE session_id = s.id) as message_count,
+			s.updated_at,
+			s.created_at,
+			COALESCE(s.provider, 'claude') as provider
+		FROM sessions s
+		LEFT JOIN session_summaries ss ON s.id = ss.session_id
+		WHERE s.session_id = ?
+	`
+	var s Session
+	err = db.QueryRow(query, sessionID).Scan(&s.SessionID, &s.Summary, &s.ProjectPath, &s.MessageCount, &s.UpdatedAt, &s.CreatedAt, &s.Provider)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("%w: %s", ErrSessionNotFound, sessionID)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &s, nil
 }
 
 // SessionDetail represents full session information including messages

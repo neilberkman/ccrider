@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`ccrider ps` — list open/idle sessions** ([#25](https://github.com/neilberkman/ccrider/issues/25)) — lists coding agent sessions that currently have a live process attached, grouped by project, with idle times and the TTYs each session is open in (one row per session even when it's open in several windows). Matching is tiered: a session id in the process command line is exact; otherwise the process working directory is matched against session project paths; agent processes matching nothing are listed as unknown rather than dropped
+- **Live badge in the TUI** — sessions with a running process show a ● marker in the list
+- **Liveness over MCP** — a new `list_open_sessions` tool returns the same grouped view, and `search_sessions`, `list_recent_sessions`, and `get_session_messages` results now carry `live`/`live_tty` fields so agents can tell a session is already open before suggesting its `resume_command`. One process scan per request via a short-TTL cache; if the scan fails the fields are omitted (absent means unknown, not "not live")
+
+### Fixed
+
+- **Session summaries no longer surface Claude Code's "Caveat:" preamble** — the first-user-message fallback skips it, in session lists and everywhere else summaries appear
+
 ## [1.10.0] - 2026-08-11
 
 ### Added
