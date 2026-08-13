@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-08-13
+
 ### Added
 
 - **`ccrider ps` — list open/idle sessions** ([#25](https://github.com/neilberkman/ccrider/issues/25)) — lists coding agent sessions that currently have a live process attached, grouped by project, with idle times and the TTYs each session is open in (one row per session even when it's open in several windows). Matching is tiered: a session id in the process command line is exact; otherwise the process working directory is matched against session project paths; agent processes matching nothing are listed as unknown rather than dropped
