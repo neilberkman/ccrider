@@ -199,7 +199,7 @@ func (db *DB) migration005ReimportCodexSessions() error {
 	// stale after re-import with the new parser.
 	for _, table := range []string{"messages", "session_summaries", "summary_chunks", "session_issues", "session_files"} {
 		if _, err := tx.Exec(`
-			DELETE FROM `+table+` WHERE session_id IN (
+			DELETE FROM ` + table + ` WHERE session_id IN (
 				SELECT id FROM sessions WHERE provider = 'codex'
 			)
 		`); err != nil {
