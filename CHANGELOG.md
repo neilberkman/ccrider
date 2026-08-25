@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [1.11.1] - 2026-08-21
+
+### Fixed
+
+- **`ccrider ps` no longer panics part-way through its listing** — a session summary with no whitespace in its first 44 characters, such as a long path or URL, crashed the command after most of its output had already printed. Display truncation treated the "no word break found" sentinel as a valid cut position whenever the column was narrower than 50 characters. Truncation is now safe at any width, including zero, and never splits a multi-byte character
+
 ## [1.11.0] - 2026-08-13
 
 ### Added
