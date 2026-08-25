@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/dustin/go-humanize"
 	"github.com/neilberkman/ccrider/internal/core/db"
@@ -110,16 +111,36 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// truncateMessage truncates long messages for display
+// wordBreakWindow is how far truncateMessage will look back from the cut for
+// a word boundary. Beyond this, snapping back would discard so much of the
+// message that a mid-word cut reads better.
+const wordBreakWindow = 50
+
+// truncateMessage shortens a message to maxLen bytes for display, preferring
+// to break at a word boundary near the cut. The result is always valid UTF-8:
+// the cut never lands inside a multi-byte rune. A maxLen at or below zero
+// yields an empty string, so a caller working from a narrow terminal cannot
+// produce a negative width.
 func truncateMessage(msg string, maxLen int) string {
+	if maxLen <= 0 {
+		return ""
+	}
 	if len(msg) <= maxLen {
 		return msg
 	}
 
-	// Find a good break point (end of word)
-	truncated := msg[:maxLen]
+	// Back off to a rune boundary so a multi-byte character is never split.
+	end := maxLen
+	for end > 0 && !utf8.RuneStart(msg[end]) {
+		end--
+	}
+	truncated := msg[:end]
+
+	// Find a good break point (end of word). LastIndexAny returns -1 when the
+	// window holds no whitespace, and a break at position 0 would leave
+	// nothing but the ellipsis, so both keep the hard cut.
 	lastSpace := strings.LastIndexAny(truncated, " \n\t")
-	if lastSpace > maxLen-50 {
+	if lastSpace > 0 && lastSpace > len(truncated)-wordBreakWindow {
 		truncated = truncated[:lastSpace]
 	}
 
