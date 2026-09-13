@@ -106,24 +106,36 @@ release:
 
     🐛 **Found a bug?** [Open an issue](https://github.com/neilberkman/ccrider/issues/new)
 
-brews:
-  - repository:
+homebrew_casks:
+  - name: ccrider
+    ids:
+      - ccrider
+    repository:
       owner: neilberkman
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    directory: Formula
-    name: ccrider
+    directory: Casks
     description: "Search, browse, and resume your coding agent sessions"
     homepage: "https://github.com/neilberkman/ccrider"
     license: "MIT"
+    binaries:
+      - ccrider
     commit_author:
       name: goreleaserbot
       email: bot@goreleaser.com
-    commit_msg_template: "Brew formula update for {{ .ProjectName }} version {{ .Tag }}"
-    install: |
-      bin.install "ccrider"
-    test: |
-      system "#{bin}/ccrider", "--version"
+    commit_msg_template: "Brew cask update for {{ .ProjectName }} version {{ .Tag }}"
+    # Homebrew quarantines cask downloads and the binary is only ad-hoc
+    # signed, so Gatekeeper blocks it unless the attribute is removed.
+    # hooks.post.install would render the deprecated `postflight` stanza.
+    # The generated cask is run through the template engine, so the
+    # Homebrew {{staged_path}} token has to be emitted as a string literal.
+    custom_block: |
+      postflight_steps do
+        on_macos do
+          run "/usr/bin/xattr",
+              args: ["-dr", "com.apple.quarantine", "{{ "{{staged_path}}" }}/ccrider"]
+        end
+      end
 
 scoops:
   - name: ccrider

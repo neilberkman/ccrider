@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Homebrew install is now a cask** — GoReleaser deprecated formula publishing (`brews`), so `neilberkman/tap/ccrider` now publishes as a cask. `brew install neilberkman/tap/ccrider` is unchanged for new installs. Existing formula installs migrate on `brew update` if the cask is trusted; otherwise run `brew uninstall --formula ccrider && brew trust --cask neilberkman/tap/ccrider && brew install --cask neilberkman/tap/ccrider`
+
 ## [1.11.1] - 2026-08-25
 
 ### Fixed
