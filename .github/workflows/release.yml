@@ -72,6 +72,24 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
 
+      # GoReleaser writes the cask but skips the upload (skip_upload in
+      # .goreleaser.yml). Its template puts custom_block first, so brew style
+      # reorders the stanzas before the cask is pushed to the tap.
+      - name: Publish Homebrew cask
+        env:
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+        run: |
+          TAP_DIR="$RUNNER_TEMP/homebrew-tap"
+          git clone "https://x-access-token:${HOMEBREW_TAP_GITHUB_TOKEN}@github.com/neilberkman/homebrew-tap.git" "$TAP_DIR"
+          cp dist/homebrew/Casks/ccrider.rb "$TAP_DIR/Casks/ccrider.rb"
+          cd "$TAP_DIR"
+          brew style --fix Casks/ccrider.rb || brew style Casks/ccrider.rb
+          git config user.name goreleaserbot
+          git config user.email bot@goreleaser.com
+          git add Casks/ccrider.rb
+          git commit -m "Brew cask update for ccrider version ${GITHUB_REF_NAME}"
+          git push
+
   publish-mcp-registry:
     # Runs after a tag release, or standalone via workflow_dispatch to
     # (re)publish an existing release to the MCP registry

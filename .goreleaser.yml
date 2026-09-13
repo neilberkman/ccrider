@@ -85,6 +85,13 @@ release:
     brew install neilberkman/tap/ccrider
     ```
 
+    Installed ccrider 1.11.1 or earlier with Homebrew? It is now a cask instead of a formula. `brew update` moves you over only if you trust the cask; otherwise run:
+    ```bash
+    brew uninstall --formula ccrider
+    brew trust --cask neilberkman/tap/ccrider
+    brew install --cask neilberkman/tap/ccrider
+    ```
+
     **Windows (Scoop):**
     ```bash
     scoop bucket add ccrider https://github.com/neilberkman/scoop-ccrider
@@ -115,6 +122,9 @@ homebrew_casks:
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     directory: Casks
+    # Pushed by the "Publish Homebrew cask" step in release.yml after
+    # brew style puts the stanzas in order.
+    skip_upload: true
     description: "Search, browse, and resume your coding agent sessions"
     homepage: "https://github.com/neilberkman/ccrider"
     license: "MIT"

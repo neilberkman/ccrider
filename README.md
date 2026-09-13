@@ -34,6 +34,11 @@ Stay in your terminal. Find any conversation. Resume where you left off. Session
 # Homebrew (recommended)
 brew install neilberkman/tap/ccrider
 
+# Installed 1.11.1 or earlier with Homebrew? ccrider is now a cask, not a formula:
+brew uninstall --formula ccrider
+brew trust --cask neilberkman/tap/ccrider
+brew install --cask neilberkman/tap/ccrider
+
 # Or from source
 git clone https://github.com/neilberkman/ccrider.git
 cd ccrider
