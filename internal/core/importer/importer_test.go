@@ -9,12 +9,15 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/neilberkman/ccrider/internal/core/db"
 	"github.com/neilberkman/ccrider/internal/core/search"
+	"github.com/neilberkman/ccrider/internal/core/session"
+	"github.com/neilberkman/ccrider/pkg/antigravitysessions"
 	"github.com/neilberkman/ccrider/pkg/ccsessions"
 	"github.com/neilberkman/ccrider/pkg/codexsessions"
 	"github.com/neilberkman/ccrider/pkg/pisessions"
@@ -750,22 +753,44 @@ func TestSyncAllPreservesDeferredDetailsWhenNextPreparationFails(t *testing.T) {
 	}
 }
 
-func TestDefaultSourcesIncludesAntigravityWhenStoreExists(t *testing.T) {
+func TestDefaultSourcesIncludesEachAntigravityStoreThatExists(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	if err := os.MkdirAll(filepath.Join(home, ".gemini", "antigravity-cli", "brain"), 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	for _, source := range DefaultSources(false) {
-		if source.Provider == "antigravity" {
-			if source.EnumerateFn == nil {
-				t.Fatal("Antigravity source must enumerate canonical transcripts")
-			}
-			return
+	// CLI and desktop stores exist; the IDE store does not.
+	for _, dir := range []string{"antigravity-cli", "antigravity"} {
+		if err := os.MkdirAll(filepath.Join(home, ".gemini", dir, "brain"), 0755); err != nil {
+			t.Fatal(err)
 		}
 	}
-	t.Fatal("DefaultSources() did not include Antigravity")
+
+	paths := map[string]string{}
+	for _, source := range DefaultSources(false) {
+		if !strings.HasPrefix(source.Provider, "antigravity") {
+			continue
+		}
+		if source.EnumerateFn == nil {
+			t.Fatalf("%s source must enumerate canonical transcripts", source.Provider)
+		}
+		paths[source.Provider] = source.Path
+	}
+	want := map[string]string{
+		"antigravity":         filepath.Join(home, ".gemini", "antigravity-cli"),
+		"antigravity-desktop": filepath.Join(home, ".gemini", "antigravity"),
+	}
+	if !reflect.DeepEqual(paths, want) {
+		t.Fatalf("Antigravity sources = %v, want %v", paths, want)
+	}
+}
+
+// Every provider id the importer stores must be registered in the session
+// provider table, or its sessions fall back to Claude's resume command.
+func TestAntigravityRootProvidersAreRegistered(t *testing.T) {
+	registered := session.ProviderNames()
+	for _, root := range antigravitysessions.DefaultRoots() {
+		if !slices.Contains(registered, root.Provider) {
+			t.Errorf("provider %q is not in the session provider table", root.Provider)
+		}
+	}
 }
 
 func TestImportSession(t *testing.T) {

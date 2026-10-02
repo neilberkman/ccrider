@@ -2,6 +2,7 @@ package session
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -57,6 +58,9 @@ func ValidateClaudeRunnable(workDir string) error {
 // (asdf/mise) failures before launching. Returns nil if runnable, or a
 // descriptive error with suggested fixes.
 func ValidateRunnable(provider, workDir string) error {
+	if reason := ResumeUnavailableReason(provider); reason != "" {
+		return errors.New(reason)
+	}
 	binary := ResumeBinary(provider)
 
 	shell := os.Getenv("SHELL")

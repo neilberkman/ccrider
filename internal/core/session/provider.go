@@ -16,6 +16,11 @@ const (
 	ProviderPi          = "pi"
 	ProviderAntigravity = "antigravity"
 	ProviderAmp         = "amp"
+
+	// The Antigravity IDE and desktop app keep their own conversation stores,
+	// which `agy --conversation` cannot open.
+	ProviderAntigravityIDE     = "antigravity-ide"
+	ProviderAntigravityDesktop = "antigravity-desktop"
 )
 
 type workingDirPolicy int
@@ -60,6 +65,10 @@ type providerInfo struct {
 	// UsesFileIdentity reports whether incremental imports track source files
 	// by inode and device and therefore participate in the one-time migration.
 	UsesFileIdentity bool
+	// ResumeUnavailable is set for providers whose sessions cannot be resumed
+	// from a terminal, and says where the conversation continues instead.
+	// Such providers leave Binary and BuildSpec empty.
+	ResumeUnavailable string
 }
 
 // providers lists every supported provider in display order. The first entry
@@ -187,6 +196,20 @@ var providers = []providerInfo{
 		},
 	},
 	{
+		Name:              ProviderAntigravityIDE,
+		Product:           "Antigravity IDE",
+		SourceHint:        "~/.gemini/antigravity-ide/brain/",
+		ConfigFlags:       func(*config.Config) []string { return nil },
+		ResumeUnavailable: "Antigravity IDE has no terminal resume command; reopen this conversation in Antigravity IDE",
+	},
+	{
+		Name:              ProviderAntigravityDesktop,
+		Product:           "Antigravity desktop app",
+		SourceHint:        "~/.gemini/antigravity/brain/",
+		ConfigFlags:       func(*config.Config) []string { return nil },
+		ResumeUnavailable: "The Antigravity desktop app has no terminal resume command; reopen this conversation in the app",
+	},
+	{
 		Name:        ProviderAmp,
 		Binary:      "amp",
 		Product:     "Amp",
@@ -231,8 +254,21 @@ func ResumeBinary(provider string) string {
 // but every builder shell-quotes them anyway so an unexpected value can never
 // break out of the command (defense-in-depth, since this string is run by a
 // shell).
+//
+// Providers that cannot be resumed from a terminal yield the zero ResumeSpec;
+// check ResumeUnavailableReason before launching anything.
 func BuildResumeSpec(provider, sessionID string, fork bool, flags []string) ResumeSpec {
-	return lookupProvider(provider).BuildSpec(sessionID, fork, flags)
+	p := lookupProvider(provider)
+	if p.BuildSpec == nil {
+		return ResumeSpec{}
+	}
+	return p.BuildSpec(sessionID, fork, flags)
+}
+
+// ResumeUnavailableReason returns why sessions of the given provider cannot
+// be resumed from a terminal, or "" when they can.
+func ResumeUnavailableReason(provider string) string {
+	return lookupProvider(provider).ResumeUnavailable
 }
 
 // ProviderFlags selects the configured extra-flags slice for the given

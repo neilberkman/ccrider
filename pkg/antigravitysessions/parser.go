@@ -1,9 +1,15 @@
-// Package antigravitysessions parses Antigravity CLI conversation transcripts.
+// Package antigravitysessions parses Antigravity conversation transcripts
+// written by the Antigravity CLI, the Antigravity IDE, and the Antigravity
+// desktop app. All three store the same transcript.jsonl layout under their
+// own data directory.
 package antigravitysessions
 
 import (
+	"database/sql"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -11,9 +17,24 @@ import (
 	"time"
 
 	"github.com/neilberkman/ccrider/pkg/ccsessions"
+	_ "modernc.org/sqlite"
 )
 
-const Provider = "antigravity"
+// Provider ids, one per Antigravity app. The apps keep separate conversation
+// stores: `agy --conversation <id>` only opens conversations from the CLI
+// store, so sessions from the IDE and the desktop app carry their own ids.
+const (
+	Provider        = "antigravity"
+	ProviderIDE     = "antigravity-ide"
+	ProviderDesktop = "antigravity-desktop"
+)
+
+// Root is one Antigravity data directory and the provider id its sessions
+// are imported under.
+type Root struct {
+	Path     string
+	Provider string
+}
 
 type rawStep struct {
 	StepIndex int             `json:"step_index"`
@@ -33,18 +54,35 @@ type historyEntry struct {
 type workspaceIndex struct {
 	byConversation map[string]string
 	history        []historyEntry
+	// summaries maps every conversation listed in conversation_summaries.db
+	// to its first workspace, "" when the app recorded none.
+	summaries map[string]string
+	// conversationsDir holds the per-conversation <id>.db files, consulted
+	// for conversations conversation_summaries.db does not list.
+	conversationsDir string
+}
+
+// DefaultRoots returns the data directories of the Antigravity CLI, IDE, and
+// desktop app, in that order.
+func DefaultRoots() []Root {
+	base := ".gemini"
+	if home, err := os.UserHomeDir(); err == nil {
+		base = filepath.Join(home, ".gemini")
+	}
+	return []Root{
+		{Path: filepath.Join(base, "antigravity-cli"), Provider: Provider},
+		{Path: filepath.Join(base, "antigravity-ide"), Provider: ProviderIDE},
+		{Path: filepath.Join(base, "antigravity"), Provider: ProviderDesktop},
+	}
 }
 
 // DefaultRoot returns Antigravity CLI's local application data directory.
 func DefaultRoot() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return filepath.Join(".gemini", "antigravity-cli")
-	}
-	return filepath.Join(home, ".gemini", "antigravity-cli")
+	return DefaultRoots()[0].Path
 }
 
-// ParseAll imports canonical, user-visible Antigravity CLI transcripts. The
+// ParseAll imports canonical, user-visible Antigravity transcripts from one
+// data directory (see DefaultRoots). The
 // companion transcript_full.jsonl is intentionally excluded to avoid duplicate
 // sessions and excess tool-output indexing.
 func ParseAll(root string) ([]*ccsessions.ParsedSession, error) {
@@ -214,7 +252,11 @@ func parseTime(value string, fallback time.Time) time.Time {
 }
 
 func loadWorkspaceIndex(root string) workspaceIndex {
-	index := workspaceIndex{byConversation: make(map[string]string)}
+	index := workspaceIndex{
+		byConversation:   make(map[string]string),
+		summaries:        loadSummaryWorkspaces(filepath.Join(root, "conversation_summaries.db")),
+		conversationsDir: filepath.Join(root, "conversations"),
+	}
 	cachePath := filepath.Join(root, "cache", "last_conversations.json")
 	if data, err := os.ReadFile(cachePath); err == nil {
 		var latest map[string]string
@@ -240,17 +282,173 @@ func loadWorkspaceIndex(root string) workspaceIndex {
 	return index
 }
 
+// workspaceFor resolves a conversation's project directory. The CLI's own
+// index files come first. The IDE and the desktop app write neither of them,
+// so their conversations resolve through conversation_summaries.db (CLI and
+// desktop) or the conversation's own database (the only record the IDE keeps).
 func (index workspaceIndex) workspaceFor(conversationID, firstUserText string, firstUserTime time.Time) string {
 	if workspace := index.byConversation[conversationID]; workspace != "" {
 		return workspace
 	}
-	if firstUserTime.IsZero() || firstUserText == "" {
+	if !firstUserTime.IsZero() && firstUserText != "" {
+		for _, entry := range index.history {
+			if entry.Timestamp == firstUserTime.UnixMilli() && strings.TrimSpace(entry.Display) == firstUserText {
+				return entry.Workspace
+			}
+		}
+	}
+	if workspace, listed := index.summaries[conversationID]; listed {
+		return workspace
+	}
+	if index.conversationsDir == "" {
 		return ""
 	}
-	for _, entry := range index.history {
-		if entry.Timestamp == firstUserTime.UnixMilli() && strings.TrimSpace(entry.Display) == firstUserText {
-			return entry.Workspace
+	return conversationWorkspace(filepath.Join(index.conversationsDir, conversationID+".db"))
+}
+
+// loadSummaryWorkspaces reads conversation_id -> first workspace from an
+// Antigravity conversation_summaries.db. A missing or unreadable database
+// yields no entries: workspace association is best effort.
+func loadSummaryWorkspaces(dbPath string) map[string]string {
+	conn, err := openReadOnly(dbPath)
+	if err != nil {
+		return nil
+	}
+	defer func() { _ = conn.Close() }()
+
+	rows, err := conn.Query(`SELECT conversation_id, workspace_uris FROM conversation_summaries`)
+	if err != nil {
+		return nil
+	}
+	defer func() { _ = rows.Close() }()
+
+	workspaces := make(map[string]string)
+	for rows.Next() {
+		var conversationID, rawURIs string
+		if rows.Scan(&conversationID, &rawURIs) != nil {
+			continue
+		}
+		var uris []string
+		_ = json.Unmarshal([]byte(rawURIs), &uris)
+		workspace := ""
+		for _, uri := range uris {
+			if workspace = fileURIPath(uri); workspace != "" {
+				break
+			}
+		}
+		workspaces[conversationID] = workspace
+	}
+	return workspaces
+}
+
+// conversationWorkspace reads the first workspace recorded in one
+// conversation's own database. Its trajectory metadata is a protobuf message
+// whose field 1 lists workspaces, each with its URI in field 1.
+func conversationWorkspace(dbPath string) string {
+	conn, err := openReadOnly(dbPath)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = conn.Close() }()
+
+	var metadata []byte
+	if err := conn.QueryRow(`SELECT data FROM trajectory_metadata_blob WHERE id = 'main'`).Scan(&metadata); err != nil {
+		return ""
+	}
+	for _, workspace := range protoBytesFields(metadata, 1) {
+		for _, uri := range protoBytesFields(workspace, 1) {
+			if path := fileURIPath(string(uri)); path != "" {
+				return path
+			}
 		}
 	}
 	return ""
+}
+
+// protoBytesFields returns the payloads of every length-delimited field with
+// the given number in a protobuf message, stopping at the first malformed
+// field.
+func protoBytesFields(message []byte, field uint64) [][]byte {
+	var payloads [][]byte
+	for len(message) > 0 {
+		tag, n := binary.Uvarint(message)
+		if n <= 0 {
+			return payloads
+		}
+		message = message[n:]
+		switch tag & 7 {
+		case 0: // varint
+			_, n := binary.Uvarint(message)
+			if n <= 0 {
+				return payloads
+			}
+			message = message[n:]
+		case 1: // 64-bit
+			if len(message) < 8 {
+				return payloads
+			}
+			message = message[8:]
+		case 2: // length-delimited
+			size, n := binary.Uvarint(message)
+			if n <= 0 || size > uint64(len(message)-n) {
+				return payloads
+			}
+			payload := message[n : n+int(size)]
+			message = message[n+int(size):]
+			if tag>>3 == field {
+				payloads = append(payloads, payload)
+			}
+		case 5: // 32-bit
+			if len(message) < 4 {
+				return payloads
+			}
+			message = message[4:]
+		default:
+			return payloads
+		}
+	}
+	return payloads
+}
+
+// fileURIPath returns the local path of a file:// URI, or "" for anything else.
+func fileURIPath(uri string) string {
+	parsed, err := url.Parse(uri)
+	if err != nil || parsed.Scheme != "file" {
+		return ""
+	}
+	return parsed.Path
+}
+
+// openReadOnly opens one of Antigravity's SQLite databases without writing to
+// it. The apps use WAL journaling and remove the -wal and -shm files on a
+// clean exit; a plain read-only open then fails because SQLite may not create
+// the -shm file, so that case falls back to an immutable open, which is safe
+// exactly when no -wal file holds unmerged pages.
+func openReadOnly(dbPath string) (*sql.DB, error) {
+	if _, err := os.Stat(dbPath); err != nil {
+		return nil, err
+	}
+	conn, err := openWithQuery(dbPath, url.Values{"mode": {"ro"}, "_pragma": {"busy_timeout(1000)"}})
+	if err == nil {
+		return conn, nil
+	}
+	if _, walErr := os.Stat(dbPath + "-wal"); walErr == nil {
+		return nil, err
+	}
+	return openWithQuery(dbPath, url.Values{"mode": {"ro"}, "immutable": {"1"}})
+}
+
+func openWithQuery(dbPath string, query url.Values) (*sql.DB, error) {
+	u := url.URL{Scheme: "file", Path: dbPath, RawQuery: query.Encode()}
+	conn, err := sql.Open("sqlite", u.String())
+	if err != nil {
+		return nil, err
+	}
+	// Ping alone succeeds on a WAL database whose -shm file is missing; the
+	// failure only surfaces on the first read.
+	if _, err := conn.Exec(`SELECT 1 FROM sqlite_master LIMIT 1`); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	return conn, nil
 }

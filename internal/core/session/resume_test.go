@@ -25,6 +25,38 @@ func TestResumeBinary(t *testing.T) {
 	}
 }
 
+// The Antigravity IDE and desktop app keep stores `agy --conversation` cannot
+// open, so their sessions must never produce a runnable resume command.
+func TestAntigravityAppsHaveNoTerminalResume(t *testing.T) {
+	for _, provider := range []string{ProviderAntigravityIDE, ProviderAntigravityDesktop} {
+		reason := ResumeUnavailableReason(provider)
+		if reason == "" {
+			t.Fatalf("ResumeUnavailableReason(%q) is empty", provider)
+		}
+		if spec := BuildResumeSpec(provider, "sess-1", false, nil); spec != (ResumeSpec{}) {
+			t.Errorf("BuildResumeSpec(%q) = %#v, want the zero spec", provider, spec)
+		}
+		if got, want := ResumeCommandIn("/proj", provider, "sess-1", "", false, nil), "# "+reason; got != want {
+			t.Errorf("ResumeCommandIn(%q) = %q, want %q", provider, got, want)
+		}
+		if err := ValidateRunnable(provider, ""); err == nil || err.Error() != reason {
+			t.Errorf("ValidateRunnable(%q) = %v, want %q", provider, err, reason)
+		}
+		if SupportsFork(provider) {
+			t.Errorf("SupportsFork(%q) = true", provider)
+		}
+	}
+	// Their empty Binary must not turn an unnamed process into a live match.
+	if match, ok := MatchLiveProcess([]string{""}); ok {
+		t.Errorf("MatchLiveProcess matched an empty binary: %#v", match)
+	}
+	for _, provider := range []string{ProviderClaude, ProviderAntigravity, ""} {
+		if reason := ResumeUnavailableReason(provider); reason != "" {
+			t.Errorf("ResumeUnavailableReason(%q) = %q, want none", provider, reason)
+		}
+	}
+}
+
 func TestAntigravityResumeSpec(t *testing.T) {
 	spec := BuildResumeSpec(ProviderAntigravity, "sess-1", false, nil)
 	if spec.Binary != "agy" || spec.Prefix != "agy --conversation 'sess-1'" || spec.AcceptsPrompt {

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -73,6 +74,9 @@ func runTUI(cmd *cobra.Command, args []string) error {
 // case here, not the default, so a newly added provider automatically gets
 // the generic path instead of silently being resumed with the claude binary.
 func execResume(provider, sessionID, projectPath, lastCwd, updatedAt, summary string, fork bool) error {
+	if reason := session.ResumeUnavailableReason(provider); reason != "" {
+		return errors.New(reason)
+	}
 	switch provider {
 	case "", session.ProviderClaude:
 		return execClaude(sessionID, projectPath, lastCwd, updatedAt, summary, fork)

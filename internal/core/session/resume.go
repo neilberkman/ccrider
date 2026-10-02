@@ -75,7 +75,13 @@ func ResumeCommand(provider, sessionID, prompt string, fork bool, flags []string
 //
 // If projectPath is empty (missing in the DB), the bare command is returned
 // with a trailing comment noting the gap rather than erroring.
+//
+// Providers with no terminal resume command yield a shell comment giving the
+// reason, so the result is still safe to paste or run.
 func ResumeCommandIn(projectPath, provider, sessionID, prompt string, fork bool, flags []string) string {
+	if reason := ResumeUnavailableReason(provider); reason != "" {
+		return "# " + reason
+	}
 	cmd := ResumeCommand(provider, sessionID, prompt, fork, flags)
 	workDir := recordedWorkingDir(provider, projectPath)
 	if workDir == "" && lookupProvider(provider).WorkingDir == workingDirExistingPreferred {

@@ -278,7 +278,8 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "f":
 		// Fork session (resume with new session ID)
 		if m.currentSession != nil {
-			if !session.SupportsFork(m.currentSession.Session.Provider) {
+			provider := m.currentSession.Session.Provider
+			if !session.SupportsFork(provider) && session.ResumeUnavailableReason(provider) == "" {
 				m.err = fmt.Errorf("%s forks from its own UI; resume it and run its fork command", m.currentSession.Session.Provider)
 				return m, nil
 			}
@@ -572,6 +573,9 @@ type sessionLaunchedMsg struct {
 
 func launchSession(provider, sessionID, projectPath, lastCwd, updatedAt, summary string, fork bool) tea.Cmd {
 	return func() tea.Msg {
+		if reason := session.ResumeUnavailableReason(provider); reason != "" {
+			return sessionLaunchedMsg{message: reason}
+		}
 		// We need to exec() to replace the process, but bubbletea makes this tricky
 		// Instead, we'll return a special message telling the TUI to quit,
 		// then the CLI layer will exec the agent's resume command.
@@ -595,6 +599,9 @@ func copyResumeCommand(provider, sessionID, projectPath, lastCwd string) tea.Cmd
 
 func copyResumeCommandWithContext(provider, sessionID, projectPath, lastCwd string, fromFallbackView bool) tea.Cmd {
 	return func() tea.Msg {
+		if reason := session.ResumeUnavailableReason(provider); reason != "" {
+			return sessionLaunchedMsg{message: reason}
+		}
 		// Core builds the full command: cd prefix, working dir resolution,
 		// per-provider configured flags (see session.DisplayResumeCommand).
 		cmd := session.DisplayResumeCommand(provider, sessionID, projectPath, lastCwd, false)
@@ -743,11 +750,16 @@ func (m Model) viewDetail() string {
 		content += searchBox
 	} else {
 		footer := fmt.Sprintf("\n%3.f%%", m.viewport.ScrollPercent()*100)
-		forkHint := ""
-		if session.SupportsFork(m.currentSession.Session.Provider) {
-			forkHint = " | f: fork"
+		provider := m.currentSession.Session.Provider
+		resumeHints := ""
+		if session.ResumeUnavailableReason(provider) == "" {
+			resumeHints = " | r: resume"
+			if session.SupportsFork(provider) {
+				resumeHints += " | f: fork"
+			}
+			resumeHints += " | o: open in new terminal | c: copy"
 		}
-		footer += "\n\ne: export | r: resume" + forkHint + " | o: open in new terminal | c: copy | /: search | j/k: scroll | esc: back | q: quit"
+		footer += "\n\ne: export" + resumeHints + " | /: search | j/k: scroll | esc: back | q: quit"
 		content += footer
 	}
 

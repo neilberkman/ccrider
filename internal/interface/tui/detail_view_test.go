@@ -4,6 +4,9 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/neilberkman/ccrider/internal/core/session"
 )
 
 // Every resume command the TUI emits must include the `cd <project> && `
@@ -28,6 +31,24 @@ func TestLaunchSessionMessageHasCdPrefix(t *testing.T) {
 	want := "cd '/Users/x/proj' && claude --resume 'sess-1'"
 	if lm.message != want {
 		t.Errorf("message = %q, want %q", lm.message, want)
+	}
+}
+
+// Resuming a session with no terminal resume command must report why and
+// keep the TUI open rather than quitting into a launch that cannot work.
+func TestLaunchAndCopyRefuseProvidersWithoutTerminalResume(t *testing.T) {
+	want := session.ResumeUnavailableReason(session.ProviderAntigravityIDE)
+	for name, cmd := range map[string]tea.Cmd{
+		"launch": launchSession(session.ProviderAntigravityIDE, "sess-1", "/proj", "", "", "", false),
+		"copy":   copyResumeCommand(session.ProviderAntigravityIDE, "sess-1", "/proj", ""),
+	} {
+		lm, ok := cmd().(sessionLaunchedMsg)
+		if !ok {
+			t.Fatalf("%s: unexpected msg type", name)
+		}
+		if lm.success || lm.message != want {
+			t.Errorf("%s: msg = %+v, want failure with %q", name, lm, want)
+		}
 	}
 }
 
