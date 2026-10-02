@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-10-02
+
 ### Added
 
 - **Antigravity IDE and desktop app sessions** ([#26](https://github.com/neilberkman/ccrider/issues/26)) — ccrider now also indexes conversations from `~/.gemini/antigravity-ide/brain/` and `~/.gemini/antigravity/brain/`, under the providers `antigravity-ide` and `antigravity-desktop`. `agy --conversation` cannot open conversations from either store, so these sessions are searchable and browsable but offer no resume, fork, or copy-command action; MCP returns a comment in `resume_command` saying where the conversation continues

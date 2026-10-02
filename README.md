@@ -11,7 +11,7 @@ When your coding agent forgets, tell it: _[see what you have done](#the-king)_.
 
 ## Why ccrider?
 
-You've got months of coding agent sessions sitting in `~/.claude/projects/`, `~/.codex/sessions/`, `~/.copilot/`, `~/.local/share/opencode/`, `~/.pi/agent/sessions/`, `~/.gemini/antigravity-cli/brain/`, and your Amp account. Finding that conversation where you fixed the authentication bug? Good luck grepping through nested JSON files and separate tools.
+You've got months of coding agent sessions sitting in `~/.claude/projects/`, `~/.codex/sessions/`, `~/.copilot/`, `~/.local/share/opencode/`, `~/.pi/agent/sessions/`, `~/.gemini/antigravity*/brain/`, and your Amp account. Finding that conversation where you fixed the authentication bug? Good luck grepping through nested JSON files and separate tools.
 
 ccrider indexes Claude Code, Codex CLI, GitHub Copilot CLI, OpenCode, Pi, Antigravity (CLI, IDE, and desktop app), and Amp sessions into a single searchable database, with a TUI browser, CLI search, and an MCP server so your agent can search past sessions too.
 
