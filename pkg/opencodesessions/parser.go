@@ -3,7 +3,9 @@
 // Current OpenCode stores durable sessions in the XDG data directory,
 // typically ~/.local/share/opencode/opencode.db or an opencode-<channel>.db
 // variant. The public `opencode export` command reads the same session,
-// message, and part tables this package reads directly.
+// message, and part tables this package reads directly. Sessions written by
+// OpenCode's v2 runtime keep their messages in session_message instead; see
+// v2.go.
 package opencodesessions
 
 import (
@@ -153,12 +155,62 @@ func ParseAll(dbPath string) ([]*ccsessions.ParsedSession, error) {
 	}
 	defer func() { _ = conn.Close() }()
 
-	if ok, err := hasTables(conn, "session", "project", "message", "part"); err != nil {
+	sessionTables, err := existingTables(conn, sessionTableNames...)
+	if err != nil {
 		return nil, err
-	} else if !ok {
+	}
+	hasProject, err := hasTables(conn, "project")
+	if err != nil {
+		return nil, err
+	}
+	if len(sessionTables) == 0 || !hasProject {
 		return nil, nil
 	}
+	hasV1, err := hasTables(conn, "message", "part")
+	if err != nil {
+		return nil, err
+	}
+	hasV2, err := hasV2Messages(conn)
+	if err != nil {
+		return nil, err
+	}
+	if !hasV1 && !hasV2 {
+		return nil, nil
+	}
+	tables := messageTables{v1: hasV1, v2: hasV2}
 
+	var sessions []*ccsessions.ParsedSession
+	seen := map[string]bool{}
+	for _, table := range sessionTables {
+		rows, err := querySessions(conn, table)
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			if seen[row.ID] {
+				continue
+			}
+			seen[row.ID] = true
+			session, err := parseSession(conn, dbPath, info, row, tables)
+			if err != nil {
+				return nil, err
+			}
+			if session != nil {
+				sessions = append(sessions, session)
+			}
+		}
+	}
+	return sessions, nil
+}
+
+// sessionTableNames lists the tables OpenCode keeps sessions in, newest
+// first. OpenCode 2.0 (the v2 CLI) adds session_v2 next to v1's session table
+// in the same DB and leaves v1 sessions where they are, so a DB can hold
+// sessions in both. A DB created fresh by OpenCode 2.0 has only session_v2.
+var sessionTableNames = []string{"session_v2", "session"}
+
+func querySessions(conn *sql.DB, table string) ([]sessionRow, error) {
+	// table is one of sessionTableNames, never user input.
 	rows, err := conn.Query(`
 		SELECT
 			s.id,
@@ -168,31 +220,39 @@ func ParseAll(dbPath string) ([]*ccsessions.ParsedSession, error) {
 			COALESCE(s.time_created, 0),
 			COALESCE(s.time_updated, 0),
 			COALESCE(p.worktree, '')
-		FROM session s
+		FROM ` + table + ` s
 		LEFT JOIN project p ON p.id = s.project_id
 		WHERE s.parent_id IS NULL
 		ORDER BY s.time_updated DESC, s.id DESC
 	`)
 	if err != nil {
-		return nil, fmt.Errorf("query opencode sessions: %w", err)
+		return nil, fmt.Errorf("query opencode sessions from %s: %w", table, err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	var sessions []*ccsessions.ParsedSession
+	var out []sessionRow
 	for rows.Next() {
 		var row sessionRow
 		if err := rows.Scan(&row.ID, &row.Title, &row.Directory, &row.Version, &row.CreatedMS, &row.UpdatedMS, &row.ProjectRoot); err != nil {
-			return nil, fmt.Errorf("scan opencode session: %w", err)
+			return nil, fmt.Errorf("scan opencode session from %s: %w", table, err)
 		}
-		session, err := parseSession(conn, dbPath, info, row)
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+func existingTables(conn *sql.DB, names ...string) ([]string, error) {
+	var found []string
+	for _, name := range names {
+		ok, err := hasTables(conn, name)
 		if err != nil {
 			return nil, err
 		}
-		if session != nil {
-			sessions = append(sessions, session)
+		if ok {
+			found = append(found, name)
 		}
 	}
-	return sessions, rows.Err()
+	return found, nil
 }
 
 func openReadOnly(dbPath string) (*sql.DB, error) {
@@ -226,7 +286,51 @@ func hasTables(conn *sql.DB, names ...string) (bool, error) {
 	return true, nil
 }
 
-func parseSession(conn *sql.DB, dbPath string, dbInfo os.FileInfo, row sessionRow) (*ccsessions.ParsedSession, error) {
+// messageTables records which message storage a DB has: v1 message/part
+// tables, v2 session_message, or both.
+type messageTables struct {
+	v1, v2 bool
+}
+
+func parseSession(conn *sql.DB, dbPath string, dbInfo os.FileInfo, row sessionRow, tables messageTables) (*ccsessions.ParsedSession, error) {
+	var messages []ccsessions.ParsedMessage
+	var err error
+	// A session is written by one runtime, so it has messages in one table
+	// or the other. v2 is checked first because a v2 session has no v1 rows.
+	if tables.v2 {
+		messages, err = parseV2Messages(conn, row)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if len(messages) == 0 && tables.v1 {
+		messages, err = parseV1Messages(conn, row)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if len(messages) == 0 {
+		return nil, nil
+	}
+
+	summary := row.Title
+	if isDefaultTitle(summary) || strings.TrimSpace(summary) == "" {
+		summary = ccsessions.FirstUserSummary(messages)
+	}
+
+	return &ccsessions.ParsedSession{
+		SessionID: row.ID,
+		Summary:   summary,
+		// Synthetic path so the shared importer derives session_id from the
+		// OpenCode session ID while retaining source-db context for debugging.
+		FilePath:  filepath.Join(dbPath+".sessions", row.ID+".opencode"),
+		FileSize:  dbInfo.Size(),
+		FileMtime: dbInfo.ModTime(),
+		Messages:  messages,
+	}, nil
+}
+
+func parseV1Messages(conn *sql.DB, row sessionRow) ([]ccsessions.ParsedMessage, error) {
 	rows, err := conn.Query(`
 		SELECT id, COALESCE(time_created, 0), data
 		FROM message
@@ -259,25 +363,7 @@ func parseSession(conn *sql.DB, dbPath string, dbInfo os.FileInfo, row sessionRo
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("read opencode messages for %s: %w", row.ID, err)
 	}
-	if len(messages) == 0 {
-		return nil, nil
-	}
-
-	summary := row.Title
-	if isDefaultTitle(summary) || strings.TrimSpace(summary) == "" {
-		summary = ccsessions.FirstUserSummary(messages)
-	}
-
-	return &ccsessions.ParsedSession{
-		SessionID: row.ID,
-		Summary:   summary,
-		// Synthetic path so the shared importer derives session_id from the
-		// OpenCode session ID while retaining source-db context for debugging.
-		FilePath:  filepath.Join(dbPath+".sessions", row.ID+".opencode"),
-		FileSize:  dbInfo.Size(),
-		FileMtime: dbInfo.ModTime(),
-		Messages:  messages,
-	}, nil
+	return messages, nil
 }
 
 func parseMessage(conn *sql.DB, session sessionRow, row messageRow, sequence int) (ccsessions.ParsedMessage, bool, error) {

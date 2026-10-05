@@ -1672,3 +1672,28 @@ func TestImportRemoteDoesNotDeriveProjectFromSyntheticPath(t *testing.T) {
 		t.Fatalf("project_path = %q, want empty path for remote session without local tree", projectPath)
 	}
 }
+
+func TestDefaultSourcesIncludesClaudeOnlyWhenProjectsDirExists(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	for _, src := range DefaultSources(false) {
+		if src.Provider == "claude" {
+			t.Fatal("DefaultSources() included Claude with no ~/.claude/projects; sync would fail for non-Claude users")
+		}
+	}
+
+	claudeDir := filepath.Join(home, ".claude", "projects")
+	if err := os.MkdirAll(claudeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, src := range DefaultSources(false) {
+		if src.Provider == "claude" {
+			if src.Path != claudeDir {
+				t.Fatalf("Claude source path = %q, want %q", src.Path, claudeDir)
+			}
+			return
+		}
+	}
+	t.Fatal("DefaultSources() did not include Claude when ~/.claude/projects exists")
+}
