@@ -1,5 +1,6 @@
 # ccrider
 
+[![AgentHub 已收录：CCRider](https://myagenthub.cn/badge/io.github.neilberkman/ccrider)](https://myagenthub.cn/p/io.github.neilberkman/ccrider)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Release](https://img.shields.io/github/v/release/neilberkman/ccrider)](https://github.com/neilberkman/ccrider/releases)
 [![Homebrew](https://img.shields.io/badge/homebrew-neilberkman%2Ftap-orange)](https://github.com/neilberkman/homebrew-tap)
