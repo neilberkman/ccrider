@@ -25,6 +25,8 @@ type Config struct {
 	OpenCodeFlags        []string          // Additional flags to pass to opencode --session
 	PiFlags              []string          // Additional flags to pass to pi --session/--fork
 	LLMProvider          string            // LLM provider for summarization: "anthropic" or "bedrock"
+	LLMBaseURL           string            // Anthropic-compatible endpoint for summarization (e.g. local Ollama)
+	LLMModel             string            // Model ID for summarization (provider-specific)
 	LastExportDir        string            // Last manually chosen export directory (global)
 	RepoExportDirs       map[string]string // Last chosen export directory per repo root
 }
@@ -37,6 +39,8 @@ type tomlConfig struct {
 	OpenCodeFlags  []string          `toml:"opencode_flags"`
 	PiFlags        []string          `toml:"pi_flags"`
 	LLMProvider    string            `toml:"llm_provider"`
+	LLMBaseURL     string            `toml:"llm_base_url,omitempty"`
+	LLMModel       string            `toml:"llm_model,omitempty"`
 	LastExportDir  string            `toml:"last_export_dir,omitempty"`
 	RepoExportDirs map[string]string `toml:"repo_export_dirs,omitempty"`
 }
@@ -68,6 +72,8 @@ func Load() (*Config, error) {
 			cfg.OpenCodeFlags = tc.OpenCodeFlags
 			cfg.PiFlags = tc.PiFlags
 			cfg.LLMProvider = tc.LLMProvider
+			cfg.LLMBaseURL = tc.LLMBaseURL
+			cfg.LLMModel = tc.LLMModel
 			cfg.LastExportDir = tc.LastExportDir
 			cfg.RepoExportDirs = tc.RepoExportDirs
 		}
@@ -107,6 +113,8 @@ func Save(cfg *Config) error {
 		OpenCodeFlags:  cfg.OpenCodeFlags,
 		PiFlags:        cfg.PiFlags,
 		LLMProvider:    cfg.LLMProvider,
+		LLMBaseURL:     cfg.LLMBaseURL,
+		LLMModel:       cfg.LLMModel,
 		LastExportDir:  cfg.LastExportDir,
 		RepoExportDirs: cfg.RepoExportDirs,
 	}

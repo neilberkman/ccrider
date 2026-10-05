@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/neilberkman/ccrider/internal/core/config"
 	"github.com/neilberkman/ccrider/internal/core/db"
@@ -12,7 +13,8 @@ import (
 )
 
 // Env vars for credentials:
-// ANTHROPIC_API_KEY - Anthropic API key
+// ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL - Anthropic API or a compatible server
+// OPENAI_API_KEY, OPENAI_BASE_URL - OpenAI API or a compatible server
 // AWS credentials - standard AWS env vars or CCRIDER_AWS_* variants
 
 var (
@@ -23,6 +25,7 @@ var (
 	summarizeVerbose  bool
 	summarizeExtract  bool
 	summarizeProvider string
+	summarizeBaseURL  string
 )
 
 var summarizeCmd = &cobra.Command{
@@ -36,12 +39,25 @@ Features:
 - Metadata extraction: issue IDs (ENA-1234) and file paths
 - Incremental updates when sessions grow
 
-Supports two LLM providers:
-- Anthropic API: Set ANTHROPIC_API_KEY environment variable
-- AWS Bedrock: Configure AWS credentials (env vars, profile, or IAM role)
+Providers:
+- anthropic: Anthropic API (ANTHROPIC_API_KEY), or any Anthropic-compatible
+  server via --base-url / ANTHROPIC_BASE_URL. Default model: Claude Haiku 4.5
+  (` + llm.DefaultAnthropicModel + `)
+- bedrock: AWS Bedrock (AWS env vars, profile, or IAM role). Default model:
+  Claude Haiku 4.5 (` + llm.DefaultBedrockModel + `)
+- openai: OpenAI API (OPENAI_API_KEY), or any OpenAI-compatible server via
+  --base-url / OPENAI_BASE_URL: Ollama, LM Studio, llama.cpp, vLLM, LocalAI.
+  No API key is needed for a local server. Requires --model
+- codex: runs ` + "`codex exec`" + ` with your Codex CLI login, so a ChatGPT plan's
+  included usage pays for summaries instead of API billing. Uses the Codex
+  default model unless --model is given. Never auto-detected
 
-Provider is auto-detected from available credentials, or set explicitly via
---provider flag or llm_provider in ~/.config/ccrider/config.toml
+Without --provider or llm_provider in ~/.config/ccrider/config.toml, the
+provider is auto-detected from credentials: Anthropic, then AWS, then OpenAI.
+
+config.toml keys: llm_provider, llm_model, llm_base_url. Precedence: flag,
+then environment, then config.toml. llm_model and llm_base_url are ignored
+when --provider picks a different provider than llm_provider.
 
 Examples:
   # Summarize sessions (auto-detects provider)
@@ -50,6 +66,12 @@ Examples:
   # Use specific provider
   ccrider summarize --provider anthropic
   ccrider summarize --provider bedrock
+
+  # Use your ChatGPT plan through the Codex CLI
+  ccrider summarize --provider codex
+
+  # Use a local model through Ollama (session text stays on this machine)
+  ccrider summarize --provider openai --base-url http://localhost:11434/v1 --model qwen3
 
   # Summarize more sessions
   ccrider summarize --limit 50
@@ -65,8 +87,9 @@ Examples:
 func init() {
 	summarizeCmd.Flags().IntVarP(&summarizeLimit, "limit", "n", 10, "Number of sessions to summarize")
 	summarizeCmd.Flags().BoolVarP(&summarizeForce, "force", "f", false, "Re-summarize sessions that already have summaries")
-	summarizeCmd.Flags().StringVar(&summarizeProvider, "provider", "", "LLM provider: anthropic or bedrock (auto-detected if not set)")
-	summarizeCmd.Flags().StringVar(&summarizeModel, "model", "", "Model ID (provider-specific, defaults to claude-3-haiku)")
+	summarizeCmd.Flags().StringVar(&summarizeProvider, "provider", "", "LLM provider: anthropic, bedrock, openai, or codex (auto-detected if not set)")
+	summarizeCmd.Flags().StringVar(&summarizeModel, "model", "", "Model ID (provider-specific; anthropic and bedrock default to Claude Haiku 4.5)")
+	summarizeCmd.Flags().StringVar(&summarizeBaseURL, "base-url", "", "Endpoint for the openai or anthropic provider, e.g. http://localhost:11434/v1 for Ollama")
 	summarizeCmd.Flags().StringVar(&summarizeRegion, "region", "", "AWS region for Bedrock (default: us-east-1)")
 	summarizeCmd.Flags().BoolVarP(&summarizeVerbose, "verbose", "v", false, "Show verbose output")
 	summarizeCmd.Flags().BoolVar(&summarizeExtract, "extract-only", false, "Only extract metadata (issue IDs, files), no LLM calls")
@@ -296,114 +319,55 @@ func truncateID(id string) string {
 	return id
 }
 
-// createLLMProvider creates an LLM provider based on flags, config, or auto-detection
+// createLLMProvider resolves the provider from flags, config and environment,
+// then reports which one is in use.
 func createLLMProvider(ctx context.Context) (llm.Provider, error) {
-	// Load config for provider preference
-	cfg, _ := config.Load()
-
-	// Determine provider: flag > config > auto-detect
-	provider := summarizeProvider
-	if provider == "" && cfg != nil {
-		provider = cfg.LLMProvider
+	var file llm.Settings
+	if cfg, err := config.Load(); err == nil && cfg != nil {
+		file = llm.Settings{Provider: cfg.LLMProvider, Model: cfg.LLMModel, BaseURL: cfg.LLMBaseURL}
+	}
+	flags := llm.Settings{
+		Provider: summarizeProvider,
+		Model:    summarizeModel,
+		BaseURL:  summarizeBaseURL,
+		Region:   summarizeRegion,
 	}
 
-	// Check available credentials
-	anthropicKey := os.Getenv("ANTHROPIC_API_KEY")
-	hasAnthropic := anthropicKey != ""
-
-	// Check AWS credentials (simplified check)
-	hasAWS := os.Getenv("AWS_ACCESS_KEY_ID") != "" ||
-		os.Getenv("AWS_PROFILE") != "" ||
-		os.Getenv("AWS_DEFAULT_PROFILE") != "" ||
-		os.Getenv("CCRIDER_AWS_ACCESS_KEY_ID") != "" ||
-		os.Getenv("CCRIDER_AWS_PROFILE") != ""
-
-	// Auto-detect if no explicit provider
-	autoDetected := false
-	if provider == "" {
-		autoDetected = true
-		if hasAnthropic {
-			provider = "anthropic"
-		} else if hasAWS {
-			provider = "bedrock"
-		} else {
-			return nil, fmt.Errorf("no LLM credentials found. Set ANTHROPIC_API_KEY or configure AWS credentials")
-		}
+	resolved, err := llm.Resolve(flags, file, os.Getenv)
+	if err != nil {
+		return nil, err
 	}
+	printProviderChoice(resolved)
+	return llm.NewProvider(ctx, resolved)
+}
 
-	// Create the provider
-	switch provider {
-	case "anthropic":
-		if !hasAnthropic {
-			return nil, fmt.Errorf("ANTHROPIC_API_KEY not set")
+func printProviderChoice(r *llm.Resolved) {
+	switch {
+	case r.Anthropic != nil && r.Anthropic.BaseURL != "":
+		fmt.Printf("Using Anthropic-compatible API at %s (%s)\n", llm.NormalizeAnthropicBaseURL(r.Anthropic.BaseURL), r.Anthropic.ModelID)
+		if r.Anthropic.ModelID == llm.DefaultAnthropicModel {
+			fmt.Printf("  Local servers usually need their own model name: --model or llm_model in config.toml\n")
 		}
-
-		model := summarizeModel
+	case r.Anthropic != nil:
+		fmt.Printf("Using Anthropic API (%s)\n", r.Anthropic.ModelID)
+	case r.Bedrock != nil:
+		fmt.Printf("Using AWS Bedrock (%s, %s)\n", r.Bedrock.ModelID, r.Bedrock.Region)
+	case r.OpenAI != nil:
+		baseURL := r.OpenAI.BaseURL
+		if baseURL == "" {
+			baseURL = llm.DefaultOpenAIBaseURL
+		}
+		fmt.Printf("Using OpenAI-compatible API at %s (%s)\n", baseURL, r.OpenAI.ModelID)
+	case r.Codex != nil:
+		model := r.Codex.ModelID
 		if model == "" {
-			model = "claude-haiku-4-5-20251001"
+			model = "Codex default model"
 		}
-
-		if autoDetected {
-			fmt.Printf("Using Anthropic API (%s) [auto-detected from ANTHROPIC_API_KEY]\n", model)
-			fmt.Printf("  To use AWS Bedrock instead: --provider bedrock or set llm_provider in config.toml\n\n")
-		} else {
-			fmt.Printf("Using Anthropic API (%s)\n", model)
-		}
-
-		return llm.NewAnthropicProvider(llm.AnthropicConfig{
-			APIKey:  anthropicKey,
-			ModelID: model,
-		})
-
-	case "bedrock":
-		region := summarizeRegion
-		if region == "" {
-			region = os.Getenv("CCRIDER_AWS_REGION")
-		}
-		if region == "" {
-			region = os.Getenv("AWS_REGION")
-		}
-		if region == "" {
-			region = os.Getenv("AWS_DEFAULT_REGION")
-		}
-		if region == "" {
-			region = "us-east-1"
-		}
-
-		accessKey := os.Getenv("AWS_ACCESS_KEY_ID")
-		if v := os.Getenv("CCRIDER_AWS_ACCESS_KEY_ID"); v != "" {
-			accessKey = v
-		}
-		secretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
-		if v := os.Getenv("CCRIDER_AWS_SECRET_ACCESS_KEY"); v != "" {
-			secretKey = v
-		}
-		profile := os.Getenv("AWS_PROFILE")
-		if v := os.Getenv("CCRIDER_AWS_PROFILE"); v != "" {
-			profile = v
-		}
-
-		model := summarizeModel
-		if model == "" {
-			model = "global.anthropic.claude-haiku-4-5-20251001-v1:0"
-		}
-
-		if autoDetected {
-			fmt.Printf("Using AWS Bedrock (%s, %s) [auto-detected from AWS credentials]\n", model, region)
-			fmt.Printf("  To use Anthropic API instead: set ANTHROPIC_API_KEY and use --provider anthropic\n\n")
-		} else {
-			fmt.Printf("Using AWS Bedrock (%s, %s)\n", model, region)
-		}
-
-		return llm.NewBedrockProvider(ctx, llm.BedrockConfig{
-			Region:          region,
-			ModelID:         model,
-			Profile:         profile,
-			AccessKeyID:     accessKey,
-			SecretAccessKey: secretKey,
-		})
-
-	default:
-		return nil, fmt.Errorf("unknown provider: %s (use 'anthropic' or 'bedrock')", provider)
+		fmt.Printf("Using Codex CLI login (%s)\n", model)
 	}
+	if r.AutoDetected {
+		fmt.Printf("  Auto-detected from credentials; choose another with --provider (%s) or llm_provider in config.toml\n",
+			strings.Join(llm.ProviderNames, ", "))
+	}
+	fmt.Println()
 }
