@@ -154,7 +154,7 @@ Format:
 ONE_LINE: <summary>
 FULL: <summary>`, projectName, conversationText)
 
-	response, err := s.provider.GenerateText(ctx, prompt)
+	response, err := s.generate(ctx, prompt)
 	if err != nil {
 		return "", "", 0, err
 	}
@@ -163,6 +163,36 @@ FULL: <summary>`, projectName, conversationText)
 	tokens = estimateTokens(conversationText) + estimateTokens(response)
 
 	return oneLine, full, tokens, nil
+}
+
+// generate calls the provider and drops any reasoning the model returned
+// inline, so it never reaches the summary parser.
+func (s *HierarchicalSummarizer) generate(ctx context.Context, prompt string) (string, error) {
+	response, err := s.provider.GenerateText(ctx, prompt)
+	if err != nil {
+		return "", err
+	}
+	return stripReasoning(response), nil
+}
+
+// thinkBlockRe matches a reasoning block as emitted inline by local
+// reasoning models (Qwen3, DeepSeek-R1, QwQ) on servers that don't split it
+// into a separate field.
+var thinkBlockRe = regexp.MustCompile(`(?is)<(think|thinking|reasoning)>.*?</(think|thinking|reasoning)>`)
+
+// stripReasoning removes inline reasoning blocks. Some chat templates open
+// the block in the prompt, so the response holds only the closing tag; in
+// that case everything up to the last closing tag is reasoning.
+func stripReasoning(response string) string {
+	out := thinkBlockRe.ReplaceAllString(response, "")
+	lower := strings.ToLower(out)
+	for _, tag := range []string{"</think>", "</thinking>", "</reasoning>"} {
+		if i := strings.LastIndex(lower, tag); i >= 0 {
+			out = out[i+len(tag):]
+			lower = lower[i+len(tag):]
+		}
+	}
+	return strings.TrimSpace(out)
 }
 
 // summarizeChunk summarizes a single chunk of messages
@@ -186,7 +216,7 @@ RULES:
 
 Provide 1-2 paragraphs covering: the specific problem being solved, root cause if discovered, changes made, whether this chunk completed the fix or it continues.`, chunkIndex+1, totalChunks, projectName, conversationText)
 
-	response, err := s.provider.GenerateText(ctx, prompt)
+	response, err := s.generate(ctx, prompt)
 	if err != nil {
 		return "", 0, err
 	}
@@ -243,7 +273,7 @@ Format:
 ONE_LINE: <summary>
 FULL: <summary>`, projectName, combinedChunks)
 
-	response, err := s.provider.GenerateText(ctx, prompt)
+	response, err := s.generate(ctx, prompt)
 	if err != nil {
 		return "", "", 0, err
 	}

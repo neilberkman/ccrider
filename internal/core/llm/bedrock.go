@@ -11,6 +11,10 @@ import (
 	"github.com/tmc/langchaingo/llms/bedrock"
 )
 
+// DefaultBedrockModel is the newest Haiku through the global inference
+// profile, for cross-region availability.
+const DefaultBedrockModel = "global.anthropic.claude-haiku-4-5-20251001-v1:0"
+
 // BedrockProvider implements Provider using AWS Bedrock
 type BedrockProvider struct {
 	llm     *bedrock.LLM
@@ -20,7 +24,7 @@ type BedrockProvider struct {
 // BedrockConfig holds configuration for Bedrock provider
 type BedrockConfig struct {
 	Region          string // AWS region, defaults to us-east-1
-	ModelID         string // Model ID, defaults to anthropic.claude-3-haiku-20240307-v1:0
+	ModelID         string // Model ID, defaults to DefaultBedrockModel
 	Profile         string // AWS profile name (optional)
 	AccessKeyID     string // AWS access key ID (optional, for explicit creds)
 	SecretAccessKey string // AWS secret access key (optional, for explicit creds)
@@ -32,9 +36,7 @@ func NewBedrockProvider(ctx context.Context, cfg BedrockConfig) (*BedrockProvide
 		cfg.Region = "us-east-1"
 	}
 	if cfg.ModelID == "" {
-		// Default to Haiku 4.5 for cost-effective summarization
-		// Uses global inference profile for cross-region availability
-		cfg.ModelID = "global.anthropic.claude-haiku-4-5-20251001-v1:0"
+		cfg.ModelID = DefaultBedrockModel
 	}
 
 	// Load AWS config
