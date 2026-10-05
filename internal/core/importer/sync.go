@@ -69,13 +69,18 @@ func DefaultSources(ampEnabled bool) []Source {
 		return []Source{}
 	}
 
-	sources := []Source{
-		{
-			Path:          filepath.Join(home, ".claude", "projects"),
+	var sources []Source
+
+	// Claude Code is gated on its directory like every other provider, so a
+	// machine that only runs OpenCode or Codex can still sync.
+	claudePath := filepath.Join(home, ".claude", "projects")
+	if _, err := os.Stat(claudePath); err == nil {
+		sources = append(sources, Source{
+			Path:          claudePath,
 			ParseFn:       ccsessions.ParseFile,
 			Provider:      "claude",
 			SkipSubagents: true,
-		},
+		})
 	}
 
 	codexPath := filepath.Join(home, ".codex", "sessions")
