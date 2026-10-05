@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`ccrider ps` and `list_open_sessions` pair each process with its own session** — a process with no session id in its command line was matched to the most recent session in its working directory, so every such process in one directory showed the same session, usually the newest one. Matching now reads the session each agent records as its own: Claude Code's per-process registry (`<config dir>/sessions/<pid>.json`, across `~/.claude` and `~/.claude-*` config directories, crediting a background session's entry to its pty host) and the thread locks Codex holds in `~/.codex/thread-writer-locks`. These rows report `match: "declared"` and follow `/clear` and in-session resumes, which the command line does not. The working-directory fallback now gives each session to at most one process and picks the session started soonest after the process, letting newer processes choose first
+- **Helper processes are no longer listed as sessions** — `claude daemon` and the ChatGPT app's `codex sandbox` helpers were listed as live sessions
+
 ## [1.12.0] - 2026-10-02
 
 ### Added

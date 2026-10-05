@@ -31,6 +31,16 @@ func TestMatchLiveProcess(t *testing.T) {
 			ok:   false,
 		},
 		{
+			name: "claude background daemon excluded",
+			argv: []string{"/Users/neil/.local/bin/claude", "daemon", "run", "--json-path", "/tmp/daemon.json"},
+			ok:   false,
+		},
+		{
+			name: "codex sandbox helper excluded",
+			argv: []string{"/Applications/ChatGPT.app/Contents/Resources/codex", "sandbox", "-c", `shell_environment_policy.inherit="all"`},
+			ok:   false,
+		},
+		{
 			name:     "codex resume native binary",
 			argv:     []string{"/opt/homebrew/.../bin/codex", "--dangerously-bypass-approvals-and-sandbox", "resume", "019fcb64-509d-7ef0-bd45-918cec3ac1a2"},
 			provider: ProviderCodex, session: "019fcb64-509d-7ef0-bd45-918cec3ac1a2", ok: true,

@@ -17,9 +17,14 @@ var psCmd = &cobra.Command{
 grouped by project and annotated with idle time.
 
 Matching confidence:
-  - a session id in the process command line is an exact match
-  - otherwise the process working directory is matched against session
-    project paths (sessions started after the process began)
+  - declared: the session the process has recorded as its own (Claude Code's
+    per-process session registry, Codex's thread locks); exact and current
+    after /clear or an in-session resume
+  - argv: a session id in the process command line; exact for the session
+    the process was launched with
+  - cwd: the process working directory is matched against session project
+    paths (the earliest session started after the process began, never one
+    another process already holds)
   - agent processes matching no known session are listed as unknown`,
 	Args: cobra.NoArgs,
 	RunE: runPs,
