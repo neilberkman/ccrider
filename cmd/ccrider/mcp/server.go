@@ -641,7 +641,7 @@ type OpenSession struct {
 	Summary     string `json:"summary,omitempty"`
 	TTY         string `json:"tty,omitempty"`
 	PID         int32  `json:"pid"`
-	Match       string `json:"match"` // argv | cwd | none
+	Match       string `json:"match"` // declared | argv | cwd | none
 	IdleSeconds int64  `json:"idle_seconds"`
 }
 

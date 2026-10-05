@@ -1,8 +1,11 @@
 // Package liveness discovers which coding agent sessions currently have a
 // live process attached, and matches those processes back to sessions in the
-// ccrider database. Detection is tiered: a session id recovered from the
-// process command line is an exact match; otherwise the process working
-// directory is matched against session project paths; a provider process
+// ccrider database. Detection is tiered: a session id the process itself
+// declares on disk (Claude Code's per-PID session registry, Codex's
+// thread-writer locks) is exact and current; a session id recovered from the
+// command line is exact for the session the process was launched with;
+// otherwise the process working directory is matched against session project
+// paths, each session going to at most one process; a provider process
 // matching nothing is still reported, as unknown.
 package liveness
 
@@ -18,9 +21,10 @@ import (
 
 // Match confidence for one live session row.
 const (
-	MatchArgv    = "argv" // session id was present in the process command line
-	MatchCwd     = "cwd"  // matched via process working directory + timing
-	MatchUnknown = "none" // provider process with no matching session
+	MatchDeclared = "declared" // the process declared its current session on disk
+	MatchArgv     = "argv"     // session id was present in the process command line
+	MatchCwd      = "cwd"      // matched via process working directory + timing
+	MatchUnknown  = "none"     // provider process with no matching session
 )
 
 // Process is one row from a process table scan. Sources fill what the
@@ -32,6 +36,10 @@ type Process struct {
 	Cwd       string
 	TTY       string
 	StartedAt time.Time
+	// Declared holds session ids the process itself has recorded as its own
+	// (bare UUIDs or full ids). Codex holds several when it has spawned
+	// sub-threads; Scan picks the most recently active one it knows.
+	Declared []string
 }
 
 // Source enumerates candidate processes. The production implementation scans
@@ -81,15 +89,35 @@ func Scan(ctx context.Context, src Source, database *db.DB) ([]LiveSession, erro
 
 	// Agent CLIs fork helper copies of themselves (and node wrappers exec
 	// native children); listing both parent and child would double-count one
-	// window. A process whose parent is also a candidate is the helper.
-	candidates := make(map[int32]bool, len(procs))
-	for _, proc := range procs {
-		candidates[proc.PID] = true
+	// window. A process whose parent is also a candidate is the helper. What
+	// a helper declares belongs to the window it serves: the Codex node
+	// wrapper is the listed process, but its native child holds the locks.
+	byPID := make(map[int32]*Process, len(procs))
+	for i := range procs {
+		byPID[procs[i].PID] = &procs[i]
+	}
+	top := func(p *Process) *Process {
+		for seen := 0; p.PPID != 0 && seen < len(procs); seen++ {
+			parent, ok := byPID[p.PPID]
+			if !ok {
+				break
+			}
+			p = parent
+		}
+		return p
+	}
+	declared := make(map[int32][]string)
+	for i := range procs {
+		if len(procs[i].Declared) > 0 {
+			root := top(&procs[i]).PID
+			declared[root] = append(declared[root], procs[i].Declared...)
+		}
 	}
 
 	var live []LiveSession
+	claimed := make(map[string]bool)
 	for _, proc := range procs {
-		if proc.PPID != 0 && candidates[proc.PPID] {
+		if proc.PPID != 0 && byPID[proc.PPID] != nil {
 			continue
 		}
 		match, ok := session.MatchLiveProcess(proc.Argv)
@@ -105,26 +133,23 @@ func Scan(ctx context.Context, src Source, database *db.DB) ([]LiveSession, erro
 			Match:       MatchUnknown,
 		}
 
-		if match.SessionID != "" {
+		// The declared session beats argv: a process launched with --resume
+		// keeps that id in its command line after /clear or an in-session
+		// resume moves it to another session.
+		if info := mostRecentKnown(database, declared[proc.PID]); info != nil {
+			row.setSession(info, MatchDeclared)
+		} else if match.SessionID != "" {
 			if info := lookupSession(database, match.SessionID); info != nil {
-				row.SessionID = info.SessionID
-				row.Summary = info.Summary
-				row.ProjectPath = info.ProjectPath
-				row.LastActivity = info.UpdatedAt
-				row.Match = MatchArgv
+				row.setSession(info, MatchArgv)
 			}
 		}
-		if row.Match == MatchUnknown && proc.Cwd != "" {
-			if info := matchByCwd(database, proc.Cwd, proc.StartedAt, match.Provider); info != nil {
-				row.SessionID = info.SessionID
-				row.Summary = info.Summary
-				row.ProjectPath = info.ProjectPath
-				row.LastActivity = info.UpdatedAt
-				row.Match = MatchCwd
-			}
+		if row.SessionID != "" {
+			claimed[row.SessionID] = true
 		}
 		live = append(live, row)
 	}
+
+	matchUnclaimedByCwd(database, live, claimed)
 
 	sort.Slice(live, func(i, j int) bool {
 		if live[i].ProjectPath != live[j].ProjectPath {
@@ -133,6 +158,14 @@ func Scan(ctx context.Context, src Source, database *db.DB) ([]LiveSession, erro
 		return live[i].LastActivity.After(live[j].LastActivity)
 	})
 	return live, nil
+}
+
+func (l *LiveSession) setSession(info *db.Session, match string) {
+	l.SessionID = info.SessionID
+	l.Summary = info.Summary
+	l.ProjectPath = info.ProjectPath
+	l.LastActivity = info.UpdatedAt
+	l.Match = match
 }
 
 // lookupSession resolves an argv-recovered id (which may be a bare UUID) to
@@ -146,33 +179,87 @@ func lookupSession(database *db.DB, id string) *db.Session {
 	return info
 }
 
-// matchByCwd pairs a fresh (non-resumed) process with the most recent session
-// of the same provider created at or after the process started, in the
-// process's working directory or one of its ancestors. Walking up covers
-// agents launched in a subdirectory of the recorded project path.
-func matchByCwd(database *db.DB, cwd string, startedAt time.Time, provider string) *db.Session {
-	const maxAncestors = 5
-	dir := cwd
-	for range maxAncestors {
-		sessions, err := database.SessionsForProjectPath(dir, 10)
-		if err == nil {
-			for _, s := range sessions {
-				if s.Provider != provider {
-					continue
-				}
-				if !startedAt.IsZero() && s.CreatedAt.Before(startedAt.Add(-cwdCreatedSlack)) {
-					continue
-				}
-				return &s
-			}
+// mostRecentKnown resolves declared ids and returns the most recently
+// updated one present in the database, or nil when none is imported yet.
+func mostRecentKnown(database *db.DB, ids []string) *db.Session {
+	var best *db.Session
+	for _, id := range ids {
+		info := lookupSession(database, id)
+		if info != nil && (best == nil || info.UpdatedAt.After(best.UpdatedAt)) {
+			best = info
 		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
 	}
-	return nil
+	return best
+}
+
+// cwdCandidateLimit bounds the per-directory session read for the cwd tier.
+// Sessions come back most recently updated first, and a session created after
+// a process started was also updated after it, so the window holds every
+// candidate unless that many sessions in one directory changed since.
+const cwdCandidateLimit = 200
+
+// matchUnclaimedByCwd fills rows still unknown after the exact tiers. Each
+// fresh (non-resumed) process gets the earliest session of its provider
+// created at or after it started, in its working directory or one of its
+// ancestors (walking up covers agents launched in a subdirectory of the
+// recorded project path). Sessions already held by a process are skipped and
+// each session goes to at most one process; newer processes choose first, so
+// a long-idle process whose own session is missing cannot take a newer
+// process's session.
+func matchUnclaimedByCwd(database *db.DB, live []LiveSession, claimed map[string]bool) {
+	var pending []int
+	for i := range live {
+		if live[i].Match == MatchUnknown && live[i].ProjectPath != "" {
+			pending = append(pending, i)
+		}
+	}
+	sort.SliceStable(pending, func(a, b int) bool {
+		return live[pending[a]].StartedAt.After(live[pending[b]].StartedAt)
+	})
+
+	candidates := make(map[string][]db.Session)
+	sessionsIn := func(dir string) []db.Session {
+		if s, ok := candidates[dir]; ok {
+			return s
+		}
+		s, err := database.SessionsForProjectPath(dir, cwdCandidateLimit)
+		if err != nil {
+			s = nil
+		}
+		candidates[dir] = s
+		return s
+	}
+
+	const maxAncestors = 5
+	for _, i := range pending {
+		row := &live[i]
+		dir := row.ProjectPath
+		for range maxAncestors {
+			var best *db.Session
+			for _, s := range sessionsIn(dir) {
+				if s.Provider != row.Provider || claimed[s.SessionID] {
+					continue
+				}
+				if !row.StartedAt.IsZero() && s.CreatedAt.Before(row.StartedAt.Add(-cwdCreatedSlack)) {
+					continue
+				}
+				if best == nil || s.CreatedAt.Before(best.CreatedAt) {
+					s := s
+					best = &s
+				}
+			}
+			if best != nil {
+				row.setSession(best, MatchCwd)
+				claimed[best.SessionID] = true
+				break
+			}
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+			dir = parent
+		}
+	}
 }
 
 // Group is a set of live sessions sharing a project path, ordered as Scan

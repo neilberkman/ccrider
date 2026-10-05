@@ -51,11 +51,11 @@ type liveSpec struct {
 // never appears in live listings, which is the safe default.
 var liveSpecs = map[string]liveSpec{
 	ProviderClaude: {
-		exclude:   []string{"mcp", "config", "doctor", "update", "install", "setup-token", "migrate-installer"},
+		exclude:   []string{"mcp", "config", "doctor", "update", "install", "setup-token", "migrate-installer", "daemon"},
 		sessionID: func(args []string) string { return flagUUIDValue(args, "--resume", "-r") },
 	},
 	ProviderCodex: {
-		exclude:   []string{"app-server", "mcp", "mcp-server", "login", "logout", "completion", "apply"},
+		exclude:   []string{"app-server", "mcp", "mcp-server", "login", "logout", "completion", "apply", "sandbox"},
 		sessionID: func(args []string) string { return subcommandUUIDValue(args, "resume", "fork") },
 	},
 	ProviderCopilot: {
