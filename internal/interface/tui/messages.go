@@ -13,6 +13,7 @@ import (
 	"github.com/neilberkman/ccrider/internal/core/importer"
 	"github.com/neilberkman/ccrider/internal/core/liveness"
 	"github.com/neilberkman/ccrider/internal/core/search"
+	coresession "github.com/neilberkman/ccrider/internal/core/session"
 )
 
 type errMsg struct {
@@ -180,7 +181,7 @@ func loadSessionForLaunch(database *db.DB, sessionID string) tea.Cmd {
 
 		return sessionLaunchInfoMsg{
 			provider:    session.Provider,
-			sessionID:   session.SessionID,
+			sessionID:   coresession.ResumeTarget(session.SessionID, session.ResumeVia, false),
 			projectPath: session.ProjectPath,
 			lastCwd:     lastCwd,
 			updatedAt:   session.UpdatedAt.Format(time.RFC3339),
@@ -206,6 +207,7 @@ func loadSessionDetail(database *db.DB, sessionID string) tea.Cmd {
 			UpdatedAt:    coreDetail.UpdatedAt.Format(time.RFC3339),
 			CreatedAt:    coreDetail.UpdatedAt.Format(time.RFC3339),
 			Provider:     coreDetail.Provider,
+			ResumeVia:    coreDetail.ResumeVia,
 		}
 
 		var messages []messageItem

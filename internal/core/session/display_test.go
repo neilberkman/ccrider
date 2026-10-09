@@ -203,6 +203,23 @@ func TestDisplayResumeCommandFor(t *testing.T) {
 		}
 	})
 
+	t.Run("sub-agent resumes through its recorded root", func(t *testing.T) {
+		withTempConfig(t, "")
+		src := fakeLaunchInfoSource{
+			info: &db.Session{
+				SessionID:   "rollout-2026-10-05T00-02-00-0199a001-0000-7000-8000-00000000c41d",
+				ProjectPath: "/Users/x/proj",
+				Provider:    "codex",
+				ResumeVia:   "0199a000-0000-7000-8000-000000000001",
+			},
+		}
+		got := DisplayResumeCommandFor(src, "0199a001-0000-7000-8000-00000000c41d")
+		want := "cd '/Users/x/proj' && codex resume '0199a000-0000-7000-8000-000000000001'"
+		if got != want {
+			t.Errorf("DisplayResumeCommandFor = %q, want %q", got, want)
+		}
+	})
+
 	t.Run("lookup failure falls back to bare command with comment", func(t *testing.T) {
 		withTempConfig(t, "")
 		src := fakeLaunchInfoSource{err: errors.New("not found")}

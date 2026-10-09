@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -58,6 +59,10 @@ type Source struct {
 	Provider      string
 	SkipSubagents bool
 	Optional      bool
+	// ResumeViaFn reads a session file's ParsedSession.ResumeVia without
+	// parsing the transcript. File sources that record ResumeVia set it so
+	// sync can backfill rows imported before the field existed.
+	ResumeViaFn func(path string) (string, error)
 }
 
 // DefaultSources returns the standard import sources. Local optional providers
@@ -90,6 +95,7 @@ func DefaultSources(ampEnabled bool) []Source {
 			ParseFn:       codexsessions.ParseFile,
 			Provider:      "codex",
 			SkipSubagents: false,
+			ResumeViaFn:   codexsessions.ReadResumeVia,
 		})
 	}
 
@@ -261,7 +267,11 @@ func (i *Importer) PrepareSource(ctx context.Context, src Source) (PreparedSourc
 			if err := ctx.Err(); err != nil {
 				return ImportResult{}, err
 			}
-			return i.ImportDirectory(ctx, src.Path, progress, force, src.SkipSubagents, src.ParseFn, src.Provider)
+			result, err := i.ImportDirectory(ctx, src.Path, progress, force, src.SkipSubagents, src.ParseFn, src.Provider)
+			if err != nil || src.ResumeViaFn == nil {
+				return result, err
+			}
+			return result, i.BackfillResumeVia(ctx, src)
 		},
 	}, nil
 }
@@ -371,4 +381,93 @@ func summarizeIDs(ids []string, limit int) string {
 		return strings.Join(ids, ", ")
 	}
 	return fmt.Sprintf("%s, and %d more", strings.Join(ids[:limit], ", "), len(ids)-limit)
+}
+
+// BackfillResumeVia records resume_via for src's sessions imported before the
+// column existed (NULL rows), reading each file through src.ResumeViaFn
+// instead of re-importing it. With no NULL rows it does not touch the
+// filesystem. A row whose file is gone is recorded as "" so it is not looked
+// up again; a file that fails to read stays NULL and is reported after the
+// rest are recorded. Progress commits per batch, so a cancelled run resumes
+// where it stopped on the next sync.
+func (i *Importer) BackfillResumeVia(ctx context.Context, src Source) error {
+	rows, err := i.db.Query(`SELECT session_id FROM sessions WHERE provider = ? AND resume_via IS NULL`, src.Provider)
+	if err != nil {
+		return fmt.Errorf("load sessions missing resume_via: %w", err)
+	}
+	pending := make(map[string]bool)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan session missing resume_via: %w", err)
+		}
+		pending[id] = true
+	}
+	_ = rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("load sessions missing resume_via: %w", err)
+	}
+	if len(pending) == 0 {
+		return nil
+	}
+
+	paths := make(map[string]string, len(pending))
+	err = filepath.WalkDir(src.Path, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || filepath.Ext(path) != ".jsonl" {
+			return nil
+		}
+		if id := strings.TrimSuffix(d.Name(), ".jsonl"); pending[id] {
+			paths[id] = path
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("walk %s: %w", src.Path, err)
+	}
+
+	const batchSize = 500
+	ids := make([]string, 0, len(pending))
+	for id := range pending {
+		ids = append(ids, id)
+	}
+	var readErrs []error
+	for start := 0; start < len(ids); start += batchSize {
+		end := min(start+batchSize, len(ids))
+		if err := i.backfillResumeViaBatch(ctx, src, ids[start:end], paths, &readErrs); err != nil {
+			return err
+		}
+	}
+	return errors.Join(readErrs...)
+}
+
+func (i *Importer) backfillResumeViaBatch(ctx context.Context, src Source, ids []string, paths map[string]string, readErrs *[]error) error {
+	tx, err := i.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, id := range ids {
+		if err := ctx.Err(); err != nil {
+			// Keep the rows already read; the next sync picks up the rest.
+			if commitErr := tx.Commit(); commitErr != nil {
+				return commitErr
+			}
+			return err
+		}
+		via := ""
+		if path, ok := paths[id]; ok {
+			if via, err = src.ResumeViaFn(path); err != nil {
+				*readErrs = append(*readErrs, fmt.Errorf("read resume_via for %s: %w", id, err))
+				continue
+			}
+		}
+		if _, err := tx.Exec(`UPDATE sessions SET resume_via = ? WHERE session_id = ?`, via, id); err != nil {
+			return fmt.Errorf("record resume_via for %s: %w", id, err)
+		}
+	}
+	return tx.Commit()
 }

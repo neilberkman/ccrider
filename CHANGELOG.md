@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Codex sub-agent sessions resume through their root thread** — Codex refuses `codex resume` on a multi-agent v2 sub-agent ("cannot resume an unloaded multi-agent v2 sub-agent through its parent; resume the parent first"), so the resume command ccrider showed for these sessions failed. ccrider now reads the root thread from the sub-agent's `session_meta` and resumes that instead, in the MCP `resume_command`, `debug-prompt`, and the TUI's resume, copy and open-in-terminal actions. Resuming the root reopens the sub-agent with it. Fork still copies the sub-agent itself, since `codex fork` accepts it. v1 sub-agents, guardian reviews and `/review` sessions resume directly as before. Sessions already in the database are backfilled on the next sync by reading only each file's first line, so existing transcripts are not re-imported
+
 ## [1.13.0] - 2026-10-05
 
 ### Added

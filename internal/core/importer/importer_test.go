@@ -1697,3 +1697,120 @@ func TestDefaultSourcesIncludesClaudeOnlyWhenProjectsDirExists(t *testing.T) {
 	}
 	t.Fatal("DefaultSources() did not include Claude when ~/.claude/projects exists")
 }
+
+func TestImportSession_CodexSubAgentResumesThroughRoot(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // no user config flags in the resume command
+	database, err := db.New(filepath.Join(t.TempDir(), "subagent.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+
+	parsed, err := codexsessions.ParseFile("../../../pkg/codexsessions/testdata/subagent_v2.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := New(database).ImportSession(parsed, 0, 0, 0, "hash", "codex"); err != nil {
+		t.Fatalf("ImportSession() error = %v", err)
+	}
+
+	const root = "0199a000-0000-7000-8000-000000000001"
+	info, _, err := database.GetSessionLaunchInfo("subagent_v2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.ResumeVia != root {
+		t.Errorf("GetSessionLaunchInfo ResumeVia = %q, want %q", info.ResumeVia, root)
+	}
+	detail, err := database.GetSessionDetail("subagent_v2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.ResumeVia != root {
+		t.Errorf("GetSessionDetail ResumeVia = %q, want %q", detail.ResumeVia, root)
+	}
+	sessions, err := database.ListSessions("", "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 1 || sessions[0].ResumeVia != root {
+		t.Errorf("ListSessions = %+v, want one session with ResumeVia %q", sessions, root)
+	}
+	results, err := search.SearchWithFilters(database, search.SearchFilters{Query: "dependency pins"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].ResumeVia != root {
+		t.Errorf("search results = %+v, want one session with ResumeVia %q", results, root)
+	}
+	if got, want := session.DisplayResumeCommandFor(database, "subagent_v2"), "cd '/home/testuser/myproject' && codex resume '"+root+"'"; got != want {
+		t.Errorf("DisplayResumeCommandFor = %q, want %q", got, want)
+	}
+}
+
+func TestBackfillResumeVia(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "backfill.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+
+	const root = "0199a000-0000-7000-8000-000000000001"
+	dir := filepath.Join(t.TempDir(), "sessions", "2026", "10", "05")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fixture, err := os.ReadFile("../../../pkg/codexsessions/testdata/subagent_v2.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "child.jsonl"), fixture, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sample, err := os.ReadFile("../../../pkg/codexsessions/testdata/sample.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "plain.jsonl"), sample, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`
+		INSERT INTO sessions (session_id, project_path, provider, resume_via) VALUES
+			('child', '/p', 'codex', NULL),
+			('plain', '/p', 'codex', NULL),
+			('gone', '/p', 'codex', NULL),
+			('recorded', '/p', 'codex', 'kept'),
+			('other-provider', '/p', 'claude', NULL)
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	src := Source{Path: filepath.Dir(filepath.Dir(filepath.Dir(dir))), Provider: "codex", ResumeViaFn: codexsessions.ReadResumeVia}
+	if err := New(database).BackfillResumeVia(context.Background(), src); err != nil {
+		t.Fatalf("BackfillResumeVia() error = %v", err)
+	}
+
+	want := map[string]sql.NullString{
+		"child":          {String: root, Valid: true},
+		"plain":          {String: "", Valid: true},
+		"gone":           {String: "", Valid: true},
+		"recorded":       {String: "kept", Valid: true},
+		"other-provider": {},
+	}
+	for id, w := range want {
+		var got sql.NullString
+		if err := database.QueryRow(`SELECT resume_via FROM sessions WHERE session_id = ?`, id).Scan(&got); err != nil {
+			t.Fatal(err)
+		}
+		if got != w {
+			t.Errorf("%s resume_via = %+v, want %+v", id, got, w)
+		}
+	}
+
+	// With nothing left to record, the source directory is not read: a
+	// missing path would fail the walk.
+	src.Path = filepath.Join(t.TempDir(), "missing")
+	if err := New(database).BackfillResumeVia(context.Background(), src); err != nil {
+		t.Fatalf("BackfillResumeVia() with nothing pending error = %v", err)
+	}
+}

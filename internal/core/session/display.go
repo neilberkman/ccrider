@@ -37,11 +37,12 @@ type LaunchInfoSource interface {
 // bare command with the missing-project comment rather than erroring, so
 // callers always have something to show. The command uses the canonical
 // session id from the lookup, not the caller's input, so a session looked
-// up by bare UUID still resumes under its full provider id.
+// up by bare UUID still resumes under its full provider id, or under the
+// session recorded to resume in its place (see ResumeTarget).
 func DisplayResumeCommandFor(src LaunchInfoSource, sessionID string) string {
 	info, lastCwd, err := src.GetSessionLaunchInfo(sessionID)
 	if err != nil {
 		return DisplayResumeCommand("", sessionID, "", "", false)
 	}
-	return DisplayResumeCommand(info.Provider, info.SessionID, info.ProjectPath, lastCwd, false)
+	return DisplayResumeCommand(info.Provider, ResumeTarget(info.SessionID, info.ResumeVia, false), info.ProjectPath, lastCwd, false)
 }

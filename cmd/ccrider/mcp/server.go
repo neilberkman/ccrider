@@ -130,7 +130,7 @@ func toSessionMatch(cs search.SessionSearchResult, cfg *config.Config) SessionMa
 		Project:       cs.ProjectPath,
 		UpdatedAt:     cs.UpdatedAt,
 		Provider:      cs.Provider,
-		ResumeCommand: session.ResumeCommandIn(cs.ProjectPath, cs.Provider, cs.SessionID, "", false, session.ProviderFlags(cfg, cs.Provider)),
+		ResumeCommand: session.ResumeCommandIn(cs.ProjectPath, cs.Provider, session.ResumeTarget(cs.SessionID, cs.ResumeVia, false), "", false, session.ProviderFlags(cfg, cs.Provider)),
 		Matches:       []MatchSnippet{},
 	}
 }
@@ -144,7 +144,7 @@ func toSessionSummary(cs db.Session, cfg *config.Config) SessionSummary {
 		Project:       cs.ProjectPath,
 		UpdatedAt:     cs.UpdatedAt.Format("2006-01-02 15:04:05"),
 		Provider:      cs.Provider,
-		ResumeCommand: session.ResumeCommandIn(cs.ProjectPath, cs.Provider, cs.SessionID, "", false, session.ProviderFlags(cfg, cs.Provider)),
+		ResumeCommand: session.ResumeCommandIn(cs.ProjectPath, cs.Provider, session.ResumeTarget(cs.SessionID, cs.ResumeVia, false), "", false, session.ProviderFlags(cfg, cs.Provider)),
 		MessageCount:  cs.MessageCount,
 	}
 }

@@ -1,7 +1,9 @@
 package db
 
 import (
+	"database/sql"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -401,5 +403,42 @@ func TestNeedsMigrationSyncIgnoresProvidersWithoutFileIdentity(t *testing.T) {
 	}
 	if !needsSync {
 		t.Fatal("Claude session without file identity should require migration")
+	}
+}
+
+func TestMigration007AddsResumeViaColumn(t *testing.T) {
+	database, err := New(filepath.Join(t.TempDir(), "old.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	// Simulate a database created before resume_via existed.
+	if _, err := database.conn.Exec(`ALTER TABLE sessions DROP COLUMN resume_via`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.conn.Exec(`
+		INSERT INTO sessions (session_id, project_path, provider, file_hash, file_size)
+		VALUES ('codex-1', '/p', 'codex', 'h1', 10)
+	`); err != nil {
+		t.Fatal(err)
+	}
+	for run := 1; run <= 2; run++ {
+		if err := database.migrate(); err != nil {
+			t.Fatalf("migrate() run %d error = %v", run, err)
+		}
+	}
+
+	var via sql.NullString
+	var hash string
+	var size int64
+	if err := database.conn.QueryRow(`SELECT resume_via, file_hash, file_size FROM sessions WHERE session_id = 'codex-1'`).Scan(&via, &hash, &size); err != nil {
+		t.Fatal(err)
+	}
+	if via.Valid {
+		t.Errorf("resume_via = %q, want NULL (not yet recorded)", via.String)
+	}
+	// File tracking is untouched: unchanged files are not re-parsed.
+	if hash != "h1" || size != 10 {
+		t.Errorf("file_hash/file_size = %q/%d, want h1/10", hash, size)
 	}
 }

@@ -22,6 +22,7 @@ type SearchResult struct {
 	MessageCount   int
 	Sequence       int    // Message sequence number within session
 	Provider       string // claude, codex, etc.
+	ResumeVia      string // Session to resume in place of this one; empty means itself
 }
 
 // SearchFilters defines filtering criteria for search
@@ -46,6 +47,7 @@ type SessionSearchResult struct {
 	Matches        []SearchResult
 	Score          float64 // Relevance score for ranking
 	Provider       string  // claude, codex, etc.
+	ResumeVia      string  // Session to resume in place of this one; empty means itself
 }
 
 // Default sort order for search results (most recent first)
@@ -133,6 +135,7 @@ func SearchWithFilters(database *db.DB, filters SearchFilters) ([]SessionSearchR
 				MessageCount:   result.MessageCount,
 				Matches:        []SearchResult{},
 				Provider:       result.Provider,
+				ResumeVia:      result.ResumeVia,
 			}
 			sessionMap[sessionID] = session
 			sessionOrder = append(sessionOrder, sessionID)
@@ -189,7 +192,8 @@ func search(database *db.DB, query string, ftsTable string, limit int) ([]Search
 			COALESCE(s.cwd, s.project_path),
 			s.message_count,
 			m.sequence,
-			COALESCE(s.provider, 'claude')
+			COALESCE(s.provider, 'claude'),
+			COALESCE(s.resume_via, '')
 		FROM %s
 		JOIN messages m ON %s.rowid = m.id
 		JOIN sessions s ON s.id = m.session_id
@@ -219,6 +223,7 @@ func search(database *db.DB, query string, ftsTable string, limit int) ([]Search
 			&r.MessageCount,
 			&r.Sequence,
 			&r.Provider,
+			&r.ResumeVia,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan result: %w", err)
 		}
@@ -277,7 +282,8 @@ func filterOnlySessions(database *db.DB, filters SearchFilters) ([]SessionSearch
 			COALESCE(s.cwd, s.project_path),
 			s.updated_at,
 			s.message_count,
-			COALESCE(s.provider, 'claude')
+			COALESCE(s.provider, 'claude'),
+			COALESCE(s.resume_via, '')
 		FROM sessions s
 		LEFT JOIN session_summaries ss ON s.id = ss.session_id
 		WHERE 1=1
@@ -322,6 +328,7 @@ func filterOnlySessions(database *db.DB, filters SearchFilters) ([]SessionSearch
 			&r.UpdatedAt,
 			&r.MessageCount,
 			&r.Provider,
+			&r.ResumeVia,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan session: %w", err)
 		}

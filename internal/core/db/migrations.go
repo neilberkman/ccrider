@@ -37,6 +37,11 @@ func (db *DB) migrate() error {
 		return err
 	}
 
+	// Migration 7: Record the session to resume in place of a Codex sub-agent
+	if err := db.migration007AddResumeViaColumn(); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -269,6 +274,26 @@ func (db *DB) migration006FixFTSTriggers() error {
 		}
 	}
 	return nil
+}
+
+// migration007AddResumeViaColumn adds resume_via, NULL on existing rows. The
+// importer writes it on every import ("" when the session resumes itself), so
+// NULL means not yet recorded; sync backfills NULL rows of sources that can
+// read it cheaply (see importer.Source.ResumeViaFn) without re-parsing them.
+func (db *DB) migration007AddResumeViaColumn() error {
+	var count int
+	err := db.conn.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name='resume_via'
+	`).Scan(&count)
+	if err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+
+	_, err = db.conn.Exec(`ALTER TABLE sessions ADD COLUMN resume_via TEXT`)
+	return err
 }
 
 func (db *DB) migration004AddProviderColumn() error {

@@ -13,7 +13,11 @@ type ParsedSession struct {
 	SessionID string
 	// ImportID is the stable database key for providers whose files do not
 	// have a unique filename per session. Empty preserves filename-based keys.
-	ImportID    string
+	ImportID string
+	// ResumeVia is the provider session id to resume in place of this one when
+	// the provider CLI refuses to resume it directly. Empty means resume the
+	// session itself.
+	ResumeVia   string
 	ProjectPath string
 	Summary     string
 	LeafUUID    string

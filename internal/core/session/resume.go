@@ -20,6 +20,18 @@ func stripToTrailingUUID(sessionID string) string {
 	return sessionID
 }
 
+// ResumeTarget returns the session id a provider CLI is handed to resume a
+// session. resumeVia, recorded at import, names the session to resume in its
+// place when the CLI refuses a direct resume (Codex resumes a multi-agent v2
+// sub-agent only through its root thread). A fork copies the session's own
+// history, so it always targets sessionID.
+func ResumeTarget(sessionID, resumeVia string, fork bool) string {
+	if fork || resumeVia == "" {
+		return sessionID
+	}
+	return resumeVia
+}
+
 // ResumeSpec describes how to resume a session for a given provider.
 //
 // Prefix is the shell command up to (but excluding) any initial prompt

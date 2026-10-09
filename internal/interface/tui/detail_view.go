@@ -265,7 +265,7 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.currentSession != nil {
 			return m, launchSession(
 				m.currentSession.Session.Provider,
-				m.currentSession.Session.ID,
+				m.currentSession.resumeID(false),
 				m.currentSession.Session.Project,
 				m.currentSession.LastCwd,
 				m.currentSession.UpdatedAt,
@@ -285,7 +285,7 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, launchSession(
 				m.currentSession.Session.Provider,
-				m.currentSession.Session.ID,
+				m.currentSession.resumeID(true),
 				m.currentSession.Session.Project,
 				m.currentSession.LastCwd,
 				m.currentSession.UpdatedAt,
@@ -300,7 +300,7 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.currentSession != nil {
 			return m, copyResumeCommand(
 				m.currentSession.Session.Provider,
-				m.currentSession.Session.ID,
+				m.currentSession.resumeID(false),
 				m.currentSession.Session.Project,
 				m.currentSession.LastCwd,
 			)
@@ -313,7 +313,7 @@ func (m Model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.err = nil // Clear any previous errors
 			return m, openInNewTerminal(
 				m.currentSession.Session.Provider,
-				m.currentSession.Session.ID,
+				m.currentSession.resumeID(false),
 				m.currentSession.Session.Project,
 				m.currentSession.LastCwd,
 				m.currentSession.UpdatedAt,
@@ -569,6 +569,12 @@ type sessionLaunchedMsg struct {
 	updatedAt   string
 	summary     string
 	fork        bool
+}
+
+// resumeID is the session id the provider CLI resumes or forks for this
+// session (see session.ResumeTarget).
+func (d *sessionDetail) resumeID(fork bool) string {
+	return session.ResumeTarget(d.Session.ID, d.Session.ResumeVia, fork)
 }
 
 func launchSession(provider, sessionID, projectPath, lastCwd, updatedAt, summary string, fork bool) tea.Cmd {
