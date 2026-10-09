@@ -22,7 +22,8 @@ func (db *DB) initSchema() error {
 		file_hash TEXT,
 		file_size INTEGER,
 		file_mtime DATETIME,
-		provider TEXT DEFAULT 'claude'
+		provider TEXT DEFAULT 'claude',
+		resume_via TEXT
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_sessions_session_id ON sessions(session_id);

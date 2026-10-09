@@ -1,6 +1,8 @@
 package codexsessions
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -169,5 +171,79 @@ func TestParseFile_SkipsNonMessageEvents(t *testing.T) {
 		if msg.Type != "user" && msg.Type != "assistant" {
 			t.Errorf("unexpected message type %q (should only have user/assistant)", msg.Type)
 		}
+	}
+}
+
+func TestParseFile_ResumeVia(t *testing.T) {
+	const (
+		id   = "0199a001-0000-7000-8000-00000000c41d"
+		root = "0199a000-0000-7000-8000-000000000001"
+	)
+	meta := func(sessionID, version, source string) string {
+		return `{"timestamp":"2026-10-05T00:02:00.119Z","type":"session_meta","payload":{"session_id":"` + sessionID +
+			`","id":"` + id + `","cwd":"/p","cli_version":"0.157.1","multi_agent_version":"` + version +
+			`","source":` + source + `}}` + "\n"
+	}
+	const (
+		threadSpawn = `{"subagent":{"thread_spawn":{"parent_thread_id":"` + root + `","depth":1}}}`
+		userMsg     = `{"timestamp":"2026-10-05T00:02:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"hi"}}` + "\n"
+	)
+
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{"v2 thread_spawn sub-agent resumes through its root", meta(root, "v2", threadSpawn), root},
+		{"v1 thread_spawn sub-agent resumes directly", meta(root, "v1", threadSpawn), ""},
+		{"guardian reviewer resumes directly", meta(root, "disabled", `{"subagent":{"other":"guardian"}}`), ""},
+		{"review sub-agent resumes directly", meta(root, "v2", `{"subagent":"review"}`), ""},
+		{"root thread resumes directly", meta(id, "v2", `"cli"`), ""},
+		{"v2 sub-agent without a root id resumes directly", meta("", "v2", threadSpawn), ""},
+		{
+			// codex fork of a sub-agent starts a new root thread whose file
+			// replays the sub-agent's session_meta second.
+			"fork of a v2 sub-agent is its own root",
+			meta(id, "v2", `"cli"`) + `{"timestamp":"2026-10-05T00:02:00.120Z","type":"session_meta","payload":{"session_id":"` + root +
+				`","id":"0199a000-0000-7000-8000-000000000002","cwd":"/p","multi_agent_version":"v2","source":` + threadSpawn + `}}` + "\n",
+			"",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "rollout-2026-10-05T00-02-00-"+id+".jsonl")
+			if err := os.WriteFile(path, []byte(tt.content+userMsg), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			session, err := ParseFile(path)
+			if err != nil {
+				t.Fatalf("ParseFile() error = %v", err)
+			}
+			if session.ResumeVia != tt.want {
+				t.Errorf("ResumeVia = %q, want %q", session.ResumeVia, tt.want)
+			}
+			via, err := ReadResumeVia(path)
+			if err != nil {
+				t.Fatalf("ReadResumeVia() error = %v", err)
+			}
+			if via != tt.want {
+				t.Errorf("ReadResumeVia() = %q, want %q", via, tt.want)
+			}
+		})
+	}
+}
+
+// A forked sub-agent replays the session_meta of the thread it forked from
+// after its own; ResumeVia comes from the file's own (first) session_meta.
+func TestParseFile_ResumeViaUsesFirstSessionMeta(t *testing.T) {
+	session, err := ParseFile("testdata/subagent_v2.jsonl")
+	if err != nil {
+		t.Fatalf("ParseFile() error = %v", err)
+	}
+	if want := "0199a000-0000-7000-8000-000000000001"; session.ResumeVia != want {
+		t.Errorf("ResumeVia = %q, want root thread %q", session.ResumeVia, want)
+	}
+	if via, err := ReadResumeVia("testdata/subagent_v2.jsonl"); err != nil || via != session.ResumeVia {
+		t.Errorf("ReadResumeVia() = %q, %v; want %q", via, err, session.ResumeVia)
 	}
 }

@@ -85,8 +85,9 @@ func runDebugPrompt(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 	fmt.Println("=== COMMAND ===")
 	flags := coresession.ProviderFlags(cfg, session.Provider)
-	spec := coresession.BuildResumeSpec(session.Provider, sessionID, false, flags)
-	command := coresession.ResumeCommandIn(projectPath, session.Provider, sessionID, "", false, flags)
+	resumeID := coresession.ResumeTarget(sessionID, session.ResumeVia, false)
+	spec := coresession.BuildResumeSpec(session.Provider, resumeID, false, flags)
+	command := coresession.ResumeCommandIn(projectPath, session.Provider, resumeID, "", false, flags)
 	if spec.AcceptsPrompt {
 		fmt.Printf("%s \"<prompt above>\"\n", command)
 	} else {

@@ -2,6 +2,7 @@ package codexsessions
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,9 +20,32 @@ type rawLine struct {
 }
 
 type sessionMetaPayload struct {
-	ID         string `json:"id"`
-	CWD        string `json:"cwd"`
-	CLIVersion string `json:"cli_version"`
+	ID string `json:"id"`
+	// RootID is Codex's session_id, documented as the root thread's id.
+	RootID            string          `json:"session_id"`
+	CWD               string          `json:"cwd"`
+	CLIVersion        string          `json:"cli_version"`
+	MultiAgentVersion string          `json:"multi_agent_version"`
+	Source            json.RawMessage `json:"source"`
+}
+
+// resumesThroughRoot reports whether Codex refuses a direct resume of this
+// thread. Codex resumes a multi-agent v2 thread_spawn sub-agent only through
+// its loaded parent (app-server can_accept_direct_input); every other source,
+// v1 sub-agents included, resumes directly.
+func (m sessionMetaPayload) resumesThroughRoot() bool {
+	if m.MultiAgentVersion != "v2" {
+		return false
+	}
+	var src struct {
+		SubAgent struct {
+			ThreadSpawn json.RawMessage `json:"thread_spawn"`
+		} `json:"subagent"`
+	}
+	if err := json.Unmarshal(m.Source, &src); err != nil {
+		return false
+	}
+	return len(src.SubAgent.ThreadSpawn) > 0 && string(src.SubAgent.ThreadSpawn) != "null"
 }
 
 type turnContextPayload struct {
@@ -46,6 +70,46 @@ func isSystemBoilerplate(text string) bool {
 	return strings.HasPrefix(text, "# AGENTS.md") ||
 		strings.HasPrefix(text, "<environment_context>") ||
 		strings.HasPrefix(text, "<system-reminder>")
+}
+
+// resumeVia returns the session to resume in place of this thread, or "".
+func (m sessionMetaPayload) resumeVia() string {
+	if m.RootID != "" && m.RootID != m.ID && m.resumesThroughRoot() {
+		return m.RootID
+	}
+	return ""
+}
+
+var errStop = errors.New("stop")
+
+// ReadResumeVia returns the ParsedSession.ResumeVia that ParseFile would
+// record for path, reading only the file's first session_meta line. Codex
+// rollouts can run to gigabytes, so backfilling this field must not parse the
+// whole transcript.
+func ReadResumeVia(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = file.Close() }()
+
+	var via string
+	err = ccsessions.ForEachLine(file, func(line []byte) error {
+		var raw rawLine
+		if json.Unmarshal(line, &raw) != nil || raw.Type != "session_meta" {
+			return nil
+		}
+		var meta sessionMetaPayload
+		if json.Unmarshal(raw.Payload, &meta) == nil {
+			via = meta.resumeVia()
+			return errStop
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, errStop) {
+		return "", err
+	}
+	return via, nil
 }
 
 func extractTextFromContent(raw json.RawMessage) string {
@@ -84,6 +148,9 @@ func ParseFile(path string) (*ccsessions.ParsedSession, error) {
 
 	var currentCWD string
 	var currentVersion string
+	// A forked thread replays the session_meta of the thread it forked from
+	// after its own; only the first line describes this file's thread.
+	sawMeta := false
 
 	// Dual-buffer: collect messages from both sources, prefer response_item
 	var responseItemMsgs []ccsessions.ParsedMessage
@@ -115,6 +182,10 @@ func ParseFile(path string) (*ccsessions.ParsedSession, error) {
 				if meta.CLIVersion != "" {
 					currentVersion = meta.CLIVersion
 				}
+				if !sawMeta {
+					session.ResumeVia = meta.resumeVia()
+				}
+				sawMeta = true
 			}
 
 		case "turn_context":

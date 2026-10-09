@@ -107,6 +107,7 @@ type sessionItem struct {
 	CreatedAt         string
 	MatchesCurrentDir bool   // True if session last cwd matches current working directory
 	Provider          string // claude, codex, etc.
+	ResumeVia         string // Session to resume in place of this one; empty means itself
 	Live              bool   // True if a running agent process is attached
 }
 

@@ -520,3 +520,24 @@ func TestFileIdentityProviderNames(t *testing.T) {
 		t.Fatalf("FileIdentityProviderNames() = %v, want %v", got, want)
 	}
 }
+
+func TestResumeTarget(t *testing.T) {
+	tests := []struct {
+		name      string
+		sessionID string
+		resumeVia string
+		fork      bool
+		want      string
+	}{
+		{"no resume_via resumes the session", "s", "", false, "s"},
+		{"resume_via replaces the session on resume", "child", "root", false, "root"},
+		{"fork copies the session itself", "child", "root", true, "child"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ResumeTarget(tt.sessionID, tt.resumeVia, tt.fork); got != tt.want {
+				t.Errorf("ResumeTarget(%q, %q, %v) = %q, want %q", tt.sessionID, tt.resumeVia, tt.fork, got, tt.want)
+			}
+		})
+	}
+}

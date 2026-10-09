@@ -69,6 +69,7 @@ type Session struct {
 	UpdatedAt    time.Time
 	CreatedAt    time.Time
 	Provider     string // claude, codex, etc.
+	ResumeVia    string // Session to resume in place of this one; empty means itself
 }
 
 // ListSessions returns all sessions, optionally filtered by project path and provider.
@@ -135,7 +136,8 @@ func (db *DB) ListSessions(projectPath string, provider ...string) ([]Session, e
 			(SELECT COUNT(*) FROM messages WHERE session_id = s.id) as actual_message_count,
 			s.updated_at,
 			s.created_at,
-			COALESCE(s.provider, 'claude') as provider
+			COALESCE(s.provider, 'claude') as provider,
+			COALESCE(s.resume_via, '') as resume_via
 		FROM sessions s
 		LEFT JOIN session_summaries ss ON s.id = ss.session_id
 		WHERE (SELECT COUNT(*) FROM messages WHERE session_id = s.id) > 0
@@ -191,6 +193,7 @@ func (db *DB) ListSessions(projectPath string, provider ...string) ([]Session, e
 			&s.UpdatedAt,
 			&s.CreatedAt,
 			&s.Provider,
+			&s.ResumeVia,
 		)
 		if err != nil {
 			return nil, err
@@ -225,7 +228,8 @@ func (db *DB) GetSessionLaunchInfo(sessionID string) (*Session, string, error) {
 				 ORDER BY sequence DESC LIMIT 1),
 				s.project_path
 			) as last_cwd,
-			COALESCE(s.provider, 'claude') as provider
+			COALESCE(s.provider, 'claude') as provider,
+			COALESCE(s.resume_via, '') as resume_via
 		FROM sessions s
 		WHERE s.session_id = ?
 	`
@@ -241,6 +245,7 @@ func (db *DB) GetSessionLaunchInfo(sessionID string) (*Session, string, error) {
 		&session.CreatedAt,
 		&lastCwd,
 		&session.Provider,
+		&session.ResumeVia,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, "", fmt.Errorf("%w: %s", ErrSessionNotFound, sessionID)
@@ -276,7 +281,8 @@ func (db *DB) GetSessionDetail(sessionID string) (*SessionDetail, error) {
 				s.project_path
 			) as last_cwd,
 			updated_at,
-			COALESCE(s.provider, 'claude') as provider
+			COALESCE(s.provider, 'claude') as provider,
+			COALESCE(s.resume_via, '') as resume_via
 		FROM sessions s
 		WHERE session_id = ?
 	`
@@ -290,6 +296,7 @@ func (db *DB) GetSessionDetail(sessionID string) (*SessionDetail, error) {
 		&detail.LastCwd,
 		&detail.UpdatedAt,
 		&detail.Provider,
+		&detail.ResumeVia,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("%w: %s", ErrSessionNotFound, sessionID)
@@ -345,7 +352,8 @@ func (db *DB) SessionsForProjectPath(projectPath string, limit int) ([]Session, 
 			(SELECT COUNT(*) FROM messages WHERE session_id = s.id) as message_count,
 			s.updated_at,
 			s.created_at,
-			COALESCE(s.provider, 'claude') as provider
+			COALESCE(s.provider, 'claude') as provider,
+			COALESCE(s.resume_via, '') as resume_via
 		FROM sessions s
 		LEFT JOIN session_summaries ss ON s.id = ss.session_id
 		WHERE s.project_path = ?
@@ -361,7 +369,7 @@ func (db *DB) SessionsForProjectPath(projectPath string, limit int) ([]Session, 
 	var sessions []Session
 	for rows.Next() {
 		var s Session
-		if err := rows.Scan(&s.SessionID, &s.Summary, &s.ProjectPath, &s.MessageCount, &s.UpdatedAt, &s.CreatedAt, &s.Provider); err != nil {
+		if err := rows.Scan(&s.SessionID, &s.Summary, &s.ProjectPath, &s.MessageCount, &s.UpdatedAt, &s.CreatedAt, &s.Provider, &s.ResumeVia); err != nil {
 			return nil, err
 		}
 		sessions = append(sessions, s)
@@ -386,13 +394,14 @@ func (db *DB) GetSessionOverview(sessionID string) (*Session, error) {
 			(SELECT COUNT(*) FROM messages WHERE session_id = s.id) as message_count,
 			s.updated_at,
 			s.created_at,
-			COALESCE(s.provider, 'claude') as provider
+			COALESCE(s.provider, 'claude') as provider,
+			COALESCE(s.resume_via, '') as resume_via
 		FROM sessions s
 		LEFT JOIN session_summaries ss ON s.id = ss.session_id
 		WHERE s.session_id = ?
 	`
 	var s Session
-	err = db.QueryRow(query, sessionID).Scan(&s.SessionID, &s.Summary, &s.ProjectPath, &s.MessageCount, &s.UpdatedAt, &s.CreatedAt, &s.Provider)
+	err = db.QueryRow(query, sessionID).Scan(&s.SessionID, &s.Summary, &s.ProjectPath, &s.MessageCount, &s.UpdatedAt, &s.CreatedAt, &s.Provider, &s.ResumeVia)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("%w: %s", ErrSessionNotFound, sessionID)
 	}
@@ -412,6 +421,7 @@ type SessionDetail struct {
 	UpdatedAt    time.Time
 	Messages     []SessionMessage
 	Provider     string // claude, codex, etc.
+	ResumeVia    string // Session to resume in place of this one; empty means itself
 }
 
 // SessionMessage represents a single message in a session
