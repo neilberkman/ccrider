@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [1.14.0] - 2026-10-22
+
+### Added
+
+- **Saved session anchors and `list_session_anchors`** ([#35](https://github.com/neilberkman/ccrider/issues/35), [#37](https://github.com/neilberkman/ccrider/pull/37)) — generated anchors are now saved in the local database, so agents can list them without keeping a separate record of each phrase. The new MCP tool returns labels, creation times, matching sessions, and resume commands, with project/provider/session filters and pagination. Anchors appear in the unfiltered list immediately, even before their phrase is indexed; transcript matching has no date cutoff. Saved anchors survive restarts and message reimports
+- **Descriptive anchor labels and direct session binding** — `generate_session_anchor` accepts an optional `label` supplied by the calling agent, producing a readable tag such as `add-rest-endpoint-a12bc34de56f` without another LLM service. Supplying a known `session_id` attaches the bookmark immediately; otherwise the existing workflow of saying the phrase in the conversation still works. Calling the tool without arguments continues to generate four random words
+
+### Changed
+
+- **Anchor generation now saves a local bookmark** — the MCP tool is annotated as a write. Only anchors generated after this update enter the registry; older generated phrases and manually written tags remain searchable as conversation text. Copied phrases can match multiple sessions, while an explicit session binding takes precedence
+- **Anchor documentation explains context recovery and historical searches** ([#36](https://github.com/neilberkman/ccrider/pull/36)) — documents the one-hour default for `anchor_phrase` searches and how to find older tags with `query` and `exact_match`
+- **CI and releases use macOS 15 runners** — replaces the deprecated macOS 14 image to avoid its retirement and reduced runner availability
+
 ### Fixed
 
 - **Codex sub-agent sessions resume through their root thread** — Codex refuses `codex resume` on a multi-agent v2 sub-agent ("cannot resume an unloaded multi-agent v2 sub-agent through its parent; resume the parent first"), so the resume command ccrider showed for these sessions failed. ccrider now reads the root thread from the sub-agent's `session_meta` and resumes that instead, in the MCP `resume_command`, `debug-prompt`, and the TUI's resume, copy and open-in-terminal actions. Resuming the root reopens the sub-agent with it. Fork still copies the sub-agent itself, since `codex fork` accepts it. v1 sub-agents, guardian reviews and `/review` sessions resume directly as before. Sessions already in the database are backfilled on the next sync by reading only each file's first line, so existing transcripts are not re-imported
