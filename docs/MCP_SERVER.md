@@ -27,6 +27,8 @@ Search across all sessions for a query string. Supports current session awarenes
 - `exclude_current` (optional): If true, excludes current session from results (searches only other sessions). Requires current_session_id to be set.
 - `after_date` (optional): Only sessions updated after this date (ISO 8601 format, e.g. '2025-01-01' or '2025-01-08T10:00:00Z')
 - `before_date` (optional): Only sessions updated before this date (ISO 8601 format)
+- `anchor_phrase` (optional): Find sessions containing this phrase, then search within those sessions for `query`. Anchor lookup defaults to matches from the last hour unless `after_date` or `before_date` is supplied.
+- `exact_match` (optional): Treat `query` as a phrase rather than an FTS expression. Useful for searching for a known tag, including hyphenated tags, across older conversations.
 
 **Returns:**
 
@@ -51,6 +53,18 @@ Search across all sessions for a query string. Supports current session awarenes
   ]
 }
 ```
+
+### `generate_session_anchor`
+
+Generate a four-word random phrase to identify the current conversation when recovering context lost to compaction. This tool takes no arguments and does not save anchors in a registry.
+
+1. Call `generate_session_anchor`.
+2. Include the returned `anchor` in an assistant response and ask the user to reply so the response can be written to the transcript.
+3. After the reply, call `search_sessions` with `anchor_phrase` set to that phrase and `query` set to the topic to retrieve.
+
+The search syncs local transcripts before querying. A phrase already visible in the conversation can also identify the session without generating a new one. The user does not need to record the generated phrase for this context-recovery workflow.
+
+There is currently no saved-anchor list. For a known tag in an older conversation, use `search_sessions` with the tag as `query` and `exact_match: true`, which avoids the default one-hour anchor-lookup window.
 
 ### `get_session_detail`
 
