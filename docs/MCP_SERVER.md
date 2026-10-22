@@ -56,7 +56,14 @@ Search across all sessions for a query string. Supports current session awarenes
 
 ### `generate_session_anchor`
 
-Generate a four-word random phrase to identify the current conversation when recovering context lost to compaction. This tool takes no arguments and does not save anchors in a registry.
+Generate and persist an anchor for context recovery or later retrieval. This tool writes to the local database and is annotated accordingly.
+
+**Arguments:**
+
+- `label` (optional): A descriptive label of up to 120 characters, supplied by the calling agent. The generated phrase uses the label's words with a random suffix, e.g. `add-rest-endpoint-a12bc34de56f`. Omitting the label generates four random words.
+- `session_id` (optional): A known session ID to attach immediately. Full IDs and unambiguous bare UUIDs are accepted; unknown or ambiguous IDs are rejected.
+
+The response preserves `anchor` and `instruction`, and adds `label` and `created_at`. It also includes `session_id` when explicitly attached. With a known session ID, the bookmark works immediately without putting its phrase in the transcript. Otherwise:
 
 1. Call `generate_session_anchor`.
 2. Include the returned `anchor` in an assistant response and ask the user to reply so the response can be written to the transcript.
@@ -64,7 +71,53 @@ Generate a four-word random phrase to identify the current conversation when rec
 
 The search syncs local transcripts before querying. A phrase already visible in the conversation can also identify the session without generating a new one. The user does not need to record the generated phrase for this context-recovery workflow.
 
-There is currently no saved-anchor list. For a known tag in an older conversation, use `search_sessions` with the tag as `query` and `exact_match: true`, which avoids the default one-hour anchor-lookup window.
+For later retrieval, use `list_session_anchors`. For a known tag in an older conversation, ordinary `search_sessions` with the tag as `query` and `exact_match: true` also avoids the default one-hour anchor-lookup window. The `anchor_phrase` filter still searches transcript text; use the saved session ID when an anchor was attached without writing its phrase into the conversation.
+
+### `list_session_anchors`
+
+List saved anchors, newest first, with labels, creation times, and matching sessions. Local transcripts are synced before lookup, and matching has no date cutoff.
+
+**Arguments:**
+
+- `session_id` (optional): Only anchors associated with this session. Full IDs and unambiguous bare UUIDs are accepted.
+- `project` (optional): Filter associated sessions by project path substring.
+- `provider` (optional): Filter associated sessions by provider.
+- `limit` (optional): Anchors per page, default 20, capped at 100.
+- `offset` (optional): Anchors to skip, default 0. Continue with the previous response's `next_offset`.
+
+**Returns:**
+
+```json
+{
+  "anchors": [
+    {
+      "anchor": "add-rest-endpoint-a12bc34de56f",
+      "label": "Add REST endpoint",
+      "created_at": "2026-10-22T21:00:00Z",
+      "session_id": "abc123",
+      "session_count": 1,
+      "sessions": [
+        {
+          "session_id": "abc123",
+          "summary": "Add a REST endpoint",
+          "project": "/repo",
+          "updated_at": "2026-10-22 21:00:00",
+          "provider": "claude",
+          "resume_command": "cd '/repo' && claude --resume 'abc123'",
+          "message_count": 42
+        }
+      ]
+    }
+  ],
+  "total": 1
+}
+```
+
+`session_id` at anchor level is present only for an explicit binding. Otherwise, `sessions` contains all eligible literal transcript matches; copied phrases can match several conversations. Repeated occurrences within one session produce one entry. An unfiltered list includes anchors with no matches yet (`sessions: []`); session/project/provider filters omit those anchors. This lets an agent discover a newly generated bookmark before its response has been indexed.
+
+Responses include `next_offset` when more anchors remain. Session summaries are abbreviated for display; large session lists can be shortened with `sessions_truncated: true`, while `session_count` records the full matching count. Use a listed session ID with `get_session_messages` for conversation content.
+
+The registry starts with anchors generated after persistence was introduced. Older generated phrases and manually written tags are not automatically registered; they remain searchable as ordinary text. Anchor records survive restarts and message reimports in the same database.
 
 ### `get_session_detail`
 

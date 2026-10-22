@@ -18,7 +18,6 @@ import (
 	"github.com/neilberkman/ccrider/internal/core/liveness"
 	"github.com/neilberkman/ccrider/internal/core/search"
 	"github.com/neilberkman/ccrider/internal/core/session"
-	"github.com/sethvargo/go-diceware/diceware"
 )
 
 // SearchSessionsArgs defines arguments for the search_sessions tool
@@ -261,15 +260,7 @@ func StartServer(dbPath string) error {
 	)
 	s.AddTool(openTool, makeListOpenSessionsHandler(database, liveCache))
 
-	// Register generate_session_anchor tool
-	anchorTool := mcp.NewTool("generate_session_anchor",
-		mcp.WithReadOnlyHintAnnotation(true),
-		mcp.WithDestructiveHintAnnotation(false),
-		mcp.WithOpenWorldHintAnnotation(false),
-		mcp.WithIdempotentHintAnnotation(false),
-		mcp.WithDescription("USE THIS when the user asks about something from earlier in THIS conversation that you can't see (context compaction removed it). Generates a unique phrase you say aloud to 'tag' your session, then search for it. Two-step: 1) Call this, say the phrase, ask user to reply 'go', 2) After they reply, search with anchor_phrase to find your session's earlier context."),
-	)
-	s.AddTool(anchorTool, makeGenerateSessionAnchorHandler())
+	registerSessionAnchorTools(s, database)
 
 	return server.ServeStdio(s)
 }
@@ -773,24 +764,4 @@ func trimSessionSummariesToFit(sessions []SessionSummary) ([]SessionSummary, boo
 		sessions = sessions[:len(sessions)-1]
 	}
 	return sessions, truncated
-}
-
-func makeGenerateSessionAnchorHandler() func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		// Generate a memorable diceware phrase (4 words)
-		words, err := diceware.Generate(4)
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to generate anchor: %v", err)), nil
-		}
-
-		anchor := strings.Join(words, "-")
-
-		result := map[string]string{
-			"anchor":      anchor,
-			"instruction": "SAY THIS EXACT PHRASE: '" + anchor + "' - then ask the user to reply 'go' (this writes your response to disk so it gets indexed). After they reply, call search_sessions with anchor_phrase='" + anchor + "' to find earlier context.",
-		}
-
-		resultJSON, _ := json.Marshal(result)
-		return mcp.NewToolResultText(string(resultJSON)), nil
-	}
 }
