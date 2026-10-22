@@ -149,9 +149,26 @@ Use command `ccrider` with args `["serve-mcp"]`.
 - **search_sessions** - Full-text search across all session content with date/project/provider filters
 - **list_recent_sessions** - Get recent sessions, optionally filtered by project or provider
 - **get_session_messages** - Get messages from a session (supports tail mode, context around search matches)
-- **generate_session_anchor** - Generate a unique phrase to tag your session for later retrieval
+- **generate_session_anchor** - Generate a unique phrase to locate the current conversation when recovering earlier context
 
 All tools support a `provider` parameter to filter by `claude`, `codex`, `copilot`, `opencode`, `pi`, `antigravity`, `antigravity-ide`, `antigravity-desktop`, or `amp`. The MCP server provides read-only access to your local session database. Local providers are read from disk; Amp threads are fetched from your authenticated Amp account during sync and then stored locally.
+
+### Recovering context with session anchors
+
+`generate_session_anchor` helps an agent identify its current conversation after context compaction. The agent calls the tool, includes the returned phrase in its response, and asks you to reply so that response can be written to the transcript. It then calls `search_sessions` with the phrase as `anchor_phrase` and the topic it needs as `query`. You do not need to keep a separate record of the phrase for this workflow.
+
+Anchors are currently ordinary text in a conversation: the generator does not save a bookmark or maintain a list of generated phrases. A unique phrase already visible in the conversation can also be used as `anchor_phrase` without calling the generator. By default, anchor lookup only considers matches from the last hour; explicit `after_date` or `before_date` filters override that window.
+
+To find an older conversation using a tag you know, including a descriptive tag you wrote yourself, search for it directly:
+
+```json
+{
+  "query": "how-to-add-a-rest-endpoint-in-this-repo-abc123",
+  "exact_match": true
+}
+```
+
+This ordinary `search_sessions` query has no default date restriction. Use a returned `session_id` with `get_session_messages` to read the conversation.
 
 ---
 
