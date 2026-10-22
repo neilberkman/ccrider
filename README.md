@@ -149,15 +149,28 @@ Use command `ccrider` with args `["serve-mcp"]`.
 - **search_sessions** - Full-text search across all session content with date/project/provider filters
 - **list_recent_sessions** - Get recent sessions, optionally filtered by project or provider
 - **get_session_messages** - Get messages from a session (supports tail mode, context around search matches)
-- **generate_session_anchor** - Generate a unique phrase to locate the current conversation when recovering earlier context
+- **generate_session_anchor** - Save a unique session anchor, optionally with a descriptive label and a known session ID
+- **list_session_anchors** - List saved anchors and their matching sessions, with project/provider/session filters and pagination
 
-All tools support a `provider` parameter to filter by `claude`, `codex`, `copilot`, `opencode`, `pi`, `antigravity`, `antigravity-ide`, `antigravity-desktop`, or `amp`. The MCP server provides read-only access to your local session database. Local providers are read from disk; Amp threads are fetched from your authenticated Amp account during sync and then stored locally.
+`search_sessions`, `list_recent_sessions`, and `list_session_anchors` support a `provider` parameter to filter by `claude`, `codex`, `copilot`, `opencode`, `pi`, `antigravity`, `antigravity-ide`, `antigravity-desktop`, or `amp`. Search and retrieval tools read your local session database; anchor generation saves a bookmark there. Local providers are read from disk; Amp threads are fetched from your authenticated Amp account during sync and then stored locally.
 
-### Recovering context with session anchors
+### Saving and finding session anchors
+
+Ask your agent to bookmark a conversation with a descriptive label. For example, `generate_session_anchor` with `{"label": "Add REST endpoint"}` saves a tag such as `add-rest-endpoint-a12bc34de56f`. The agent supplies the label from the conversation; no separate LLM service is required. Omitting `label` keeps the original four-random-word format.
+
+If the agent knows the session ID, it can also supply `session_id` to attach the bookmark immediately. Otherwise, it includes the returned phrase in its response and waits for a user reply so the phrase can be written to the transcript. `list_session_anchors` syncs local transcripts and finds conversations containing the phrase, without a date cutoff.
+
+Call `list_session_anchors` to retrieve saved labels, phrases, timestamps, and matching sessions with resume commands. Use a returned `session_id` with `get_session_messages` to read the conversation. The list defaults to 20 anchors per page (maximum 100); pass its `next_offset` as `offset` to continue. Optional `project`, `provider`, and `session_id` filters select associated sessions.
+
+An anchor appears in the unfiltered list as soon as it is generated, even if its `sessions` list is still empty. Session filters omit unmatched anchors. A phrase copied into multiple conversations can match more than one session; an explicit `session_id` binding takes precedence. Large session lists can be shortened with `sessions_truncated: true` and the full `session_count` retained.
+
+The registry includes anchors generated after this feature was added. Previously generated phrases and manually written tags remain searchable as ordinary conversation text.
+
+### Recovering earlier context
 
 `generate_session_anchor` helps an agent identify its current conversation after context compaction. The agent calls the tool, includes the returned phrase in its response, and asks you to reply so that response can be written to the transcript. It then calls `search_sessions` with the phrase as `anchor_phrase` and the topic it needs as `query`. You do not need to keep a separate record of the phrase for this workflow.
 
-Anchors are currently ordinary text in a conversation: the generator does not save a bookmark or maintain a list of generated phrases. A unique phrase already visible in the conversation can also be used as `anchor_phrase` without calling the generator. By default, anchor lookup only considers matches from the last hour; explicit `after_date` or `before_date` filters override that window.
+A unique phrase already visible in the conversation can also be used as `anchor_phrase` without calling the generator. The `anchor_phrase` search filter matches transcript text and, by default, only considers matches from the last hour; explicit `after_date` or `before_date` filters override that window. For a saved bookmark, use `list_session_anchors` to obtain the session ID directly, including when the bookmark was attached without writing its phrase into the transcript.
 
 To find an older conversation using a tag you know, including a descriptive tag you wrote yourself, search for it directly:
 

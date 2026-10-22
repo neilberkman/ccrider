@@ -42,7 +42,24 @@ func (db *DB) migrate() error {
 		return err
 	}
 
+	// Migration 8: Persist generated anchors, including those not yet in a transcript.
+	if err := db.migration008CreateSessionAnchors(); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+func (db *DB) migration008CreateSessionAnchors() error {
+	_, err := db.conn.Exec(`
+		CREATE TABLE IF NOT EXISTS session_anchors (
+			anchor TEXT PRIMARY KEY NOT NULL,
+			label TEXT NOT NULL DEFAULT '',
+			session_id TEXT REFERENCES sessions(session_id) ON DELETE SET NULL,
+			created_at DATETIME NOT NULL
+		);
+	`)
+	return err
 }
 
 // migration001AddLLMSummaryColumns adds basic llm_summary columns to sessions
