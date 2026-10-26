@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [1.14.1] - 2026-10-26
+
+### Fixed
+
+- **OpenCode sync on Windows** ([#38](https://github.com/neilberkman/ccrider/issues/38)) — Windows database paths now produce valid SQLite file URLs, fixing the misleading "SQL logic error: out of memory (1)" that prevented imports. Relative paths and filenames containing spaces, percent signs, or other escaped characters work too
+- **Incremental sync on Windows** — skips the inode/device backfill that Windows cannot populate, so the "one-time optimization" no longer forces a full re-import on every sync. Change detection continues to use file size, modification time, and content hashes
+
 ## [1.14.0] - 2026-10-22
 
 ### Added

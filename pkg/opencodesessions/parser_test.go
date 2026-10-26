@@ -89,6 +89,64 @@ func TestParseAll(t *testing.T) {
 	}
 }
 
+func TestParseAllDatabasePaths(t *testing.T) {
+	data, err := os.ReadFile(createOpenCodeDB(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name     string
+		path     string
+		absolute bool
+		slashes  bool
+	}{
+		{"absolute native", "opencode.db", true, false},
+		{"absolute forward slashes", "opencode.db", true, true},
+		{"absolute escaped", filepath.Join("OpenCode User", "opencode #100% & café.db"), true, false},
+		{"relative", "opencode.db", false, false},
+		{"relative escaped", filepath.Join("OpenCode User", "opencode #100% & café.db"), false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Chdir(dir)
+			dbPath := tc.path
+			if tc.absolute {
+				dbPath = filepath.Join(dir, dbPath)
+			}
+			if tc.slashes {
+				dbPath = filepath.ToSlash(dbPath)
+			}
+			if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(dbPath, data, 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			sessions, err := ParseAll(dbPath)
+			if err != nil {
+				t.Fatalf("ParseAll(%q) error = %v", dbPath, err)
+			}
+			if len(sessions) != 1 || sessions[0].SessionID != "ses_root" {
+				t.Fatalf("ParseAll(%q) = %v, want the root session", dbPath, sessions)
+			}
+		})
+	}
+}
+
+func TestOpenReadOnlyRejectsWrites(t *testing.T) {
+	conn, err := openReadOnly(createOpenCodeDB(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	if _, err := conn.Exec(`UPDATE session SET title = 'changed'`); err == nil {
+		t.Fatal("openReadOnly() allowed a write")
+	}
+}
+
 func TestParseAllUsesFirstUserMessageWhenTitleIsDefault(t *testing.T) {
 	dbPath := createOpenCodeDB(t,
 		withSession("ses_default", "New session - 2026-06-28T12:00:00.000Z", "", "/repo/main", 1_000, 2_000),
