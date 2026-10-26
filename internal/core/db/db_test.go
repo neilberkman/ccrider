@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -401,8 +402,11 @@ func TestNeedsMigrationSyncIgnoresProvidersWithoutFileIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !needsSync {
-		t.Fatal("Claude session without file identity should require migration")
+	// Windows importers do not collect inode/device data, so a forced import
+	// cannot populate these columns and must not be requested on every sync.
+	wantSync := runtime.GOOS != "windows"
+	if needsSync != wantSync {
+		t.Fatalf("Claude session without file identity: NeedsMigrationSync() = %v, want %v on %s", needsSync, wantSync, runtime.GOOS)
 	}
 }
 

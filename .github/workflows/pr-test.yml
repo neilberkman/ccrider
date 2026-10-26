@@ -50,3 +50,21 @@ jobs:
           name: ccrider-binary-macos
           path: ccrider
           retention-days: 7
+
+  test-windows-sync:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Test OpenCode imports and migration checks
+        run: go test -v ./pkg/opencodesessions ./internal/core/db
+
+      - name: Build ccrider
+        run: go build -o ccrider.exe ./cmd/ccrider

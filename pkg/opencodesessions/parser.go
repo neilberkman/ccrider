@@ -256,7 +256,16 @@ func existingTables(conn *sql.DB, names ...string) ([]string, error) {
 }
 
 func openReadOnly(dbPath string) (*sql.DB, error) {
-	u := url.URL{Scheme: "file", Path: dbPath}
+	absPath, err := filepath.Abs(dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("resolve opencode db path: %w", err)
+	}
+	uriPath := filepath.ToSlash(absPath)
+	// A Windows drive letter belongs in the path, not the URI authority.
+	if !strings.HasPrefix(uriPath, "/") {
+		uriPath = "/" + uriPath
+	}
+	u := url.URL{Scheme: "file", Path: uriPath}
 	q := u.Query()
 	q.Set("mode", "ro")
 	q.Set("_pragma", "busy_timeout(5000)")

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -321,6 +322,12 @@ func (db *DB) FindSessionsByFilePath(filePath string) ([]int64, error) {
 // inode/device backfill after migration.
 // Returns true if file_inode/device columns exist but are mostly unpopulated
 func (db *DB) NeedsMigrationSync(fileIdentityProviders []string) (bool, error) {
+	// Windows imports use size/mtime and hashes instead of inode/device data.
+	// Forcing a backfill there would trigger a full import on every sync.
+	if runtime.GOOS == "windows" {
+		return false, nil
+	}
+
 	// Check if columns exist
 	var count int
 	err := db.conn.QueryRow(`
