@@ -168,6 +168,10 @@ type SignalPage struct {
 	PrunedThroughID int64
 }
 
+// signalsAfterHook runs between the watermark read and the signal read in
+// SignalsAfter. Tests use it to prune from another connection mid-read.
+var signalsAfterHook func()
+
 // SignalsAfter returns up to limit signals on channel with id > afterID, and
 // the channel's pruning watermark, read in one transaction.
 func (db *DB) SignalsAfter(ctx context.Context, channel string, afterID int64, limit int) (SignalPage, error) {
@@ -186,6 +190,9 @@ func (db *DB) SignalsAfter(ctx context.Context, channel string, afterID int64, l
 	`, channel).Scan(&page.PrunedThroughID)
 	if err != nil {
 		return SignalPage{}, err
+	}
+	if signalsAfterHook != nil {
+		signalsAfterHook()
 	}
 	rows, err := tx.QueryContext(ctx, `
 		SELECT id, channel, COALESCE(idempotency_key, ''), COALESCE(from_session_id, ''), body, created_at

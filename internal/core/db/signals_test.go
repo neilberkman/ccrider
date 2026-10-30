@@ -130,3 +130,49 @@ func TestSignalHighWaterSurvivesEmptyTable(t *testing.T) {
 		t.Fatalf("watch armed at %d looks expired against watermark %d (pruned id %d)", high, page.PrunedThroughID, s.ID)
 	}
 }
+
+// A prune committed from another connection while a read is in progress must
+// not make an unread signal disappear without the watermark showing it: the
+// read sees either the signal or the raised watermark.
+func TestSignalsAfterIsOneSnapshot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "snapshot.db")
+	reader, err := New(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = reader.Close() }()
+	writer, err := New(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = writer.Close() }()
+	ctx := context.Background()
+
+	old := time.Now().Add(-SignalRetention - time.Hour)
+	unread, _, err := writer.SendSignal(ctx, SendSignalOptions{Channel: "c", Body: "unread", Now: old})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	signalsAfterHook = func() {
+		signalsAfterHook = nil
+		// This send prunes the unread signal and raises the watermark.
+		if _, _, err := writer.SendSignal(ctx, SendSignalOptions{Channel: "c", Body: "new"}); err != nil {
+			t.Error(err)
+		}
+	}
+	defer func() { signalsAfterHook = nil }()
+
+	page, err := reader.SignalsAfter(ctx, "c", 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sawUnread := len(page.Signals) > 0 && page.Signals[0].ID == unread.ID
+	expired := page.PrunedThroughID >= unread.ID
+	if !sawUnread && !expired {
+		t.Fatalf("unread signal vanished without the watermark showing it: %+v", page)
+	}
+	if sawUnread && expired {
+		t.Fatalf("read mixed two snapshots: %+v", page)
+	}
+}
