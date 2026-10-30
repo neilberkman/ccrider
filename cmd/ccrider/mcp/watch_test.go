@@ -103,8 +103,8 @@ func TestWaitForSessionBusyAndValidation(t *testing.T) {
 		}
 	}
 	res, text := callTool(t, wait, map[string]any{"until": []any{"turn_end"}, "session_id": "abc"})
-	if !res.IsError || !strings.Contains(text, "unsupported_condition") {
-		t.Fatalf("turn_end arm = %s", text)
+	if !res.IsError || !strings.Contains(text, "not_found") {
+		t.Fatalf("turn_end arm on unknown session = %s", text)
 	}
 	res, text = callTool(t, wait, map[string]any{"cursor": armed.Cursor, "channel": "other"})
 	if !res.IsError || !strings.Contains(text, "cursor_mismatch") {

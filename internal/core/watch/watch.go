@@ -102,8 +102,23 @@ type Event struct {
 	SessionID string    `json:"session_id,omitempty"`
 	Provider  string    `json:"provider,omitempty"`
 	At        time.Time `json:"at"`
-	Signal    *Signal   `json:"signal,omitempty"`
+
+	// Turn end fields.
+	TurnID     string `json:"turn_id,omitempty"`
+	Outcome    string `json:"outcome,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+	DurationMS int64  `json:"duration_ms,omitempty"`
+	Partial    bool   `json:"partial,omitempty"`
+
+	// Excerpt is the start of a message's text, or a turn's final message
+	// when the transcript records one.
+	Excerpt string `json:"excerpt,omitempty"`
+
+	Signal *Signal `json:"signal,omitempty"`
 }
+
+// MaxExcerptBytes caps Event.Excerpt.
+const MaxExcerptBytes = 2 << 10
 
 // Signal is the payload of a signal event.
 type Signal struct {
@@ -122,6 +137,9 @@ type Result struct {
 	Channel     string
 	TargetState string
 	GapReason   string
+	// Source names the transcript file now being read, after a Codex
+	// rollout change.
+	Source string
 }
 
 // Watcher arms and waits. It holds no per-watch state; everything needed to
@@ -172,7 +190,7 @@ func (w *Watcher) Arm(ctx context.Context, spec Spec) (Result, error) {
 		return Result{}, newError(CodeInvalidArgument, err.Error())
 	}
 	if conds[0] != CondSignal {
-		return Result{}, newError(CodeUnsupportedCondition, "transcript conditions (message, phrase, turn_end) are not implemented yet; only signal watches are available")
+		return w.armTranscript(ctx, spec, conds)
 	}
 	if spec.SessionID != "" {
 		return Result{}, newError(CodeInvalidArgument, "signal watches don't take a session id")
@@ -218,7 +236,7 @@ func (w *Watcher) Wait(ctx context.Context, cursorStr string, spec Spec, limits 
 	}
 	limits = limits.withDefaults()
 	if c.Until[0] != CondSignal {
-		return Result{}, newError(CodeUnsupportedCondition, "transcript conditions are not implemented yet")
+		return w.waitTranscript(ctx, c, limits)
 	}
 
 	ticker := time.NewTicker(w.pollInterval())
@@ -246,7 +264,7 @@ func (w *Watcher) Wait(ctx context.Context, cursorStr string, spec Spec, limits 
 // caller should continue with the same cursor; anything else is an error.
 func (w *Watcher) waitEnded(ctx context.Context, c cursor) (Result, error) {
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		return Result{Status: StatusWaiting, Events: []Event{}, Cursor: c.encode(), Channel: c.Channel}, nil
+		return Result{Status: StatusWaiting, Events: []Event{}, Cursor: c.encode(), Channel: c.Channel, Phrase: c.Phrase}, nil
 	}
 	return Result{}, ctx.Err()
 }

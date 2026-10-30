@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -19,8 +20,13 @@ var ErrSessionNotFound = errors.New("session not found")
 // ErrSessionNotFound when nothing matches, and an error naming the
 // candidates when more than one session shares the suffix.
 func (db *DB) ResolveSessionID(input string) (string, error) {
+	return db.ResolveSessionIDContext(context.Background(), input)
+}
+
+// ResolveSessionIDContext is ResolveSessionID bounded by ctx.
+func (db *DB) ResolveSessionIDContext(ctx context.Context, input string) (string, error) {
 	var id string
-	err := db.QueryRow(`SELECT session_id FROM sessions WHERE session_id = ?`, input).Scan(&id)
+	err := db.conn.QueryRowContext(ctx, `SELECT session_id FROM sessions WHERE session_id = ?`, input).Scan(&id)
 	if err == nil {
 		return id, nil
 	}
@@ -28,7 +34,7 @@ func (db *DB) ResolveSessionID(input string) (string, error) {
 		return "", err
 	}
 
-	rows, err := db.Query(`
+	rows, err := db.conn.QueryContext(ctx, `
 		SELECT session_id FROM sessions
 		WHERE substr(session_id, -(length(?) + 1)) = '-' || ?
 		LIMIT 5
@@ -57,6 +63,16 @@ func (db *DB) ResolveSessionID(input string) (string, error) {
 	default:
 		return "", fmt.Errorf("ambiguous session id %s: matches %s", input, strings.Join(matches, ", "))
 	}
+}
+
+// SessionProvider returns the provider of a canonical session id.
+func (db *DB) SessionProvider(ctx context.Context, sessionID string) (string, error) {
+	var provider string
+	err := db.conn.QueryRowContext(ctx, `SELECT COALESCE(provider, 'claude') FROM sessions WHERE session_id = ?`, sessionID).Scan(&provider)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("%w: %s", ErrSessionNotFound, sessionID)
+	}
+	return provider, err
 }
 
 // Session represents a session returned from ListSessions

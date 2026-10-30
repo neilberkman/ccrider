@@ -8,6 +8,7 @@ import (
 	"slices"
 
 	"github.com/neilberkman/ccrider/internal/core/db"
+	"github.com/neilberkman/ccrider/pkg/sessionevents"
 )
 
 // cursorVersion is the cursor format version. decoderVersion changes whenever
@@ -35,6 +36,10 @@ type cursor struct {
 	Ino       uint64 `json:"ino,omitempty"`
 	Offset    int64  `json:"off,omitempty"`
 	Tail      string `json:"tail,omitempty"`
+	TailLen   int64  `json:"tn,omitempty"`
+	Gen       int64  `json:"gen,omitempty"`
+	// State is the transcript decoder's state at Offset.
+	State *sessionevents.State `json:"ds,omitempty"`
 
 	Signal int64 `json:"sig,omitempty"`
 }
@@ -92,6 +97,30 @@ func (c cursor) validate() error {
 	}
 	if c.Channel != "" || c.Signal != 0 {
 		return errors.New("transcript cursor carries signal fields")
+	}
+	if c.SessionID == "" || c.Source == "" {
+		return errors.New("transcript cursor has no session")
+	}
+	if c.Provider != providerClaude && c.Provider != providerCodex {
+		return fmt.Errorf("transcript cursor has unsupported provider %q", c.Provider)
+	}
+	if c.Offset < 0 || c.TailLen < 0 || c.TailLen > c.Offset || c.Gen < 0 || (c.Offset > 0 && (c.Tail == "" || c.TailLen == 0)) {
+		return errors.New("transcript cursor position is inconsistent")
+	}
+	if c.State == nil {
+		return errors.New("transcript cursor has no decoder state")
+	}
+	switch c.State.Turn {
+	case sessionevents.TurnIdle, sessionevents.TurnRunning, sessionevents.TurnUnknown:
+	default:
+		return fmt.Errorf("transcript cursor has unknown turn state %q", c.State.Turn)
+	}
+	if slices.Contains(c.Until, CondPhrase) {
+		if err := validatePhrase(c.Phrase); err != nil {
+			return err
+		}
+	} else if c.Phrase != "" {
+		return errors.New("cursor has a phrase but no phrase condition")
 	}
 	return nil
 }

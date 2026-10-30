@@ -31,6 +31,9 @@ var (
 	armSignal        bool
 	armChannel       string
 	armMintChannel   bool
+	armUntil         []string
+	armPhrase        string
+	armMintPhrase    bool
 	signalKey        string
 	signalFrom       string
 )
@@ -44,11 +47,14 @@ Arm a watch first with 'ccrider wait arm', which prints a cursor. Then pass
 the cursor to 'ccrider wait'. Each result includes a cursor to continue from;
 nothing is lost between calls. Deduplicate events by event_id.
 
-Currently supports signal watches: another session posts to a channel with
-'ccrider signal' or the MCP tool send_session_signal.
+Transcript watches follow a Claude Code or Codex session: a turn ending, a
+new message, or a message containing a phrase. Signal watches wait for
+another session to post to a channel with 'ccrider signal' or the MCP tool
+send_session_signal.
 
 Exit status: 0 events, 2 timed out (the printed cursor continues the watch),
-3 gap or expired cursor (continue with the printed cursor), 1 error.
+3 gap or expired cursor (events may be missing; continue with the printed
+cursor), 1 error.
 
 With --follow, prints one JSON result per line and keeps waiting. It stops at
 a gap or expired cursor unless --through-gaps is given.
@@ -61,17 +67,20 @@ model calls.`,
 }
 
 var waitArmCmd = &cobra.Command{
-	Use:   "arm",
+	Use:   "arm [session]",
 	Short: "Arm a watch and print its cursor",
 	Long: `Arm a watch and print a JSON result with the cursor to wait on.
+
+Transcript watch (Claude Code and Codex sessions):
+  ccrider wait arm <session> --until turn_end
+  ccrider wait arm <session> --until phrase --mint-phrase
 
 Signal watch:
   ccrider wait arm --signal --mint-channel
   ccrider wait arm --signal --channel deploy-done
 
-Give the channel to the session that should signal, then run
-'ccrider wait <cursor>'.`,
-	Args: cobra.NoArgs,
+Then run 'ccrider wait <cursor>'.`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: runWaitArm,
 }
 
@@ -89,6 +98,9 @@ func init() {
 	waitArmCmd.Flags().BoolVar(&armSignal, "signal", false, "Watch a signal channel")
 	waitArmCmd.Flags().StringVar(&armChannel, "channel", "", "Signal channel to watch")
 	waitArmCmd.Flags().BoolVar(&armMintChannel, "mint-channel", false, "Create a new random channel")
+	waitArmCmd.Flags().StringSliceVar(&armUntil, "until", nil, "Transcript conditions: turn_end, message, phrase")
+	waitArmCmd.Flags().StringVar(&armPhrase, "phrase", "", "Phrase for the phrase condition")
+	waitArmCmd.Flags().BoolVar(&armMintPhrase, "mint-phrase", false, "Create a unique phrase for the phrase condition")
 	signalCmd.Flags().StringVar(&signalKey, "key", "", "Idempotency key: resending with the same key and body doesn't post twice")
 	signalCmd.Flags().StringVar(&signalFrom, "from", "", "Your session ID, reported to watchers as unverified")
 	waitCmd.AddCommand(waitArmCmd)
@@ -97,17 +109,20 @@ func init() {
 }
 
 type waitOutput struct {
-	Status  string        `json:"status"`
-	Events  []watch.Event `json:"events"`
-	Cursor  string        `json:"cursor"`
-	Channel string        `json:"channel,omitempty"`
-	Phrase  string        `json:"phrase,omitempty"`
-	Gap     string        `json:"gap_reason,omitempty"`
+	Status      string        `json:"status"`
+	Events      []watch.Event `json:"events"`
+	Cursor      string        `json:"cursor"`
+	Channel     string        `json:"channel,omitempty"`
+	Phrase      string        `json:"phrase,omitempty"`
+	TargetState string        `json:"target_state,omitempty"`
+	Gap         string        `json:"gap_reason,omitempty"`
+	RolloutID   string        `json:"rollout_id,omitempty"`
 }
 
 func printWaitResult(w io.Writer, res watch.Result) error {
 	out := waitOutput{Status: res.Status, Events: res.Events, Cursor: res.Cursor,
-		Channel: res.Channel, Phrase: res.Phrase, Gap: res.GapReason}
+		Channel: res.Channel, Phrase: res.Phrase, TargetState: res.TargetState,
+		Gap: res.GapReason, RolloutID: res.Source}
 	if out.Events == nil {
 		out.Events = []watch.Event{}
 	}
@@ -153,18 +168,28 @@ func openWatcherContext(ctx context.Context) (*watch.Watcher, func(), error) {
 	}
 }
 
-func runWaitArm(cmd *cobra.Command, _ []string) error {
-	if !armSignal {
-		return errors.New("only signal watches are available so far; pass --signal")
+func runWaitArm(cmd *cobra.Command, args []string) error {
+	spec := watch.Spec{Channel: armChannel, MintChannel: armMintChannel, Phrase: armPhrase, MintPhrase: armMintPhrase}
+	switch {
+	case armSignal && (len(args) > 0 || len(armUntil) > 0):
+		return errors.New("--signal watches a channel; don't pass a session or --until")
+	case armSignal:
+		spec.Until = []string{watch.CondSignal}
+	case len(args) == 0:
+		return errors.New("pass a session to watch, or --signal")
+	default:
+		spec.SessionID = args[0]
+		spec.Until = armUntil
+		if len(spec.Until) == 0 {
+			spec.Until = []string{watch.CondTurnEnd}
+		}
 	}
 	watcher, closeDB, err := openWatcher()
 	if err != nil {
 		return err
 	}
 	defer closeDB()
-	res, err := watcher.Arm(cmd.Context(), watch.Spec{
-		Until: []string{watch.CondSignal}, Channel: armChannel, MintChannel: armMintChannel,
-	})
+	res, err := watcher.Arm(cmd.Context(), spec)
 	if err != nil {
 		return err
 	}

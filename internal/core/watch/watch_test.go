@@ -203,7 +203,7 @@ func TestArmValidation(t *testing.T) {
 		{Spec{Until: []string{CondSignal}, Channel: "c", MintChannel: true}, CodeInvalidArgument},
 		{Spec{Until: []string{CondSignal}, Channel: "c", SessionID: "s"}, CodeInvalidArgument},
 		{Spec{Until: []string{CondSignal}, Channel: "bad\x00"}, CodeInvalidArgument},
-		{Spec{Until: []string{CondTurnEnd}, SessionID: "s"}, CodeUnsupportedCondition},
+		{Spec{Until: []string{CondTurnEnd}, SessionID: "s"}, CodeNotFound},
 	}
 	for i, tc := range cases {
 		if _, err := w.Arm(ctx, tc.spec); codeOf(err) != tc.code {

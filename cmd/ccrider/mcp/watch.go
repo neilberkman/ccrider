@@ -61,6 +61,7 @@ type WaitForSessionResponse struct {
 	Channel     string        `json:"channel,omitempty"`
 	TargetState string        `json:"target_state,omitempty"`
 	GapReason   string        `json:"gap_reason,omitempty"`
+	RolloutID   string        `json:"rollout_id,omitempty"`
 	Instruction string        `json:"instruction,omitempty"`
 }
 
@@ -100,18 +101,24 @@ func registerWatchTools(s *server.MCPServer, database *db.DB) {
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithOpenWorldHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(false),
-		mcp.WithDescription(`Wait for something to happen in another coding agent session, in any harness. Currently supports signal watches: wait until a message is posted to a channel with send_session_signal.
+		mcp.WithDescription(`Wait for something to happen in another coding agent session, in any harness.
+
+Two kinds of watch:
+- Transcript watch (Claude Code and Codex sessions): until any of "turn_end" (the session finishes a turn; outcome is completed, failed, refused or interrupted), "message" (it writes any new message), "phrase" (it writes a message containing a phrase). Needs session_id. Works without the other session's cooperation, except phrase.
+- Signal watch (any harness): until ["signal"]. Another session posts to a channel with send_session_signal, or runs: ccrider signal <channel> <message>.
 
 Flow:
-1. Arm: call without a cursor, with until=["signal"] and either a channel or mint_channel=true. Returns immediately with status "armed", a cursor and the channel.
-2. Tell the other session (or the user) to call send_session_signal on that channel when done, or to run: ccrider signal <channel> <message>.
-3. Wait: call with the cursor. Returns as soon as a signal arrives (status "event"), or at max_wait_seconds with status "waiting". Always call again with the returned cursor; nothing is lost between calls.
+1. Arm: call without a cursor. Returns immediately with status "armed", a cursor, and target_state (running, idle or unknown) for transcript watches. Use mint_phrase or mint_channel to get a unique phrase or channel to hand to the other session.
+2. Wait: call with the cursor. Returns as soon as something matches (status "event"), or at max_wait_seconds with status "waiting". Always call again with the returned cursor; nothing is lost between calls. A turn already running when you armed reports its end.
 
-Other statuses: "cursor_expired" means signals were pruned before you read them (retention is 7 days); continue with the fresh cursor. "busy" means too many waits are running; retry with the same cursor. Deduplicate events by event_id.
+Other statuses: "gap" means the transcript was rewritten, truncated or replaced, or the Codex thread moved to another rollout file (rollout_id); events in between may be missing, so read the transcript with get_session_messages if it matters, then continue with the fresh cursor. "cursor_expired" means signals were pruned before you read them. "busy" means too many waits are running; retry with the same cursor. Deduplicate events by event_id.
 
 max_wait_seconds defaults to 20, which fits every known client's tool timeout. Raise it only if your client allows longer tool calls.`),
-		mcp.WithArray("until", mcp.WithStringItems(mcp.Enum(watch.CondSignal)),
-			mcp.Description(`Conditions to wait for. Currently only ["signal"]. Required when arming; optional with a cursor, and must match it if given.`)),
+		mcp.WithString("session_id", mcp.Description("Session to watch, for transcript conditions. Full IDs and bare UUIDs work.")),
+		mcp.WithArray("until", mcp.WithStringItems(mcp.Enum(watch.CondTurnEnd, watch.CondMessage, watch.CondPhrase, watch.CondSignal)),
+			mcp.Description(`Conditions to wait for: any of turn_end, message, phrase; or signal alone. Required when arming; optional with a cursor, and must match it if given.`)),
+		mcp.WithString("phrase", mcp.Description("For the phrase condition: text the other session's assistant message must contain (literal, case-sensitive). Omit and set mint_phrase=true to get a unique one.")),
+		mcp.WithBoolean("mint_phrase", mcp.Description("When arming a phrase watch, create a unique phrase to give the other session.")),
 		mcp.WithString("channel", mcp.Description("Signal channel to watch. Omit and set mint_channel=true to get a new random channel.")),
 		mcp.WithBoolean("mint_channel", mcp.Description("When arming, create a new random channel.")),
 		mcp.WithString("cursor", mcp.Description("Cursor from the previous result. Omit to arm a new watch.")),
@@ -277,13 +284,23 @@ func watchResult(res watch.Result) *mcp.CallToolResult {
 	out := WaitForSessionResponse{
 		Status: res.Status, Events: res.Events, Cursor: res.Cursor, Phrase: res.Phrase,
 		Channel: res.Channel, TargetState: res.TargetState, GapReason: res.GapReason,
+		RolloutID: res.Source,
 	}
 	if out.Events == nil {
 		out.Events = []watch.Event{}
 	}
 	switch res.Status {
 	case watch.StatusArmed:
-		out.Instruction = "Armed. Ask the other session to call send_session_signal with channel '" + res.Channel + "' (or run: ccrider signal " + res.Channel + " <message>), then call wait_for_session with this cursor."
+		switch {
+		case res.Channel != "":
+			out.Instruction = "Armed. Ask the other session to call send_session_signal with channel '" + res.Channel + "' (or run: ccrider signal " + res.Channel + " <message>), then call wait_for_session with this cursor."
+		case res.Phrase != "":
+			out.Instruction = "Armed. Ask the other session to include the exact phrase '" + res.Phrase + "' in a message when it's done, then call wait_for_session with this cursor."
+		default:
+			out.Instruction = "Armed. Call wait_for_session with this cursor."
+		}
+	case watch.StatusGap:
+		out.Instruction = "Continuity was lost (" + res.GapReason + "); events since the previous cursor may be missing. Continue with this cursor."
 	case watch.StatusWaiting:
 		out.Instruction = "Nothing yet. Call wait_for_session again with this cursor."
 	case watch.StatusCursorExpired:
