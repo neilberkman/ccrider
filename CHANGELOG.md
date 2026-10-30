@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Cross-session signals: `wait_for_session` and `send_session_signal`** — one agent session can wait for another to report back, across harnesses. The waiter arms a watch and gets a channel and a cursor, the other session posts to the channel, and the waiter's next call returns the signal. Waits return as soon as a signal arrives or after `max_wait_seconds` (default 20, which fits every known client's tool timeout) with a cursor to continue from, so nothing is lost between calls. Events carry stable ids for deduplication. Signals are kept 7 days; a watch that falls further behind is told so with `cursor_expired` instead of silently missing signals. Idempotency keys make retries safe and reject a reused key with a different body. At most 8 waits run at once per server, so other tools stay responsive
+- **`ccrider wait` and `ccrider signal`** — the same from a shell. `ccrider wait arm --signal --mint-channel` prints a channel and cursor; `ccrider wait <cursor>` blocks until a signal (exit 0), timeout (exit 2) or an expired cursor (exit 3), and `--follow` streams results as JSON lines. Suited to agents that can run a background command and resume when it exits
+
+### Changed
+
+- **mcp-go v1.5.0** — upgraded from v0.41.1. Tool calls are now cancelled when the client cancels them or disconnects, instead of running to completion. Building from source requires Go 1.25.5 or later
+
 ## [1.14.1] - 2026-10-26
 
 ### Fixed

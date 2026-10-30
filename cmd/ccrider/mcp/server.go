@@ -261,8 +261,9 @@ func StartServer(dbPath string) error {
 	s.AddTool(openTool, makeListOpenSessionsHandler(database, liveCache))
 
 	registerSessionAnchorTools(s, database)
+	registerWatchTools(s, database)
 
-	return server.ServeStdio(s)
+	return server.ServeStdio(s, server.WithWorkerPoolSize(stdioWorkers))
 }
 
 // coerceStringNumbers converts string-encoded numbers to float64 in an arguments map.

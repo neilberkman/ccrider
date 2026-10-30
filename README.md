@@ -151,6 +151,8 @@ Use command `ccrider` with args `["serve-mcp"]`.
 - **get_session_messages** - Get messages from a session (supports tail mode, context around search matches)
 - **generate_session_anchor** - Save a unique session anchor, optionally with a descriptive label and a known session ID
 - **list_session_anchors** - List saved anchors and their matching sessions, with project/provider/session filters and pagination
+- **wait_for_session** - Arm a watch and wait for a signal from another session, in any harness
+- **send_session_signal** - Post a signal to a channel, waking sessions that wait on it
 
 `search_sessions`, `list_recent_sessions`, and `list_session_anchors` support a `provider` parameter to filter by `claude`, `codex`, `copilot`, `opencode`, `pi`, `antigravity`, `antigravity-ide`, `antigravity-desktop`, or `amp`. Search and retrieval tools read your local session database; anchor generation saves a bookmark there. Local providers are read from disk; Amp threads are fetched from your authenticated Amp account during sync and then stored locally.
 
@@ -165,6 +167,22 @@ Call `list_session_anchors` to retrieve saved labels, phrases, timestamps, and m
 An anchor appears in the unfiltered list as soon as it is generated, even if its `sessions` list is still empty. Session filters omit unmatched anchors. A phrase copied into multiple conversations can match more than one session; an explicit `session_id` binding takes precedence. Large session lists can be shortened with `sessions_truncated: true` and the full `session_count` retained.
 
 The registry includes anchors generated after this feature was added. Previously generated phrases and manually written tags remain searchable as ordinary conversation text.
+
+### Waiting on another session
+
+One session can wait for another to report back, even when they run in different harnesses. The waiting session calls `wait_for_session` with `{"until": ["signal"], "mint_channel": true}`. It returns immediately with a channel name and a cursor. Give the channel to the other session and ask it to call `send_session_signal` with that channel and a short result when it's done. The waiting session then calls `wait_for_session` with the cursor.
+
+Each wait returns as soon as a signal arrives, or after `max_wait_seconds` (default 20) with status `waiting` and a cursor to continue from. Nothing is lost between calls, and every event has an `event_id` for deduplication. Signals are kept for 7 days. A watch that falls further behind gets status `cursor_expired` and a fresh cursor. Resending with the same `idempotency_key` and body doesn't post twice.
+
+The same works from a shell, which suits agents that can run a background command and resume when it exits:
+
+```bash
+ccrider wait arm --signal --mint-channel     # prints the channel and a cursor
+ccrider wait <cursor> --timeout 2h           # exits 0 on a signal, 2 on timeout
+ccrider signal <channel> "tests pass"        # from the other session
+```
+
+Waiting on a session's transcript, for a message, a phrase, or the end of its turn, is specified in `docs/plans/2026-10-30-session-watch-spec.md` and not yet available.
 
 ### Recovering earlier context
 
