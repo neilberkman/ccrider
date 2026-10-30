@@ -1,6 +1,6 @@
 # Session watch: specification
 
-Status: draft spec, revision 4, 2026-10-30. Signal watches are implemented; transcript watches are not. Supersedes `2026-10-30-session-watch-design.md`. Incorporates review rounds 1 to 3.
+Status: spec, revision 4, 2026-10-30. Implemented on branch `feat/session-watch`. Supersedes `2026-10-30-session-watch-design.md`. Incorporates review rounds 1 to 3.
 
 ## Purpose
 

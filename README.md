@@ -151,7 +151,7 @@ Use command `ccrider` with args `["serve-mcp"]`.
 - **get_session_messages** - Get messages from a session (supports tail mode, context around search matches)
 - **generate_session_anchor** - Save a unique session anchor, optionally with a descriptive label and a known session ID
 - **list_session_anchors** - List saved anchors and their matching sessions, with project/provider/session filters and pagination
-- **wait_for_session** - Arm a watch and wait for a signal from another session, in any harness
+- **wait_for_session** - Wait for another session to finish a turn, write a message or phrase, or send a signal
 - **send_session_signal** - Post a signal to a channel, waking sessions that wait on it
 
 `search_sessions`, `list_recent_sessions`, and `list_session_anchors` support a `provider` parameter to filter by `claude`, `codex`, `copilot`, `opencode`, `pi`, `antigravity`, `antigravity-ide`, `antigravity-desktop`, or `amp`. Search and retrieval tools read your local session database; anchor generation saves a bookmark there. Local providers are read from disk; Amp threads are fetched from your authenticated Amp account during sync and then stored locally.
@@ -170,19 +170,30 @@ The registry includes anchors generated after this feature was added. Previously
 
 ### Waiting on another session
 
-One session can wait for another to report back, even when they run in different harnesses. The waiting session calls `wait_for_session` with `{"until": ["signal"], "mint_channel": true}`. It returns immediately with a channel name and a cursor. Give the channel to the other session and ask it to call `send_session_signal` with that channel and a short result when it's done. The waiting session then calls `wait_for_session` with the cursor.
+One session can wait for another, even when they run in different harnesses. There are two kinds of watch.
 
-Each wait returns as soon as a signal arrives, or after `max_wait_seconds` (default 20) with status `waiting` and a cursor to continue from. Nothing is lost between calls, and every event has an `event_id` for deduplication. Signals are kept for 7 days. A watch that falls further behind gets status `cursor_expired` and a fresh cursor. Resending with the same `idempotency_key` and body doesn't post twice.
+**Transcript watches** follow a Claude Code or Codex session's transcript, with no cooperation needed from it. Call `wait_for_session` with a `session_id` and `until` set to any of:
+
+- `turn_end`: the session finishes a turn. The event's `outcome` is `completed`, `failed`, `refused` or `interrupted`. Codex events include the turn's final message as `excerpt`.
+- `message`: the session writes any new assistant message.
+- `phrase`: the session writes a message containing a phrase. Pass `mint_phrase: true` to get a unique phrase to hand to the other session.
+
+`turn_end` needs an interactive Claude Code session; headless `claude -p` sessions don't record turn ends. A turn already running when the watch is armed reports its end. A Codex thread is followed when it moves to another rollout file.
+
+**Signal watches** work with any harness. Arm with `{"until": ["signal"], "mint_channel": true}`, give the channel to the other session, and have it call `send_session_signal` with a short result when it's done. Signals are kept for 7 days. Resending with the same `idempotency_key` and body doesn't post twice.
+
+Arming returns immediately with a cursor. Each wait returns as soon as something matches, or after `max_wait_seconds` (default 20) with status `waiting` and a cursor to continue from. Nothing is lost between calls, and every event has an `event_id` for deduplication. If a transcript is rewritten, truncated or replaced, the wait returns status `gap` with a fresh cursor, since events in between may be missing.
 
 The same works from a shell, which suits agents that can run a background command and resume when it exits:
 
 ```bash
-ccrider wait arm --signal --mint-channel     # prints the channel and a cursor
-ccrider wait <cursor> --timeout 2h           # exits 0 on a signal, 2 on timeout
-ccrider signal <channel> "tests pass"        # from the other session
+ccrider wait arm <session> --until turn_end   # prints a cursor
+ccrider wait <cursor> --timeout 2h            # exits 0 on an event, 2 on timeout, 3 on a gap
+ccrider wait arm --signal --mint-channel      # signal watch: prints a channel and cursor
+ccrider signal <channel> "tests pass"         # from the other session
 ```
 
-Waiting on a session's transcript, for a message, a phrase, or the end of its turn, is specified in `docs/plans/2026-10-30-session-watch-spec.md` and not yet available.
+The design and its limits are in `docs/plans/2026-10-30-session-watch-spec.md`.
 
 ### Recovering earlier context
 
