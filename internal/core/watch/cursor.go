@@ -3,8 +3,11 @@ package watch
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
+
+	"github.com/neilberkman/ccrider/internal/core/db"
 )
 
 // cursorVersion is the cursor format version. decoderVersion changes whenever
@@ -65,7 +68,32 @@ func decodeCursor(s string) (cursor, error) {
 		return cursor{}, newError(CodeCursorInvalid, "cursor conditions are invalid: "+err.Error())
 	}
 	c.Until = conds
+	if err := c.validate(); err != nil {
+		return cursor{}, newError(CodeCursorInvalid, err.Error())
+	}
 	return c, nil
+}
+
+// validate checks the fields a cursor's conditions require and rejects fields
+// that belong to another kind of watch.
+func (c cursor) validate() error {
+	if c.Until[0] == CondSignal {
+		if err := db.ValidateSignalChannel(c.Channel); err != nil {
+			return err
+		}
+		if c.Signal < 0 {
+			return errors.New("signal position is negative")
+		}
+		if c.SessionID != "" || c.Provider != "" || c.Source != "" || c.Phrase != "" ||
+			c.Dev != 0 || c.Ino != 0 || c.Offset != 0 || c.Tail != "" {
+			return errors.New("signal cursor carries transcript fields")
+		}
+		return nil
+	}
+	if c.Channel != "" || c.Signal != 0 {
+		return errors.New("transcript cursor carries signal fields")
+	}
+	return nil
 }
 
 // sameConditions reports whether conditions a caller supplied alongside a

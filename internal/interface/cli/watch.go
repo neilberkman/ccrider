@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -112,7 +111,7 @@ func printWaitResult(w io.Writer, res watch.Result) error {
 	if out.Events == nil {
 		out.Events = []watch.Event{}
 	}
-	b, err := json.Marshal(out)
+	b, err := watch.MarshalJSON(out)
 	if err != nil {
 		return err
 	}
@@ -121,11 +120,37 @@ func printWaitResult(w io.Writer, res watch.Result) error {
 }
 
 func openWatcher() (*watch.Watcher, func(), error) {
-	database, err := db.New(dbPath)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to open database: %w", err)
+	return openWatcherContext(context.Background())
+}
+
+// openWatcherContext opens the database, giving up when ctx ends. Opening
+// can block behind another process's write lock; a wait with a timeout must
+// not overrun it for that reason.
+func openWatcherContext(ctx context.Context) (*watch.Watcher, func(), error) {
+	type opened struct {
+		database *db.DB
+		err      error
 	}
-	return &watch.Watcher{DB: database}, func() { _ = database.Close() }, nil
+	ch := make(chan opened, 1)
+	go func() {
+		database, err := db.New(dbPath)
+		ch <- opened{database, err}
+	}()
+	select {
+	case o := <-ch:
+		if o.err != nil {
+			return nil, nil, fmt.Errorf("failed to open database: %w", o.err)
+		}
+		return &watch.Watcher{DB: o.database}, func() { _ = o.database.Close() }, nil
+	case <-ctx.Done():
+		// Close the database if the open finishes after we've given up.
+		go func() {
+			if o := <-ch; o.err == nil {
+				_ = o.database.Close()
+			}
+		}()
+		return nil, nil, ctx.Err()
+	}
 }
 
 func runWaitArm(cmd *cobra.Command, _ []string) error {
@@ -147,12 +172,6 @@ func runWaitArm(cmd *cobra.Command, _ []string) error {
 }
 
 func runWait(cmd *cobra.Command, args []string) error {
-	watcher, closeDB, err := openWatcher()
-	if err != nil {
-		return err
-	}
-	defer closeDB()
-
 	ctx := cmd.Context()
 	if watchTimeout > 0 {
 		var cancel context.CancelFunc
@@ -161,6 +180,20 @@ func runWait(cmd *cobra.Command, args []string) error {
 	}
 	cur := args[0]
 	out := cmd.OutOrStdout()
+
+	watcher, closeDB, err := openWatcherContext(ctx)
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		if err := printWaitResult(out, watch.Result{Status: watch.StatusWaiting, Cursor: cur}); err != nil {
+			return err
+		}
+		return exitCode(exitTimeout)
+	case errors.Is(err, context.Canceled):
+		return exitCode(exitAborted)
+	case err != nil:
+		return err
+	}
+	defer closeDB()
 	for {
 		res, err := watcher.Wait(ctx, cur, watch.Spec{}, watch.Limits{})
 		if err != nil {
@@ -199,7 +232,7 @@ func runSignal(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	b, _ := json.Marshal(map[string]any{"signal_id": sig.ID, "channel": sig.Channel, "duplicate": dup})
+	b, _ := watch.MarshalJSON(map[string]any{"signal_id": sig.ID, "channel": sig.Channel, "duplicate": dup})
 	_, err = fmt.Fprintln(cmd.OutOrStdout(), string(b))
 	return err
 }

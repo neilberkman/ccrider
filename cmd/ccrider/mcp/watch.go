@@ -29,8 +29,18 @@ const (
 )
 
 // waitEventBytes is the event budget per result: the server-wide response
-// cap minus room for the cursor and other fields.
-func waitEventBytes() int { return maxResponseBytes() - 4096 }
+// cap minus room for the cursor, channel, instruction and other fields, each
+// of which is bounded (a channel is at most 200 characters).
+func waitEventBytes() int { return maxResponseBytes() - 8192 }
+
+// watchJSON encodes a watch response the same way the core sizes events.
+func watchJSON(v any) string {
+	b, err := watch.MarshalJSON(v)
+	if err != nil {
+		return `{"error":"encode_failed"}`
+	}
+	return string(b)
+}
 
 type WaitForSessionArgs struct {
 	SessionID      string   `json:"session_id,omitempty"`
@@ -146,8 +156,12 @@ func makeWaitForSessionHandler(watcher *watch.Watcher, slots waitSlots) server.T
 			MintPhrase: args.MintPhrase, MintChannel: args.MintChannel,
 		}
 
+		// The deadline covers everything the call does, arming included.
+		callCtx, cancelCall := context.WithTimeout(ctx, max(wait-waitResponseMargin, 100*time.Millisecond))
+		defer cancelCall()
+
 		if args.Cursor == "" {
-			res, err := watcher.Arm(ctx, spec)
+			res, err := watcher.Arm(callCtx, spec)
 			if err != nil {
 				return watchError(err), nil
 			}
@@ -158,17 +172,15 @@ func makeWaitForSessionHandler(watcher *watch.Watcher, slots waitSlots) server.T
 		}
 
 		if !slots.tryAcquire() {
-			return mcp.NewToolResultText(string(mustMarshal(WaitForSessionResponse{
+			return mcp.NewToolResultText(watchJSON(WaitForSessionResponse{
 				Status: "busy", Events: []watch.Event{}, Cursor: args.Cursor,
 				Instruction: "Too many waits are running in this ccrider server. Retry with the same cursor.",
-			}))), nil
+			})), nil
 		}
 		defer slots.release()
 
-		waitCtx, cancel := context.WithTimeout(ctx, max(wait-waitResponseMargin, 100*time.Millisecond))
-		defer cancel()
-		stopProgress := startProgress(waitCtx, request)
-		res, err := watcher.Wait(waitCtx, args.Cursor, spec, watch.Limits{MaxBytes: waitEventBytes()})
+		stopProgress := startProgress(callCtx, request)
+		res, err := watcher.Wait(callCtx, args.Cursor, spec, watch.Limits{MaxBytes: waitEventBytes()})
 		stopProgress()
 		if err != nil {
 			return watchError(err), nil
@@ -225,6 +237,14 @@ func makeSendSessionSignalHandler(watcher *watch.Watcher) server.ToolHandlerFunc
 		if err := decodeArgs(request, &args); err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("invalid arguments: %v", err)), nil
 		}
+		// An explicit empty body is a valid signal; a missing one is a mistake.
+		raw, _ := request.Params.Arguments.(map[string]interface{})
+		if _, ok := raw["channel"].(string); !ok {
+			return watchError(&watch.Error{Code: watch.CodeInvalidArgument, Message: "channel is required"}), nil
+		}
+		if _, ok := raw["body"].(string); !ok {
+			return watchError(&watch.Error{Code: "invalid_body", Message: "body is required; pass an empty string for a signal with no message"}), nil
+		}
 		sig, dup, err := watcher.SendSignal(ctx, db.SendSignalOptions{
 			Channel: args.Channel, Body: args.Body,
 			IdempotencyKey: args.IdempotencyKey, FromSessionID: args.FromSessionID,
@@ -232,14 +252,16 @@ func makeSendSessionSignalHandler(watcher *watch.Watcher) server.ToolHandlerFunc
 		switch {
 		case errors.Is(err, db.ErrIdempotencyConflict):
 			return watchError(&watch.Error{Code: "idempotency_conflict", Message: err.Error()}), nil
+		case errors.Is(err, db.ErrInvalidSignalBody):
+			return watchError(&watch.Error{Code: "invalid_body", Message: err.Error()}), nil
 		case errors.Is(err, db.ErrInvalidSignal):
 			return watchError(&watch.Error{Code: watch.CodeInvalidArgument, Message: err.Error()}), nil
 		case err != nil:
 			return mcp.NewToolResultError(fmt.Sprintf("send signal failed: %v", err)), nil
 		}
-		return mcp.NewToolResultText(string(mustMarshal(SendSessionSignalResponse{
+		return mcp.NewToolResultText(watchJSON(SendSessionSignalResponse{
 			SignalID: sig.ID, Channel: sig.Channel, Duplicate: dup,
-		}))), nil
+		})), nil
 	}
 }
 
@@ -267,13 +289,19 @@ func watchResult(res watch.Result) *mcp.CallToolResult {
 	case watch.StatusCursorExpired:
 		out.Instruction = "Signals were pruned before this watch read them. Continue with the fresh cursor."
 	}
-	return mcp.NewToolResultText(string(mustMarshal(out)))
+	text := watchJSON(out)
+	if len(text) > maxResponseBytes() {
+		// Field limits make this unreachable. If it happens anyway, report it
+		// without handing back the advanced cursor, so nothing is skipped.
+		return watchError(fmt.Errorf("result of %d bytes exceeds the response limit; retry with the same cursor", len(text)))
+	}
+	return mcp.NewToolResultText(text)
 }
 
 func watchError(err error) *mcp.CallToolResult {
 	var we *watch.Error
 	if errors.As(err, &we) {
-		return mcp.NewToolResultError(string(mustMarshal(map[string]string{"error": we.Code, "message": we.Message})))
+		return mcp.NewToolResultError(watchJSON(map[string]string{"error": we.Code, "message": we.Message}))
 	}
 	if errors.Is(err, context.Canceled) {
 		return mcp.NewToolResultError("wait cancelled")

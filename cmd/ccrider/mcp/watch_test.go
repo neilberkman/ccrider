@@ -129,3 +129,71 @@ func TestWaitForSessionTimesOutWithCursor(t *testing.T) {
 		t.Fatalf("1 s wait took %v; it must return within max_wait_seconds", elapsed)
 	}
 }
+
+// Field limits keep every result under the server-wide response cap, even
+// for bodies whose characters expand when JSON-encoded.
+func TestWaitForSessionWorstCaseFitsResponseCap(t *testing.T) {
+	watcher, slots := newWatchHandlers(t)
+	wait := makeWaitForSessionHandler(watcher, slots)
+	sendSig := makeSendSessionSignalHandler(watcher)
+	channel := strings.Repeat(`"`, db.MaxSignalChannelRunes)
+	_, text := callTool(t, wait, map[string]any{"until": []any{"signal"}, "channel": channel})
+	var armed WaitForSessionResponse
+	if err := json.Unmarshal([]byte(text), &armed); err != nil {
+		t.Fatalf("%v: %s", err, text)
+	}
+	bodies := []string{
+		strings.Repeat("<", db.MaxSignalBodyBytes),
+		strings.Repeat(`"`, db.MaxSignalBodyBytes/2),
+		strings.Repeat("\x01", db.MaxSignalBodyBytes/6),
+	}
+	sender := strings.Repeat(`\`, db.MaxSignalSenderBytes/2)
+	for _, body := range bodies {
+		res, text := callTool(t, sendSig, map[string]any{"channel": channel, "body": body, "from_session_id": sender})
+		if res.IsError {
+			t.Fatalf("send: %s", text)
+		}
+	}
+	cur := armed.Cursor
+	for received := 0; received < len(bodies); {
+		res, text := callTool(t, wait, map[string]any{"cursor": cur, "max_wait_seconds": 1})
+		if res.IsError {
+			t.Fatalf("wait: %s", text)
+		}
+		if len(text) > maxResponseBytes() {
+			t.Fatalf("response of %d bytes exceeds cap %d", len(text), maxResponseBytes())
+		}
+		var got WaitForSessionResponse
+		_ = json.Unmarshal([]byte(text), &got)
+		if len(got.Events) == 0 {
+			t.Fatalf("no progress: %s", text[:200])
+		}
+		received += len(got.Events)
+		cur = got.Cursor
+	}
+}
+
+func TestSendSessionSignalValidation(t *testing.T) {
+	watcher, _ := newWatchHandlers(t)
+	sendSig := makeSendSessionSignalHandler(watcher)
+	res, text := callTool(t, sendSig, map[string]any{"channel": "c"})
+	if !res.IsError || !strings.Contains(text, "invalid_body") {
+		t.Fatalf("missing body = %s", text)
+	}
+	res, text = callTool(t, sendSig, map[string]any{"body": "x"})
+	if !res.IsError || !strings.Contains(text, "invalid_argument") {
+		t.Fatalf("missing channel = %s", text)
+	}
+	res, text = callTool(t, sendSig, map[string]any{"channel": "c", "body": ""})
+	if res.IsError {
+		t.Fatalf("explicit empty body rejected: %s", text)
+	}
+	res, text = callTool(t, sendSig, map[string]any{"channel": "c", "body": strings.Repeat("\x01", db.MaxSignalBodyBytes)})
+	if !res.IsError || !strings.Contains(text, "invalid_body") {
+		t.Fatalf("oversized body = %s", text)
+	}
+	res, text = callTool(t, sendSig, map[string]any{"channel": "c", "body": "x", "from_session_id": strings.Repeat("s", 500)})
+	if !res.IsError || !strings.Contains(text, "invalid_argument") {
+		t.Fatalf("oversized sender = %s", text)
+	}
+}

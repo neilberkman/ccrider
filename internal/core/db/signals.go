@@ -15,8 +15,13 @@ import (
 // SignalRetention is how long signals are kept. Pruning runs on insert.
 const SignalRetention = 7 * 24 * time.Hour
 
-// MaxSignalBodyBytes caps a signal body.
+// MaxSignalBodyBytes caps a signal body's JSON-encoded size. Limiting the
+// encoded size rather than the raw size keeps every signal event inside a
+// fixed response budget, whatever characters it contains.
 const MaxSignalBodyBytes = 16 << 10
+
+// MaxSignalSenderBytes caps the claimed sender session id.
+const MaxSignalSenderBytes = 200
 
 // MaxSignalChannelRunes caps a channel name.
 const MaxSignalChannelRunes = 200
@@ -25,9 +30,42 @@ var (
 	// ErrIdempotencyConflict means the idempotency key was already used on the
 	// channel with a different body.
 	ErrIdempotencyConflict = errors.New("idempotency key already used with a different body")
-	// ErrInvalidSignal means the channel or body failed validation.
+	// ErrInvalidSignal means the channel, body or another field failed
+	// validation.
 	ErrInvalidSignal = errors.New("invalid signal")
+	// ErrInvalidSignalBody means the body failed validation. It wraps
+	// ErrInvalidSignal.
+	ErrInvalidSignalBody = fmt.Errorf("%w: body", ErrInvalidSignal)
 )
+
+// JSONStringLen returns the length of s encoded as a JSON string by
+// encoding/json with HTML escaping off, excluding the surrounding quotes.
+func JSONStringLen(s string) int {
+	n := 0
+	for _, r := range s {
+		switch {
+		case r == '"' || r == '\\' || r == '\n' || r == '\r' || r == '\t' || r == '\b' || r == '\f':
+			n += 2
+		case r < 0x20 || r == '\u2028' || r == '\u2029':
+			n += 6
+		default:
+			n += utf8.RuneLen(r)
+		}
+	}
+	return n
+}
+
+func validateSignalText(field, value string, maxBytes int) error {
+	if !utf8.ValidString(value) || len(value) > maxBytes {
+		return fmt.Errorf("%w: %s must be valid UTF-8 and at most %d bytes", ErrInvalidSignal, field, maxBytes)
+	}
+	for _, r := range value {
+		if unicode.IsControl(r) {
+			return fmt.Errorf("%w: %s must not contain control characters", ErrInvalidSignal, field)
+		}
+	}
+	return nil
+}
 
 // WatchSignal is one message posted to a signal channel. FromSessionID is
 // whatever the sender claimed; it is not verified.
@@ -74,11 +112,14 @@ func (db *DB) SendSignal(ctx context.Context, opts SendSignalOptions) (WatchSign
 	if err := ValidateSignalChannel(opts.Channel); err != nil {
 		return WatchSignal{}, false, err
 	}
-	if !utf8.ValidString(opts.Body) || len(opts.Body) > MaxSignalBodyBytes {
-		return WatchSignal{}, false, fmt.Errorf("%w: body must be valid UTF-8 and at most %d bytes", ErrInvalidSignal, MaxSignalBodyBytes)
+	if !utf8.ValidString(opts.Body) || JSONStringLen(opts.Body) > MaxSignalBodyBytes {
+		return WatchSignal{}, false, fmt.Errorf("%w must be valid UTF-8 and at most %d bytes once JSON-encoded", ErrInvalidSignalBody, MaxSignalBodyBytes)
 	}
-	if !utf8.ValidString(opts.IdempotencyKey) || len(opts.IdempotencyKey) > 200 {
-		return WatchSignal{}, false, fmt.Errorf("%w: idempotency key must be valid UTF-8 and at most 200 bytes", ErrInvalidSignal)
+	if err := validateSignalText("idempotency key", opts.IdempotencyKey, 200); err != nil {
+		return WatchSignal{}, false, err
+	}
+	if err := validateSignalText("sender session id", opts.FromSessionID, MaxSignalSenderBytes); err != nil {
+		return WatchSignal{}, false, err
 	}
 	now := opts.Now
 	if now.IsZero() {

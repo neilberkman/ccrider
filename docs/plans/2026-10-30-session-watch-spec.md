@@ -110,6 +110,8 @@ Transitions, applied to non-sidechain records in order:
 | `system` `turn_duration` | none; duplicate boundary, dropped | end turn |
 | `user` interrupt notice | none | end turn, `interrupted` |
 
+A prompt is a non-sidechain `user` record with text that isn't `isMeta`, isn't a compact summary, carries no `tool_result`, and doesn't start with `<command-name>`, `<local-command-stdout>` or `<local-command-caveat>`. Those three mark slash commands and their output, which don't run the agent by themselves; a slash command that does run the agent produces an assistant record, which starts the turn. Task notifications (`<task-notification>`) are prompts.
+
 The interrupt notice is a user record whose entire text is `[Request interrupted by user]` or `[Request interrupted by user for tool use]`. A user message that merely contains that text doesn't count.
 
 The outcome when `turn_duration` ends a turn:
@@ -145,7 +147,9 @@ The last row is turns started by task notifications and scheduled fires, which t
 |---|---|
 | `event_msg` `task_started` | start turn with its `turn_id` |
 | `event_msg` `task_complete`, `error` null | end turn, `completed`; excerpt from `last_agent_message` |
-| `event_msg` `task_complete`, `error` set | end turn, `failed`; `reason` from `error.codex_error_info`, else the error message, at most 200 bytes |
+| `event_msg` `task_complete`, `error` set | end turn, `failed`; `reason` is the error code, else the error message, at most 200 bytes |
+
+The error code is `error.codex_error_info`. Codex writes it as a string for variants without data (`"server_overloaded"`) and as a single-key object for variants with data (`{"http_connection_failed": {...}}`); the code is the variant name either way.
 | `event_msg` `turn_aborted` | end turn, `interrupted`; `reason` from the record |
 
 Review round 3 found 27 `task_complete` records with terminal errors (server overload, usage limits, policy, connection failures) in 134 local rollouts. Codex's own history database records those turns as failed.
@@ -203,6 +207,8 @@ Opaque to callers: base64url of versioned JSON. It carries everything needed to 
 
 If a caller supplies conditions together with a cursor, they must equal the cursor's, or the call fails with `cursor_mismatch`.
 
+Decoding also checks each kind's invariants and fails with `cursor_invalid` otherwise. A signal cursor needs a valid channel and a nonnegative `sig`, and carries no transcript fields. A transcript cursor carries no signal fields.
+
 ### Arming
 
 A call without a cursor arms the watch. It returns immediately with `status: "armed"`, a cursor at the current end of the source or signal stream, and `target_state`. It never waits.
@@ -237,7 +243,7 @@ The cursor's `off`, `tail`, `gen` and `ds` always describe the same boundary: th
 ### Batching
 
 - A record is consumed whole: all its events are returned together, or none are.
-- Every variable-length field has a limit: channel and phrase at most 200 characters, `reason` at most 200 bytes, excerpt 2 KiB, signal body 16 KiB. With those limits a single record's events fit in any byte budget an interface uses, so the "first record always fits" rule can't produce an oversized response.
+- Every variable-length field has a limit: channel and phrase at most 200 characters, `reason` at most 200 bytes, excerpt 2 KiB, `from_session_id` 200 bytes, and signal body 16 KiB measured after JSON encoding, so characters that expand when escaped count at their encoded size. Results are encoded without HTML escaping, and event sizes are measured the same way. With those limits a single record's events fit in any byte budget an interface uses, so the "first record always fits" rule can't produce an oversized response.
 - The batch stops at the first record that would take it past 20 events or 256 KiB of serialized events. The MCP interface passes a smaller byte budget, ccrider's server-wide response cap of about 36 KB less room for the other fields. If the first record alone exceeds either limit, it's still returned. Excerpts are capped at 2 KiB and signal bodies at 16 KiB, so a single record's events stay small.
 - The returned cursor points just past the last returned record.
 - When nothing matched, the call returns `waiting` with a cursor past all records read, so non-matching history isn't reread.
@@ -271,7 +277,7 @@ CREATE TABLE watch_signal_channels (
 - A wait reads the channel's `pruned_through_id` and the signals after its cursor in one read transaction, so both come from the same snapshot. If `pruned_through_id` exceeds the cursor's `sig`, the wait returns `cursor_expired` with a fresh cursor, whatever signals it read.
 - Arming sets `sig` to the highest signal id ever assigned, from SQLite's AUTOINCREMENT sequence. That is never below any channel's `pruned_through_id`, so a fully pruned channel can't make a new watch look expired.
 - An idempotency key reused with the same body returns the existing signal with `duplicate: true`. Reused with a different body, the send fails with `idempotency_conflict`. Keys last as long as their signal is retained.
-- Body is capped at 16 KiB and must be valid UTF-8.
+- Body is capped at 16 KiB of JSON-encoded size and must be valid UTF-8. An explicit empty body is allowed. A missing or invalid body fails with `invalid_body`.
 - Channels are broadcast streams. Every watcher reads with its own cursor.
 - `from_session_id` is reported as a claim. ccrider doesn't verify it.
 - Minted channel names are random to avoid collisions. They aren't secrets. Any local process can post to any channel, consistent with ccrider's single-user local trust model.
@@ -331,6 +337,7 @@ Interfaces:
 
 Errors: `not_found`, `unsupported_condition`, `unsupported_format`, `cursor_invalid`, `cursor_mismatch`.
 
+- The deadline starts when the call arrives and covers arming as well as waiting.
 - The default of 20 s stays under the shortest known client tool timeout, Copilot CLI's 30 s. The tool description tells agents that longer waits need a client configured for them.
 - When the request has a progress token, the handler sends progress notifications every 10 s with strictly increasing `progress` and stops when the call returns. Nothing depends on a client resetting its timeout because of them. Codex's current source logs progress notifications without resetting its timeout.
 - The stdio server runs with 16 workers. At most 8 waits run at once. A wait beyond that returns `busy` at once, with the caller's cursor unchanged.
@@ -453,7 +460,7 @@ Signals:
 
 MCP:
 
-30. Nine concurrent waits: the ninth returns `busy`; a search during eight waits completes promptly.
+30. Nine concurrent waits: the ninth returns `busy`; a search during eight waits starts without waiting for a worker. Search itself syncs before querying, which takes as long as it takes.
 31. Client cancels a wait: the handler returns and its ticker stops.
 32. Stdio closes during a wait: handlers return before the server exits.
 33. `max_wait_seconds` 20 returns within 20 s, including resolution.

@@ -221,3 +221,21 @@ func TestWaitReturnsCancellation(t *testing.T) {
 		t.Fatalf("cancelled wait err = %v, want context.Canceled", err)
 	}
 }
+
+func TestCursorInvariants(t *testing.T) {
+	w := newWatcher(t)
+	ctx := context.Background()
+	bad := []cursor{
+		{V: cursorVersion, DV: decoderVersion, Until: []string{CondSignal}},
+		{V: cursorVersion, DV: decoderVersion, Until: []string{CondSignal}, Channel: "c", Signal: -1},
+		{V: cursorVersion, DV: decoderVersion, Until: []string{CondSignal}, Channel: "c", SessionID: "s"},
+		{V: cursorVersion, DV: decoderVersion, Until: []string{CondSignal}, Channel: "c", Offset: 10},
+		{V: cursorVersion, DV: decoderVersion, Until: []string{CondSignal}, Channel: "bad\nchannel"},
+		{V: cursorVersion, DV: decoderVersion, Until: []string{CondTurnEnd}, Channel: "c"},
+	}
+	for i, c := range bad {
+		if _, err := w.Wait(ctx, c.encode(), Spec{}, Limits{}); codeOf(err) != CodeCursorInvalid {
+			t.Errorf("case %d: err = %v, want cursor_invalid", i, err)
+		}
+	}
+}

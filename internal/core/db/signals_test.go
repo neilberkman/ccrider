@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -174,5 +175,35 @@ func TestSignalsAfterIsOneSnapshot(t *testing.T) {
 	}
 	if sawUnread && expired {
 		t.Fatalf("read mixed two snapshots: %+v", page)
+	}
+}
+
+func TestJSONStringLenMatchesEncoder(t *testing.T) {
+	for _, s := range []string{"", "plain", `q"b\`, "<>&", "\n\r\t\b\f\x01\x1f", "  ", "héllo 世界 🚀", "�"} {
+		var buf strings.Builder
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(false)
+		if err := enc.Encode(s); err != nil {
+			t.Fatal(err)
+		}
+		want := buf.Len() - 3 // quotes and trailing newline
+		if got := JSONStringLen(s); got != want {
+			t.Errorf("JSONStringLen(%q) = %d, encoder gives %d", s, got, want)
+		}
+	}
+}
+
+func TestSendSignalBodyLimitIsEncodedSize(t *testing.T) {
+	database := newSignalDB(t)
+	ctx := context.Background()
+	// Six encoded bytes per character: 16 KiB of these is far over.
+	if _, _, err := database.SendSignal(ctx, SendSignalOptions{Channel: "c", Body: strings.Repeat("\x01", MaxSignalBodyBytes)}); !errors.Is(err, ErrInvalidSignalBody) {
+		t.Fatalf("control-character body err = %v, want ErrInvalidSignalBody", err)
+	}
+	if _, _, err := database.SendSignal(ctx, SendSignalOptions{Channel: "c", Body: strings.Repeat("\x01", MaxSignalBodyBytes/6)}); err != nil {
+		t.Fatalf("body at the encoded limit rejected: %v", err)
+	}
+	if _, _, err := database.SendSignal(ctx, SendSignalOptions{Channel: "c", Body: "x", FromSessionID: strings.Repeat("s", MaxSignalSenderBytes+1)}); !errors.Is(err, ErrInvalidSignal) || errors.Is(err, ErrInvalidSignalBody) {
+		t.Fatalf("long sender err = %v, want a non-body ErrInvalidSignal", err)
 	}
 }

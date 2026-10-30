@@ -9,6 +9,7 @@
 package watch
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -297,11 +298,24 @@ func signalEvent(s db.WatchSignal) Event {
 }
 
 func eventSize(ev Event) int {
-	b, err := json.Marshal(ev)
+	b, err := MarshalJSON(ev)
 	if err != nil {
 		return 0
 	}
 	return len(b)
+}
+
+// MarshalJSON encodes v the way watch results are sized: encoding/json with
+// HTML escaping off, so "<", ">" and "&" take one byte each. Interfaces
+// should encode results with it so the byte budget matches their output.
+func MarshalJSON(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(buf.Bytes(), []byte{'\n'}), nil
 }
 
 func mintChannel() (string, error) {
