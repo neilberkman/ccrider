@@ -1,0 +1,424 @@
+# Session watch: specification
+
+Status: draft spec, revision 3, 2026-10-30. Signal watches are implemented; transcript watches are not. Supersedes `2026-10-30-session-watch-design.md`. Incorporates review rounds 1 and 2.
+
+## Purpose
+
+Let one agent session, in any MCP-capable harness, wait for something to happen in another session and act on it. ccrider already reads every supported harness's transcripts, so it can provide this without harness-specific messaging.
+
+## Decisions since revision 2
+
+- Claude Code `turn_end` stays in v1, implemented as a state machine with explicit outcomes and fixture tests (below).
+- A Codex thread is watched as a logical thread: when its active rollout file changes (revert, replacement), the watch reports a gap and continues in the new rollout.
+- mcp-go is upgraded from v0.41.1 to v1.5.0 (commit f09a496). v1.5.0 cancels in-flight handlers when stdio input ends and honors `notifications/cancelled`, so per-request cancellation and disconnect cleanup come from the library.
+- Transcript conditions and signal conditions can't be mixed in one watch in v1.
+- Passive watching in v1 covers Claude Code and Codex only. pi and Copilot move to later, since there's no local data to validate them against.
+
+## Guarantees
+
+- For an append-only source, every event after an armed cursor is delivered at least once. Every event has a stable `event_id`; callers deduplicate on it.
+- ccrider detects these source changes and reports each as a `gap` with a reason: file replaced, file truncated, last consumed record changed, Codex active rollout changed.
+- Changes those checks can't see are outside the guarantee: an equal-length edit inside the already consumed region, and records written and removed between two polls. ccrider doesn't hash the full consumed prefix, because the files involved reach hundreds of megabytes.
+- A gap means continuity was lost. It doesn't restore what was lost.
+- Signals are delivered at least once while retained. A watcher that falls behind retention gets `cursor_expired`.
+- Standard MCP gives no portable way to wake an idle agent. Waiting through the tool means re-calling it after each `waiting` result. Zero-token waiting depends on host features covered under delivery paths.
+
+## v1 scope
+
+| | Claude Code | Codex | OpenCode, Antigravity, Amp, pi, Copilot |
+|---|---|---|---|
+| `message`, `phrase` | yes | yes | no |
+| `turn_end` | yes | yes | no |
+| `signal` | yes | yes | yes |
+
+A condition the target's provider doesn't support fails with `unsupported_condition`. ccrider never substitutes a heuristic.
+
+Supported transcript formats:
+
+- Claude Code transcripts that contain `turn_duration` system records. Evidence below is from Claude Code 2.1.295.
+- Codex rollouts whose records carry `ordinal`. Older rollouts without ordinals fail with `unsupported_format`.
+
+Out of v1: `exit` and session reassignment, quiet-period heuristics, pi, Copilot, OpenCode, Antigravity passive watching, MCP Tasks, `subscriptions/listen`, fsnotify, Claude Code channels.
+
+## Events
+
+Each source record decodes into zero or more events, in source order:
+
+| Kind | Fields |
+|---|---|
+| `message` | visible assistant text, excerpt |
+| `turn_ended` | `turn_id`, `outcome`, `reason`, `duration_ms`, excerpt |
+| `signal` | channel, body, `from_session_id`, signal id |
+
+`outcome` is one of `completed`, `refused`, `failed`, `interrupted`.
+
+Turn starts are tracked internally for state and correlation but aren't exposed as a condition in v1.
+
+Conditions select events:
+
+- `message`: any `message` event.
+- `phrase`: a `message` event whose visible text contains the phrase. Matching is literal and case-sensitive, on the full text before excerpt truncation. Text blocks within one record are joined with a newline. Empty phrases are rejected.
+- `turn_end`: any `turn_ended` event.
+- `signal`: any `signal` event on the given channel.
+
+An event that satisfies several conditions appears once, with a `matched` list naming them.
+
+### Visible assistant text
+
+Claude Code: `text` blocks in `assistant` records. Excluded:
+
+- `tool_use` and `thinking` blocks, tool results
+- sidechain records
+- compact summaries
+- records with `isApiErrorMessage`, which the host writes, not the model
+
+Codex: `response_item` records of type `message`, role `assistant`, `output_text` blocks. Excluded:
+
+- `response_item` `agent_message`, which are messages between threads in multi-agent runs
+- `event_msg` records of every type; supported rollouts carry assistant output in `response_item`
+- reasoning, tool calls and outputs, `compacted`, developer and user messages
+- records before `subagent_history_start_ordinal` in a child rollout, which are inherited context
+
+### Claude Code turn decoder
+
+State is `idle` or `running`, plus for a running turn: the start record's uuid, and whether a terminal refusal has been seen.
+
+Transitions, applied to non-sidechain records in order:
+
+| Record | When idle | When running |
+|---|---|---|
+| `user` prompt (text, not meta, not tool result) | start turn | none; prompt is queued |
+| `assistant` record, including API errors | start turn | none |
+| `system` `model_refusal_no_fallback` | none | mark refused |
+| `system` `turn_duration` | none; duplicate boundary, dropped | end turn |
+| `user` interrupt notice | none | end turn, `interrupted` |
+
+The interrupt notice is a user record whose entire text is `[Request interrupted by user]` or `[Request interrupted by user for tool use]`. A user message that merely contains that text doesn't count.
+
+The outcome when `turn_duration` ends a turn:
+
+- `refused` if the turn saw `model_refusal_no_fallback`.
+- `failed` if the last assistant record before it has `isApiErrorMessage`.
+- `completed` otherwise.
+
+Stop-hook continuations stay in one turn: Claude writes `stop_hook_summary` and then one `turn_duration` after the last continuation.
+
+After an interrupt in the tool-use form, Claude sometimes keeps working on prompts the user queued during the turn. The next assistant record starts a new turn under the "idle" column, so each loop gets its own end event.
+
+`turn_id` is the uuid of the record that started the turn. `event_id` uses the uuid of the record that ended it.
+
+Evidence from 150 recent local Claude Code transcripts:
+
+| Sequence | Count |
+|---|---|
+| assistant, then `turn_duration`, then a new prompt | 2,653 |
+| `stop_hook_summary`, then `turn_duration` | about 300 |
+| API error, then `turn_duration` | 76 |
+| `model_refusal_no_fallback`, then API error, then `turn_duration` | 22 |
+| plain interrupt, then a new prompt | about 170 |
+| tool-use interrupt, then a new prompt | 29 |
+| tool-use interrupt, then more assistant output | 6 |
+| `turn_duration`, then assistant output without a new prompt | about 100 |
+
+The last row is turns started by task notifications and scheduled fires, which the "assistant record when idle" rule covers.
+
+### Codex turn decoder
+
+| Record | Effect |
+|---|---|
+| `event_msg` `task_started` | start turn with its `turn_id` |
+| `event_msg` `task_complete` | end turn, `completed`; excerpt from `last_agent_message` |
+| `event_msg` `turn_aborted` | end turn, `interrupted`; `reason` from the record |
+
+An end record whose `turn_id` doesn't match the running turn still ends it and is reported with its own `turn_id`. `item_completed` isn't a turn boundary.
+
+`event_id` = rollout id + ordinal. The rollout id comes from the file name, so a replacement rollout that reuses ordinals produces different ids.
+
+### Target state at arm time
+
+Arming reports `target_state`: `running`, `idle`, or `unknown`. It's computed by scanning backward from the end of the source in 1 MiB chunks to the last turn boundary and replaying the decoder forward from there. The scan stops after 64 MiB; beyond that the state is `unknown`. Codex rollouts can exceed 700 MB, so a forward scan from the start isn't an option.
+
+A turn already running at arm time produces `turn_end` when it finishes, because its end record lands after the cursor. An idle target produces nothing until a later turn ends.
+
+## Source identity
+
+A watch target is a logical session:
+
+- Claude Code: a session id, one transcript file.
+- Codex: a thread id. A thread can have several rollout files. The active rollout is the one with the latest `session_meta` timestamp among files whose `session_meta.id` equals the thread id.
+
+Resolution, at arm time and on every resume:
+
+1. Resolve the caller's id to a canonical id with an indexed DB query, under the call's context.
+2. Locate the source on disk with a provider locator, bounded by the call's deadline. Claude: glob each config directory's `projects/*/<id>.jsonl`. Codex: glob `sessions/*/*/*/rollout-*-<thread id>*.jsonl` and read each candidate's first record.
+3. If the DB has no row, step 2 runs directly on the caller's id when it's a full UUID. There's no sync at arm time.
+
+During a wait, the Codex locator reruns every 5 s. If the active rollout changed, the wait returns `gap` with reason `rollout_changed`, the new rollout id, and a cursor at the new rollout's current end.
+
+## Cursor
+
+Opaque to callers: base64url of versioned JSON. It carries everything needed to continue, so the CLI and a restarted server can resume from the cursor alone.
+
+| Field | Meaning |
+|---|---|
+| `v` | format version; unknown versions fail with `cursor_invalid` |
+| `dv` | decoder version; a different decoder version fails with `cursor_invalid` and the caller re-arms |
+| `until`, `phrase`, `channel` | the normalized conditions themselves |
+| `sid`, `prov` | canonical target id and provider; empty for signal watches |
+| `src` | Claude: session id. Codex: rollout id |
+| `dev`, `ino` | file identity |
+| `off` | byte offset just past the last consumed record |
+| `tail` | SHA-256 of the last consumed record's bytes |
+| `ds` | decoder state: idle or running, turn start uuid or `turn_id`, refused flag |
+| `sig` | last consumed signal id, for signal watches |
+
+If a caller supplies conditions together with a cursor, they must equal the cursor's, or the call fails with `cursor_mismatch`.
+
+### Arming
+
+A call without a cursor arms the watch. It returns immediately with `status: "armed"`, a cursor at the current end of the source or signal stream, and `target_state`. It never waits.
+
+Arming mints a phrase or channel when asked, using the anchor generator. The intended flow:
+
+1. Arm, getting a cursor and, if asked, a phrase or channel.
+2. Tell the target session what to say or where to signal.
+3. Wait with the cursor, repeating with each returned cursor.
+
+### Reading
+
+Each poll:
+
+1. Open the file. Compare device and inode with the cursor before anything else. A mismatch returns `gap`, reason `replaced`.
+2. Stat the open file. A size below `off` returns `gap`, reason `truncated`.
+3. Read the record ending at `off` and compare its hash with `tail`. A mismatch returns `gap`, reason `rewritten`.
+4. Note the size as this read's frontier. Read complete, newline-terminated records from `off` up to the frontier. An unterminated last line is left for a later poll.
+5. Check the context between records and at least every 1 MiB.
+
+Size and mtime are compared with the previous poll only to skip unchanged files. They never replace steps 1 to 3.
+
+A malformed complete record returns `gap`, reason `corrupt`, with a cursor past it. The caller decides whether to read the transcript.
+
+A `gap` result carries a fresh cursor and a fresh `target_state`.
+
+### Batching
+
+- A record is consumed whole: all its events are returned together, or none are.
+- The batch stops at the first record that would take it past 20 events or 256 KiB of serialized events. The MCP interface passes a smaller byte budget, ccrider's server-wide response cap of about 36 KB less room for the other fields. If the first record alone exceeds either limit, it's still returned. Excerpts are capped at 2 KiB and signal bodies at 16 KiB, so a single record's events stay small.
+- The returned cursor points just past the last returned record.
+- When nothing matched, the call returns `waiting` with a cursor past all records read, so non-matching history isn't reread.
+
+A cursor reused against an unchanged source returns the same events with the same ids. Against a source that has grown since, it returns the same events first, possibly followed by more.
+
+## Signals
+
+Tables, created by a migration in `internal/core/db`:
+
+```sql
+CREATE TABLE watch_signals (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  channel TEXT NOT NULL,
+  idempotency_key TEXT,
+  from_session_id TEXT,
+  body TEXT NOT NULL,
+  body_sha256 TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  UNIQUE (channel, idempotency_key)
+);
+CREATE INDEX watch_signals_channel ON watch_signals(channel, id);
+
+CREATE TABLE watch_signal_channels (
+  channel TEXT PRIMARY KEY,
+  pruned_through_id INTEGER NOT NULL
+);
+```
+
+- Signals are retained for 7 days. Pruning runs on insert, deletes expired rows, and raises each affected channel's `pruned_through_id` to the highest id it deleted there.
+- A wait whose cursor `sig` is below the channel's `pruned_through_id` returns `cursor_expired` with a fresh cursor.
+- An idempotency key reused with the same body returns the existing signal with `duplicate: true`. Reused with a different body, the send fails with `idempotency_conflict`. Keys last as long as their signal is retained.
+- Body is capped at 16 KiB and must be valid UTF-8.
+- Channels are broadcast streams. Every watcher reads with its own cursor.
+- `from_session_id` is reported as a claim. ccrider doesn't verify it.
+- Minted channel names are random to avoid collisions. They aren't secrets. Any local process can post to any channel, consistent with ccrider's single-user local trust model.
+
+Signal watches don't need a target session. They work with any harness that has ccrider's MCP server or can run the CLI.
+
+## Waiting
+
+- Poll interval 1 s.
+- No DB transaction is held across a poll. Signal reads are single indexed queries under the call's context.
+- The wait reads the source directly and doesn't import into the DB.
+- The wait ends at the earlier of its deadline and cancellation of its context.
+
+## Core / interface split
+
+Core:
+
+- `pkg/ccsessions`: a reader returning complete lines with byte offsets, leaving an unterminated tail unread, checking a context between chunks.
+- `pkg/sessionevents`: event types and the decoder interface.
+- `pkg/ccsessions` and `pkg/codexsessions`: turn decoders and visible-text extraction, next to the existing parsers. The existing parsers are unchanged.
+- `internal/core/db`: signal tables and queries; canonical id resolution with context.
+- `internal/core/watch`: provider locators, arm, wait, cursor encoding and validation, continuity checks, batching, backward state scan, support matrix. Event and byte limits are parameters, with defaults.
+
+Interfaces:
+
+- MCP: argument parsing, deadline from `max_wait_seconds`, progress notifications, admission control, JSON shape.
+- CLI: flags, exit codes, output, `--follow` looping.
+
+## MCP interface
+
+### `wait_for_session`
+
+| Argument | Notes |
+|---|---|
+| `session_id` | required for transcript conditions; not allowed for signal watches |
+| `until` | `message`, `phrase`, `turn_end`; or `signal` alone |
+| `phrase` | literal phrase; or `mint_phrase: true` at arm time |
+| `channel` | channel name; or `mint_channel: true` at arm time |
+| `cursor` | omit to arm |
+| `max_wait_seconds` | default 20, maximum 600; covers resolution, reading and waiting |
+
+```json
+{
+  "status": "armed | event | waiting | gap | cursor_expired | busy",
+  "events": [{ "event_id": "...", "kind": "turn_ended", "matched": ["turn_end"],
+               "session_id": "...", "provider": "codex", "at": "...",
+               "turn_id": "...", "outcome": "completed", "reason": null,
+               "excerpt": "...", "signal": null }],
+  "cursor": "...",
+  "phrase": "...",
+  "channel": "...",
+  "target_state": "running | idle | unknown",
+  "gap_reason": null,
+  "rollout_id": null
+}
+```
+
+Errors: `not_found`, `unsupported_condition`, `unsupported_format`, `cursor_invalid`, `cursor_mismatch`.
+
+- The default of 20 s stays under the shortest known client tool timeout, Copilot CLI's 30 s. The tool description tells agents that longer waits need a client configured for them.
+- When the request has a progress token, the handler sends progress notifications every 10 s with strictly increasing `progress` and stops when the call returns. Nothing depends on a client resetting its timeout because of them. Codex's current source logs progress notifications without resetting its timeout.
+- The stdio server runs with 16 workers. At most 8 waits run at once. A wait beyond that returns `busy` at once, with the caller's cursor unchanged.
+- Client cancellation and disconnection end the wait through mcp-go v1.5.0's request context.
+
+### `send_session_signal`
+
+Arguments: `channel` and `body`, both required; `idempotency_key`; `from_session_id`. Returns `{signal_id, duplicate}`. Errors: `idempotency_conflict`, `invalid_body`.
+
+## CLI interface
+
+```
+ccrider wait arm <session> --until turn_end[,message,phrase] [--phrase P | --mint-phrase]
+ccrider wait arm --signal [--channel C | --mint-channel]
+ccrider wait <cursor> [--timeout 2h]
+ccrider wait <cursor> --follow
+ccrider signal <channel> <body> [--key K] [--from SESSION]
+```
+
+- `wait <cursor>` prints one JSON result. Exit codes: 0 events, 2 timeout, 3 gap or expiry, 1 error. The printed cursor continues the watch.
+- `--follow` prints one JSON result per line and continues from each returned cursor. It stops on a gap or expiry unless `--through-gaps` is given.
+- The CLI has no worker limit and its own timeout. It suits harnesses that can run a background command and resume when it exits or prints.
+
+## Delivery paths
+
+| Path | Who | Cost while waiting |
+|---|---|---|
+| `wait_for_session` re-called with cursor | any MCP client | one model step per call |
+| `ccrider wait` as a background command | harnesses with a background shell that wakes the agent on exit or output | none |
+| MCP Tasks, later | clients implementing the Tasks extension | none where the host resumes the agent on completion |
+
+### Client compatibility, as of 2026-10-30
+
+| Client | Tool timeout | Progress | MCP Tasks |
+|---|---|---|---|
+| Claude Code | about 28 h wall clock; idle limit 30 min on stdio | refreshes idle activity, not the wall-clock limit | beta from 2.1.304, with surface and setting restrictions; documented to resume an idle agent when a task completes |
+| Codex | 60 s, `tool_timeout_sec`; elicitation pauses it | logged, doesn't reset | unverified |
+| Copilot CLI | 30 s | unverified | unverified |
+| Cursor, VS Code | unverified | unverified | unverified |
+
+Sources: [Claude Code MCP docs](https://code.claude.com/docs/en/mcp#time-limits-on-mcp-tool-calls), [Codex MCP configuration](https://learn.chatgpt.com/docs/extend/mcp?surface=cli), [Codex timeout implementation](https://raw.githubusercontent.com/openai/codex/main/codex-rs/rmcp-client/src/rmcp_client.rs), [Copilot CLI reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference#mcp-server-configuration), [Cursor MCP docs](https://cursor.com/docs/mcp#protocol-and-extension-support).
+
+mcp-go v1.5.0 supports task augmentation on tools, so a Tasks-based `wait_for_session` for Claude Code is a library-supported phase-2 item.
+
+## MCP standard notes
+
+- Current revision 2026-07-28. It replaces `resources/subscribe` with `subscriptions/listen`, moves Tasks into the `io.modelcontextprotocol/tasks` extension, and deprecates sampling. Sources: [versioning](https://modelcontextprotocol.io/docs/2026-07-28/learn/versioning), [changelog](https://modelcontextprotocol.io/specification/2026-07-28/changelog), [Tasks](https://modelcontextprotocol.io/extensions/tasks/overview).
+- MCP doesn't guarantee a portable way to resume an existing host conversation. Server notifications reach the client application, which decides what the model sees. Tasks define asynchronous protocol behavior; the host decides how to act on completion.
+
+## Deferred
+
+### `exit` and reassignment
+
+Prerequisites in `internal/core/liveness`:
+
+- Expose every process-to-session association, not only the most recent declared session per process.
+- Track process identity as PID plus start time.
+- Distinguish `process_exited`, `session_detached`, `session_reassigned` with the new id, and `unknown`. Cwd-only matches are `unknown`. Missing evidence is never reported as exit.
+- Require two independent scans, not two reads of the 5 s cache.
+- Antigravity IDE and desktop have no process mapping and stay unsupported.
+
+### Other
+
+- Tasks-based `wait_for_session`.
+- Mixed transcript and signal watches, with fair allocation across sources.
+- pi and Copilot, once real transcripts are available to validate decoders.
+- OpenCode with row revision tracking; Antigravity once a turn marker is established.
+- fsnotify as a wakeup hint, with polling kept as reconciliation.
+- `turn_started` as a public condition, once it can be tied to a specific message.
+
+## Acceptance tests
+
+Fixtures are real transcript excerpts, anonymized, checked into `testdata`.
+
+Claude Code decoder, one fixture each:
+
+1. Normal turn ending in `turn_duration`.
+2. Stop-hook continuation: one `turn_ended`.
+3. Refusal: `refused`.
+4. API error: `failed`.
+5. Plain interrupt: `interrupted`.
+6. Tool-use interrupt followed by work on queued prompts: `interrupted`, then a second turn that completes.
+7. Turn started by a task notification without a prompt.
+8. `turn_duration` with no activity since the last end: no event.
+9. User message containing the interrupt text inside other text: not an interrupt.
+
+Codex decoder:
+
+10. `task_complete` with excerpt; `turn_aborted` with reason.
+11. Child rollout: records before `subagent_history_start_ordinal` produce nothing.
+12. Rollout replacement: `gap` with `rollout_changed`, then events from the new rollout with different ids for reused ordinals.
+13. Rollout without ordinals: `unsupported_format`.
+
+Reading and cursors:
+
+14. Arm, then a turn already running finishes: event delivered.
+15. Arm while idle: nothing until a new turn ends.
+16. Two turns ending between polls: both delivered.
+17. Unterminated last line: not consumed; consumed after completion.
+18. Replacement, truncation, truncate-and-regrow past the offset, rewrite of the last consumed record: each returns its `gap` reason.
+19. Malformed complete record: `gap` with `corrupt`.
+20. Batch limit reached partway: the record that would exceed it is left whole for the next call; nothing lost or repeated.
+21. One record satisfying `message` and `phrase`: one event, both in `matched`.
+22. Response over 256 KiB of events: split at a record boundary.
+23. Cursor reused against an unchanged source: identical events and ids.
+24. Cursor with different conditions supplied: `cursor_mismatch`.
+25. Backward state scan on a file larger than the scan limit: `unknown`.
+26. Phrase in a user message, tool output, tool input, thinking, compact summary, sidechain, API error record, or Codex inter-agent message: no match.
+
+Signals:
+
+27. Same idempotency key and body: one row, `duplicate`. Same key, different body: `idempotency_conflict`.
+28. Cursor behind `pruned_through_id`: `cursor_expired`.
+29. Two watchers on one channel each receive every signal.
+
+MCP:
+
+30. Nine concurrent waits: the ninth returns `busy`; a search during eight waits completes promptly.
+31. Client cancels a wait: the handler returns and its ticker stops.
+32. Stdio closes during a wait: handlers return before the server exits.
+33. `max_wait_seconds` 20 returns within 20 s, including resolution.
+34. Progress notifications have strictly increasing values and stop after the result.
+
+## Open questions
+
+1. Claude doesn't write `turn_duration` for a turn that ends because the process died. The watch then sees a running turn that never ends. Is reporting that left to the deferred `exit` condition, or should v1 include a narrow check that the declared process for the session is gone?
+2. Should `turn_ended` events from Codex child threads be visible when watching the parent thread? v1 says no: watch the child's own id.
