@@ -10,8 +10,8 @@
 
 ### Changed
 
-- **mcp-go v1.5.0** — upgraded from v0.41.1. Tool calls are now cancelled when the client cancels them or disconnects, instead of running to completion. Building from source requires Go 1.25.5 or later
-- **modernc.org/sqlite v1.59.0** — upgraded from v1.40.0. With v1.40.0, a query cut off by its context's deadline left its connection open after the database was closed. A wait ends that way at every timeout, so the open file handles accumulated, and on Windows the database file stayed locked
+- **mcp-go v1.5.0** — upgraded from v0.41.1. Tool calls are now cancelled when the client cancels them or disconnects, instead of running to completion
+- **modernc.org/sqlite v1.61.1** — upgraded from v1.40.0. With v1.40.0, a query cut off by its context's deadline left its connection open after the database was closed. A wait ends that way at every timeout, so the open file handles accumulated, and on Windows the database file stayed locked. Building from source requires Go 1.26 or later
 
 ## [1.14.1] - 2026-10-26
 
