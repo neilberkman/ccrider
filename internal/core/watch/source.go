@@ -41,9 +41,12 @@ type source struct {
 	// Code, the rollout file name for Codex.
 	src  string
 	meta codexsessions.RolloutMeta
-	// last is the timestamp of the file's last complete record. Codex uses it
-	// to choose the active rollout.
-	last time.Time
+	// last is the timestamp of the file's last record with a valid one.
+	// Codex uses it to choose the active rollout. lastKnown is false when no
+	// such record could be found, which is not evidence that the rollout is
+	// old.
+	last      time.Time
+	lastKnown bool
 }
 
 // resolveTarget maps a caller's session id to a watch target. The database
@@ -224,7 +227,7 @@ func readCodexSource(ctx context.Context, path string) (source, bool) {
 		return source{}, false
 	}
 	s := source{path: path, src: strings.TrimSuffix(filepath.Base(path), ".jsonl"), meta: meta}
-	s.last = lastRecordTime(ctx, f, info.Size())
+	s.last, s.lastKnown = lastRecordTime(ctx, f, info.Size())
 	return s, true
 }
 
@@ -236,24 +239,49 @@ const activityScanBytes = 4 << 20
 // one. A corrupt last line doesn't make an active rollout look idle: the
 // record before it still shows when the rollout was last written, and the
 // watch reports the corrupt line itself when it reads it.
-func lastRecordTime(ctx context.Context, f *os.File, size int64) time.Time {
+func lastRecordTime(ctx context.Context, f *os.File, size int64) (time.Time, bool) {
 	var last time.Time
+	sawLine := false
 	_ = scanLinesBackward(ctx, f, max(0, size-activityScanBytes), size, func(line []byte, _, _ int64) bool {
+		sawLine = true
 		last = codexsessions.RecordTimestamp(line)
 		return !last.IsZero()
 	})
-	return last
+	if !last.IsZero() {
+		return last, true
+	}
+	if !sawLine {
+		// The last record is longer than the search window. Read it whole:
+		// compacted records reach several megabytes.
+		if line, _, _, err := lastCompleteLine(ctx, f, size); err == nil && line != nil {
+			if t := codexsessions.RecordTimestamp(line); !t.IsZero() {
+				return t, true
+			}
+		}
+	}
+	return time.Time{}, false
 }
 
 // activeCodex picks the rollout with the latest last record. A tie keeps
-// current, so two rollouts written in the same instant don't flap.
+// current, so two rollouts written in the same instant don't flap. If the
+// current rollout's activity can't be established, it stays current: the
+// watch reports whatever is wrong with it when it reads it. Rollouts whose
+// activity can't be established are chosen only if no other rollout's can.
 func activeCodex(cands []source, current string) (source, bool) {
+	for _, c := range cands {
+		if c.src == current && !c.lastKnown {
+			return c, true
+		}
+	}
 	var best source
 	found := false
 	for _, c := range cands {
 		switch {
 		case !found:
 			best, found = c, true
+		case c.lastKnown && !best.lastKnown:
+			best = c
+		case c.lastKnown != best.lastKnown:
 		case c.last.After(best.last):
 			best = c
 		case c.last.Equal(best.last) && c.src == current:

@@ -2,6 +2,7 @@ package watch
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -640,5 +641,113 @@ func TestBackwardScanUsesRecordAtWindowEdge(t *testing.T) {
 	armed := arm(t, w, Spec{SessionID: claudeSID, Until: []string{CondTurnEnd}})
 	if armed.TargetState != sessionevents.TurnRunning {
 		t.Fatalf("target state = %q, want running from the edge record", armed.TargetState)
+	}
+}
+
+// Round 6: a valid final record longer than the activity search window must
+// not make the active rollout look idle.
+func TestCodexLargeFinalRecordKeepsActiveRollout(t *testing.T) {
+	_, dir := setupHomes(t)
+	w := newWatcher(t)
+	orig := filepath.Join(dir, "rollout-2026-09-26T09-41-27-"+codexThread+".jsonl")
+	repl := filepath.Join(dir, "rollout-2026-10-04T17-18-21-"+codexThread+"_"+codexRepl+".jsonl")
+	appendLines(t, repl, codexMeta(codexThread, "2026-10-04T17:18:21Z"),
+		codexRec(1, "2026-10-30T08:00:00Z", `{"type":"task_complete","turn_id":"r"}`))
+	appendLines(t, orig, codexMeta(codexThread, "2026-09-26T09:41:27Z"),
+		codexRec(1, "2026-10-30T09:00:00Z", `{"type":"task_started","turn_id":"o"}`))
+	armed := arm(t, w, Spec{SessionID: codexThread, Until: []string{CondTurnEnd}})
+	big := `{"timestamp":"2026-10-30T09:30:00Z","ordinal":2,"type":"compacted","payload":{"message":"` + strings.Repeat("c", activityScanBytes+1024) + `"}}`
+	appendLines(t, orig, big)
+	// The original's last record is now longer than the search window.
+	cands := codexCandidates(context.Background(), codexThread)
+	if active, _ := activeCodex(cands, ""); !strings.HasSuffix(active.src, codexThread) {
+		t.Fatalf("active = %s, want the original", active.src)
+	}
+	appendLines(t, orig, codexRec(3, "2026-10-30T09:31:00Z", `{"type":"task_complete","turn_id":"o"}`))
+	// Reading the large record takes a while under the race detector.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	res, err := w.Wait(ctx, armed.Cursor, Spec{}, Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != StatusEvent || len(res.Events) != 1 || res.Events[0].TurnID != "o" {
+		t.Fatalf("result = %+v", res)
+	}
+}
+
+func TestStrictDecodingRejectsNulls(t *testing.T) {
+	t.Run("claude null content after API error", func(t *testing.T) {
+		file, _ := setupHomes(t)
+		w := newWatcher(t)
+		appendLines(t, file, tPrompt, tText, tDur)
+		armed := arm(t, w, Spec{SessionID: claudeSID, Until: []string{CondTurnEnd}})
+		appendLines(t, file, tPrompt2, tAPIError, `{"type":"assistant","uuid":"n","message":{"role":"assistant","content":null}}`, tDur2)
+		res := waitShort(t, w, armed.Cursor, Limits{})
+		if res.Status != StatusGap || res.GapReason != GapCorrupt {
+			t.Fatalf("result = %+v, want corrupt gap", res)
+		}
+		next := waitShort(t, w, res.Cursor, Limits{})
+		if len(next.Events) != 1 || !next.Events[0].Partial || next.Events[0].Outcome != "failed" {
+			t.Fatalf("after null content: %+v, want a partial failed end", next)
+		}
+	})
+	for name, payload := range map[string]string{
+		"codex numeric type":        `{"type":7,"turn_id":"t"}`,
+		"codex null assistant":      `{"type":"message","role":"assistant","content":null}`,
+		"codex numeric role":        `{"type":"message","role":3,"content":[]}`,
+		"codex null text block":     `{"type":"message","role":"assistant","content":[{"type":"output_text","text":null}]}`,
+		"codex null turn id on end": `{"type":"task_complete","turn_id":null}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, dir := setupHomes(t)
+			w := newWatcher(t)
+			path := filepath.Join(dir, "rollout-2026-10-30T09-44-51-"+codexThread+".jsonl")
+			appendLines(t, path, codexMeta(codexThread, "2026-10-30T09:44:51Z"))
+			armed := arm(t, w, Spec{SessionID: codexThread, Until: []string{CondTurnEnd, CondMessage}})
+			recType := "event_msg"
+			if strings.Contains(payload, `"message"`) {
+				recType = "response_item"
+			}
+			appendLines(t, path, `{"timestamp":"2026-10-30T09:45:00Z","ordinal":1,"type":"`+recType+`","payload":`+payload+`}`)
+			if res := waitShort(t, w, armed.Cursor, Limits{}); res.Status != StatusGap || res.GapReason != GapCorrupt {
+				t.Fatalf("result = %+v, want corrupt gap", res)
+			}
+		})
+	}
+}
+
+// Round 6: a deadline during session-id resolution returns the cursor, like
+// any other deadline.
+func TestResolutionDeadlineKeepsCursor(t *testing.T) {
+	file, _ := setupHomes(t)
+	w := newWatcher(t)
+	appendLines(t, file, tPrompt)
+	armed := arm(t, w, Spec{SessionID: claudeSID, Until: []string{CondTurnEnd}})
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	res, err := w.Wait(ctx, armed.Cursor, Spec{SessionID: claudeSID}, Limits{})
+	if err != nil || res.Status != StatusWaiting || res.Cursor != armed.Cursor {
+		t.Fatalf("res=%+v err=%v, want waiting with the same cursor", res, err)
+	}
+}
+
+// Round 6: cancellation during a read is an error, not a partial success.
+func TestCancellationDuringReadIsAnError(t *testing.T) {
+	file, _ := setupHomes(t)
+	w := newWatcher(t)
+	appendLines(t, file, tPrompt)
+	armed := arm(t, w, Spec{SessionID: claudeSID, Until: []string{CondMessage}})
+	lines := []string{tText}
+	for i := 0; i < 50000; i++ {
+		lines = append(lines, `{"type":"attachment","uuid":"f"}`)
+	}
+	appendLines(t, file, lines...)
+	// Cancel after the first record, once the read has collected an event.
+	ctx, cancel := context.WithCancel(context.Background())
+	afterRecord = func() { afterRecord = nil; cancel() }
+	defer func() { afterRecord = nil }()
+	if _, err := w.Wait(ctx, armed.Cursor, Spec{}, Limits{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
 	}
 }

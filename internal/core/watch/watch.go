@@ -242,6 +242,9 @@ func (w *Watcher) Wait(ctx context.Context, cursorStr string, spec Spec, limits 
 		}
 		t, err := w.resolveTarget(ctx, spec.SessionID)
 		if err != nil {
+			if ctx.Err() != nil {
+				return w.waitEnded(ctx, c)
+			}
 			return Result{}, err
 		}
 		if t.provider != c.Provider || t.id != c.SessionID {

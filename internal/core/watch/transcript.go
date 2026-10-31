@@ -254,6 +254,10 @@ func (w *Watcher) waitTranscript(ctx context.Context, c cursor, limits Limits) (
 // Tests use it to rewrite the file at that moment.
 var afterFirstCheck func(path string)
 
+// afterRecord runs after each record a poll reads. Tests use it to cancel
+// partway through a read.
+var afterRecord func()
+
 // errStopBatch ends a read early once the batch is full.
 var errStopBatch = errors.New("batch full")
 
@@ -292,6 +296,9 @@ func (w *Watcher) pollTranscript(ctx context.Context, c *cursor, t target, src s
 	batchBytes := 0
 	corrupt := false
 	_, err = ccsessions.ForEachCompleteLine(ctx, io.NewSectionReader(f, start.Offset, size-start.Offset), start.Offset, size, func(l ccsessions.CompleteLine) error {
+		if afterRecord != nil {
+			defer afterRecord()
+		}
 		before := d.State()
 		after := boundary{Offset: l.End, Tail: hashLine(l.Bytes), TailLen: l.End - l.Start}
 		decoded, err := d.Decode(l.Bytes)
@@ -333,9 +340,10 @@ func (w *Watcher) pollTranscript(ctx context.Context, c *cursor, t target, src s
 	})
 	switch {
 	case err == nil, errors.Is(err, errStopBatch):
-	case ctx.Err() != nil && errors.Is(err, ctx.Err()):
+	case errors.Is(err, context.DeadlineExceeded) && errors.Is(ctx.Err(), context.DeadlineExceeded):
 		// The deadline cut the read short. Keep what was read: the events
 		// collected so far, or the progress past records that didn't match.
+		// Cancellation is different: the caller has gone, so it's an error.
 	case errors.Is(err, sessionevents.ErrUnsupportedFormat):
 		return Result{}, false, decodeError(err)
 	default:

@@ -40,11 +40,6 @@ type claudeWatchMessage struct {
 	Content json.RawMessage `json:"content"`
 }
 
-type claudeContentBlock struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
-}
-
 // ClaudeDecoder decodes Claude Code transcript records into watch events.
 // See docs/plans/2026-10-30-session-watch-spec.md, "Claude Code turn decoder".
 type ClaudeDecoder struct {
@@ -190,18 +185,24 @@ func (d *ClaudeDecoder) endTurn(r claudeWatchRecord, at time.Time, outcome strin
 
 // claudeContent parses a message's content: a string, or a list of blocks.
 // Anything else is a malformed record.
-func claudeContent(raw json.RawMessage) (string, []claudeContentBlock, error) {
+func claudeContent(raw json.RawMessage) (string, []sessionevents.Block, error) {
+	if sessionevents.IsJSONNull(raw) {
+		return "", nil, fmt.Errorf("message is missing or null")
+	}
 	var m claudeWatchMessage
 	if err := json.Unmarshal(raw, &m); err != nil {
 		return "", nil, fmt.Errorf("message: %w", err)
 	}
-	var s string
-	if json.Unmarshal(m.Content, &s) == nil {
+	if sessionevents.IsJSONString(m.Content) {
+		var s string
+		if err := json.Unmarshal(m.Content, &s); err != nil {
+			return "", nil, fmt.Errorf("message content: %w", err)
+		}
 		return s, nil, nil
 	}
-	var blocks []claudeContentBlock
-	if err := json.Unmarshal(m.Content, &blocks); err != nil {
-		return "", nil, fmt.Errorf("message content: %w", err)
+	blocks, err := sessionevents.ParseBlocks(m.Content, "text")
+	if err != nil {
+		return "", nil, fmt.Errorf("message %w", err)
 	}
 	return "", blocks, nil
 }

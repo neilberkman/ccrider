@@ -125,21 +125,47 @@ func (d *CodexDecoder) Decode(record []byte) ([]sessionevents.Event, error) {
 	}
 	// Only records the decoder acts on are parsed strictly; a malformed one
 	// is an error, so the watch reports it instead of skipping it.
-	var kind struct {
-		Type string `json:"type"`
-		Role string `json:"role"`
+	if r.Type != "response_item" && r.Type != "event_msg" {
+		return nil, nil
 	}
-	_ = json.Unmarshal(r.Payload, &kind)
-	if !codexHandled(r.Type, kind.Type, kind.Role) {
+	// The discriminators themselves must be strings: a malformed type or role
+	// on a record the decoder might act on is reported, not skipped.
+	var kind struct {
+		Type json.RawMessage `json:"type"`
+		Role json.RawMessage `json:"role"`
+	}
+	if err := json.Unmarshal(r.Payload, &kind); err != nil {
+		return nil, fmt.Errorf("%s payload: %w", r.Type, err)
+	}
+	if !sessionevents.IsJSONString(kind.Type) {
+		return nil, fmt.Errorf("%s payload has no string type", r.Type)
+	}
+	var payloadType, role string
+	_ = json.Unmarshal(kind.Type, &payloadType)
+	if r.Type == "response_item" && payloadType == "message" {
+		if !sessionevents.IsJSONString(kind.Role) {
+			return nil, fmt.Errorf("response_item message has no string role")
+		}
+		_ = json.Unmarshal(kind.Role, &role)
+	}
+	if !codexHandled(r.Type, payloadType, role) {
 		return nil, nil
 	}
 	var p codexWatchPayload
 	if err := json.Unmarshal(r.Payload, &p); err != nil {
-		return nil, fmt.Errorf("%s %s payload: %w", r.Type, kind.Type, err)
+		return nil, fmt.Errorf("%s %s payload: %w", r.Type, payloadType, err)
 	}
 	if r.Type == "response_item" {
-		if _, err := codexOutputTextStrict(p.Content); err != nil {
-			return nil, err
+		if _, err := sessionevents.ParseBlocks(p.Content, "output_text"); err != nil {
+			return nil, fmt.Errorf("assistant message %w", err)
+		}
+	} else {
+		var ids struct {
+			TurnID json.RawMessage `json:"turn_id"`
+		}
+		_ = json.Unmarshal(r.Payload, &ids)
+		if !sessionevents.IsJSONString(ids.TurnID) {
+			return nil, fmt.Errorf("%s has no string turn_id", payloadType)
 		}
 	}
 	key := strconv.FormatInt(*r.Ordinal, 10)
@@ -237,19 +263,6 @@ func codexHandled(recordType, payloadType, role string) bool {
 		return payloadType == "task_started" || payloadType == "task_complete" || payloadType == "turn_aborted"
 	}
 	return false
-}
-
-// codexOutputTextStrict is codexOutputText, failing on content that isn't a
-// list of blocks.
-func codexOutputTextStrict(raw json.RawMessage) (string, error) {
-	var blocks []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	}
-	if err := json.Unmarshal(raw, &blocks); err != nil {
-		return "", fmt.Errorf("assistant message content: %w", err)
-	}
-	return codexOutputText(raw), nil
 }
 
 // codexOutputText joins an assistant message's output_text blocks.
