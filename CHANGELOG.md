@@ -1,6 +1,17 @@
 # Changelog
 
-## [Unreleased]
+## [1.15.0] - 2026-10-31
+
+### Added
+
+- **Transcript watches** — `wait_for_session` can follow a Claude Code or Codex session across harnesses, with no cooperation from it, until the session finishes a turn, writes a message, or writes a message containing a phrase. Turn ends report an outcome (`completed`, `failed`, `refused` or `interrupted`) read from each harness's own records; Codex turns also carry the final message. Arming reports whether the target is running, and a turn already running reports its end. Rewritten, truncated or replaced transcripts and corrupt records return a `gap` with a fresh cursor instead of silently skipping events, and a Codex thread is followed when it moves to another rollout file. `turn_end` needs an interactive Claude Code session, since headless sessions don't record turn ends
+- **Cross-session signals: `wait_for_session` and `send_session_signal`** — one agent session can wait for another to report back, across harnesses. The waiter arms a watch and gets a channel and a cursor, the other session posts to the channel, and the waiter's next call returns the signal. Waits return as soon as a signal arrives or after `max_wait_seconds` (default 20, which fits every known client's tool timeout) with a cursor to continue from, so nothing is lost between calls. Events carry stable ids for deduplication. Signals are kept 7 days; a watch that falls further behind is told so with `cursor_expired` instead of silently missing signals. Idempotency keys make retries safe and reject a reused key with a different body. At most 8 waits run at once per server, so other tools stay responsive
+- **`ccrider wait` and `ccrider signal`** — the same from a shell. `ccrider wait arm <session> --until turn_end` or `ccrider wait arm --signal --mint-channel` prints a cursor; `ccrider wait <cursor>` blocks until an event (exit 0), timeout (exit 2) or a gap or expired cursor (exit 3), and `--follow` streams results as JSON lines. Suited to agents that can run a background command and resume when it exits
+
+### Changed
+
+- **mcp-go v1.5.0** — upgraded from v0.41.1. Tool calls are now cancelled when the client cancels them or disconnects, instead of running to completion
+- **modernc.org/sqlite v1.61.1** — upgraded from v1.40.0. With v1.40.0, a query cut off by its context's deadline left its connection open after the database was closed. A wait ends that way at every timeout, so the open file handles accumulated, and on Windows the database file stayed locked. Building from source requires Go 1.26 or later
 
 ## [1.14.1] - 2026-10-26
 

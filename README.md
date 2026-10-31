@@ -151,6 +151,8 @@ Use command `ccrider` with args `["serve-mcp"]`.
 - **get_session_messages** - Get messages from a session (supports tail mode, context around search matches)
 - **generate_session_anchor** - Save a unique session anchor, optionally with a descriptive label and a known session ID
 - **list_session_anchors** - List saved anchors and their matching sessions, with project/provider/session filters and pagination
+- **wait_for_session** - Wait for another session to finish a turn, write a message or phrase, or send a signal
+- **send_session_signal** - Post a signal to a channel, waking sessions that wait on it
 
 `search_sessions`, `list_recent_sessions`, and `list_session_anchors` support a `provider` parameter to filter by `claude`, `codex`, `copilot`, `opencode`, `pi`, `antigravity`, `antigravity-ide`, `antigravity-desktop`, or `amp`. Search and retrieval tools read your local session database; anchor generation saves a bookmark there. Local providers are read from disk; Amp threads are fetched from your authenticated Amp account during sync and then stored locally.
 
@@ -165,6 +167,33 @@ Call `list_session_anchors` to retrieve saved labels, phrases, timestamps, and m
 An anchor appears in the unfiltered list as soon as it is generated, even if its `sessions` list is still empty. Session filters omit unmatched anchors. A phrase copied into multiple conversations can match more than one session; an explicit `session_id` binding takes precedence. Large session lists can be shortened with `sessions_truncated: true` and the full `session_count` retained.
 
 The registry includes anchors generated after this feature was added. Previously generated phrases and manually written tags remain searchable as ordinary conversation text.
+
+### Waiting on another session
+
+One session can wait for another, even when they run in different harnesses. There are two kinds of watch.
+
+**Transcript watches** follow a Claude Code or Codex session's transcript, with no cooperation needed from it. Call `wait_for_session` with a `session_id` and `until` set to any of:
+
+- `turn_end`: the session finishes a turn. The event's `outcome` is `completed`, `failed`, `refused` or `interrupted`. Codex events include the turn's final message as `excerpt`.
+- `message`: the session writes any new assistant message.
+- `phrase`: the session writes a message containing a phrase. Pass `mint_phrase: true` to get a unique phrase to hand to the other session.
+
+`turn_end` needs an interactive Claude Code session; headless `claude -p` sessions don't record turn ends. A turn already running when the watch is armed reports its end. A Codex thread is followed when it moves to another rollout file.
+
+**Signal watches** work with any harness. Arm with `{"until": ["signal"], "mint_channel": true}`, give the channel to the other session, and have it call `send_session_signal` with a short result when it's done. Signals are kept for 7 days. Resending with the same `idempotency_key` and body doesn't post twice.
+
+Arming returns immediately with a cursor. Each wait returns as soon as something matches, or after `max_wait_seconds` (default 20) with status `waiting` and a cursor to continue from. Nothing is lost between calls, and every event has an `event_id` for deduplication. If a transcript is rewritten, truncated or replaced, the wait returns status `gap` with a fresh cursor, since events in between may be missing.
+
+The same works from a shell, which suits agents that can run a background command and resume when it exits:
+
+```bash
+ccrider wait arm <session> --until turn_end   # prints a cursor
+ccrider wait <cursor> --timeout 2h            # exits 0 on an event, 2 on timeout, 3 on a gap
+ccrider wait arm --signal --mint-channel      # signal watch: prints a channel and cursor
+ccrider signal <channel> "tests pass"         # from the other session
+```
+
+The design and its limits are in `docs/plans/2026-10-30-session-watch-spec.md`.
 
 ### Recovering earlier context
 
