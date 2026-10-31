@@ -106,6 +106,10 @@ func anchorLabelPrefix(label string) (string, error) {
 	return prefix.String(), nil
 }
 
+// RandomPhrase returns four random words joined by hyphens, the same form as
+// unlabeled session anchors.
+func RandomPhrase() (string, error) { return generateAnchorPhrase("") }
+
 func generateAnchorPhrase(prefix string) (string, error) {
 	if prefix == "" {
 		words, err := diceware.Generate(4)

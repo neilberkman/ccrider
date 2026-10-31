@@ -47,7 +47,37 @@ func (db *DB) migrate() error {
 		return err
 	}
 
+	// Migration 9: Signal mailbox for cross-session watches.
+	if err := db.migration009CreateWatchSignals(); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+// migration009CreateWatchSignals creates the signal mailbox. Channel rows
+// record how far pruning has reached so a reader that fell behind retention
+// is told so instead of silently missing signals.
+func (db *DB) migration009CreateWatchSignals() error {
+	_, err := db.conn.Exec(`
+		CREATE TABLE IF NOT EXISTS watch_signals (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			channel TEXT NOT NULL,
+			idempotency_key TEXT,
+			from_session_id TEXT,
+			body TEXT NOT NULL,
+			body_sha256 TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			UNIQUE (channel, idempotency_key)
+		);
+		CREATE INDEX IF NOT EXISTS watch_signals_channel ON watch_signals(channel, id);
+		CREATE INDEX IF NOT EXISTS watch_signals_created ON watch_signals(created_at);
+		CREATE TABLE IF NOT EXISTS watch_signal_channels (
+			channel TEXT PRIMARY KEY NOT NULL,
+			pruned_through_id INTEGER NOT NULL
+		);
+	`)
+	return err
 }
 
 func (db *DB) migration008CreateSessionAnchors() error {
