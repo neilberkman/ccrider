@@ -74,7 +74,7 @@ func (w *Watcher) resolveTarget(ctx context.Context, input string) (target, erro
 		return target{provider: providerCodex, id: strings.ToLower(m[1])}, nil
 	}
 	if uuidPattern.MatchString(input) {
-		if _, err := locateClaude(input); err == nil {
+		if _, err := locateClaude(ctx, input); err == nil {
 			return target{provider: providerClaude, id: input}, nil
 		}
 		if cands := codexCandidates(ctx, strings.ToLower(input)); len(cands) > 0 {
@@ -148,11 +148,14 @@ func uniqueDirs(roots []string, sub string) []string {
 
 // locateClaude finds a Claude Code session's transcript. If several config
 // directories hold one, the most recently modified wins.
-func locateClaude(sessionID string) (string, error) {
+func locateClaude(ctx context.Context, sessionID string) (string, error) {
 	var best string
 	var bestMod time.Time
 	seen := map[string]bool{}
 	for _, dir := range claudeProjectDirs() {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		matches, _ := filepath.Glob(filepath.Join(dir, "*", sessionID+".jsonl"))
 		for _, m := range matches {
 			real, err := filepath.EvalSymlinks(m)
@@ -221,10 +224,25 @@ func readCodexSource(ctx context.Context, path string) (source, bool) {
 		return source{}, false
 	}
 	s := source{path: path, src: strings.TrimSuffix(filepath.Base(path), ".jsonl"), meta: meta}
-	if line, _, _, err := lastCompleteLine(ctx, f, info.Size()); err == nil && line != nil {
-		s.last = codexsessions.RecordTimestamp(line)
-	}
+	s.last = lastRecordTime(ctx, f, info.Size())
 	return s, true
+}
+
+// activityScanBytes bounds the backward search for a rollout's last record
+// with a valid timestamp.
+const activityScanBytes = 4 << 20
+
+// lastRecordTime returns the timestamp of the last record that has a valid
+// one. A corrupt last line doesn't make an active rollout look idle: the
+// record before it still shows when the rollout was last written, and the
+// watch reports the corrupt line itself when it reads it.
+func lastRecordTime(ctx context.Context, f *os.File, size int64) time.Time {
+	var last time.Time
+	_ = scanLinesBackward(ctx, f, max(0, size-activityScanBytes), size, func(line []byte, _, _ int64) bool {
+		last = codexsessions.RecordTimestamp(line)
+		return !last.IsZero()
+	})
+	return last
 }
 
 // activeCodex picks the rollout with the latest last record. A tie keeps
@@ -250,7 +268,7 @@ func activeCodex(cands []source, current string) (source, bool) {
 func locate(ctx context.Context, t target, currentSrc string) (source, error) {
 	switch t.provider {
 	case providerClaude:
-		path, err := locateClaude(t.id)
+		path, err := locateClaude(ctx, t.id)
 		if err != nil {
 			return source{}, err
 		}

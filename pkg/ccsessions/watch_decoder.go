@@ -2,6 +2,7 @@ package ccsessions
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -89,59 +90,64 @@ func (d *ClaudeDecoder) Decode(record []byte) ([]sessionevents.Event, error) {
 	at := parseClaudeTime(r.Timestamp)
 	switch r.Type {
 	case "user":
-		return d.decodeUser(r, at), nil
+		return d.decodeUser(r, at)
 	case "assistant":
-		return d.decodeAssistant(r, at), nil
+		return d.decodeAssistant(r, at)
 	case "system":
 		return d.decodeSystem(r, at), nil
 	}
 	return nil, nil
 }
 
-func (d *ClaudeDecoder) decodeUser(r claudeWatchRecord, at time.Time) []sessionevents.Event {
+func (d *ClaudeDecoder) decodeUser(r claudeWatchRecord, at time.Time) ([]sessionevents.Event, error) {
 	if r.IsMeta || r.IsCompactSummary {
-		return nil
+		return nil, nil
 	}
-	text, hasToolResult := claudeUserText(r.Message)
+	text, hasToolResult, err := claudeUserText(r.Message)
+	if err != nil {
+		return nil, err
+	}
 	if hasToolResult {
-		return nil
+		return nil, nil
 	}
 	trimmed := strings.TrimSpace(text)
 	if claudeInterruptNotices[trimmed] {
 		if d.state.Turn == sessionevents.TurnIdle {
-			return nil
+			return nil, nil
 		}
-		return []sessionevents.Event{d.endTurn(r, at, sessionevents.OutcomeInterrupted)}
+		return []sessionevents.Event{d.endTurn(r, at, sessionevents.OutcomeInterrupted)}, nil
 	}
 	if trimmed == "" {
-		return nil
+		return nil, nil
 	}
 	for _, prefix := range claudeCommandPrefixes {
 		if strings.HasPrefix(trimmed, prefix) {
-			return nil
+			return nil, nil
 		}
 	}
 	if d.state.Turn == sessionevents.TurnIdle {
 		d.startTurn(r.UUID)
 	}
-	return nil
+	return nil, nil
 }
 
-func (d *ClaudeDecoder) decodeAssistant(r claudeWatchRecord, at time.Time) []sessionevents.Event {
+func (d *ClaudeDecoder) decodeAssistant(r claudeWatchRecord, at time.Time) ([]sessionevents.Event, error) {
+	// Validate before changing state, so a malformed record leaves the
+	// decoder where it was.
+	text, err := claudeAssistantText(r.Message)
+	if err != nil {
+		return nil, err
+	}
 	if d.state.Turn == sessionevents.TurnIdle {
 		d.startTurn(r.UUID)
 	}
 	d.state.LastAssistantError = r.IsAPIErrorMessage
-	if r.IsAPIErrorMessage {
-		return nil
-	}
-	text := claudeAssistantText(r.Message)
-	if text == "" {
-		return nil
+	if r.IsAPIErrorMessage || text == "" {
+		return nil, nil
 	}
 	return []sessionevents.Event{{
 		Kind: sessionevents.KindMessage, RecordKey: r.UUID, At: at, Text: text,
-	}}
+	}}, nil
 }
 
 func (d *ClaudeDecoder) decodeSystem(r claudeWatchRecord, at time.Time) []sessionevents.Event {
@@ -182,20 +188,30 @@ func (d *ClaudeDecoder) endTurn(r claudeWatchRecord, at time.Time, outcome strin
 	return ev
 }
 
-// claudeUserText returns a user record's text blocks joined by newlines, and
-// whether it carries a tool result.
-func claudeUserText(raw json.RawMessage) (string, bool) {
+// claudeContent parses a message's content: a string, or a list of blocks.
+// Anything else is a malformed record.
+func claudeContent(raw json.RawMessage) (string, []claudeContentBlock, error) {
 	var m claudeWatchMessage
-	if json.Unmarshal(raw, &m) != nil {
-		return "", false
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return "", nil, fmt.Errorf("message: %w", err)
 	}
 	var s string
 	if json.Unmarshal(m.Content, &s) == nil {
-		return s, false
+		return s, nil, nil
 	}
 	var blocks []claudeContentBlock
-	if json.Unmarshal(m.Content, &blocks) != nil {
-		return "", false
+	if err := json.Unmarshal(m.Content, &blocks); err != nil {
+		return "", nil, fmt.Errorf("message content: %w", err)
+	}
+	return "", blocks, nil
+}
+
+// claudeUserText returns a user record's text blocks joined by newlines, and
+// whether it carries a tool result.
+func claudeUserText(raw json.RawMessage) (string, bool, error) {
+	s, blocks, err := claudeContent(raw)
+	if err != nil || blocks == nil {
+		return s, false, err
 	}
 	var texts []string
 	toolResult := false
@@ -207,23 +223,15 @@ func claudeUserText(raw json.RawMessage) (string, bool) {
 			toolResult = true
 		}
 	}
-	return strings.Join(texts, "\n"), toolResult
+	return strings.Join(texts, "\n"), toolResult, nil
 }
 
 // claudeAssistantText returns the assistant's own text blocks joined by
 // newlines. Tool calls and thinking are excluded.
-func claudeAssistantText(raw json.RawMessage) string {
-	var m claudeWatchMessage
-	if json.Unmarshal(raw, &m) != nil {
-		return ""
-	}
-	var blocks []claudeContentBlock
-	if json.Unmarshal(m.Content, &blocks) != nil {
-		var s string
-		if json.Unmarshal(m.Content, &s) == nil {
-			return s
-		}
-		return ""
+func claudeAssistantText(raw json.RawMessage) (string, error) {
+	s, blocks, err := claudeContent(raw)
+	if err != nil || blocks == nil {
+		return s, err
 	}
 	var texts []string
 	for _, b := range blocks {
@@ -231,7 +239,7 @@ func claudeAssistantText(raw json.RawMessage) string {
 			texts = append(texts, b.Text)
 		}
 	}
-	return strings.Join(texts, "\n")
+	return strings.Join(texts, "\n"), nil
 }
 
 func parseClaudeTime(s string) time.Time {

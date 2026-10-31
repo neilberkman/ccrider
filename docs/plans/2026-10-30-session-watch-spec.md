@@ -44,6 +44,8 @@ A condition the target's provider doesn't support fails with `unsupported_condit
 
 Supported transcript formats:
 
+- A Claude Code session's entrypoint must appear in its first 4 MiB, and a Codex rollout's `session_meta` must fit in its first 1 MiB. Real sessions put both on the first lines.
+
 - Claude Code transcripts from interactive sessions, whose records carry `entrypoint: "cli"`. Evidence below is from Claude Code 2.1.295. In 150 recent transcripts, all 31 interactive ones contain `turn_duration` and none of the 117 headless ones (`entrypoint: "sdk-cli"`) do. `turn_end` on a headless session fails with `unsupported_format`; `message` and `phrase` still work. A transcript with no record carrying `entrypoint` yet also fails `turn_end` with `unsupported_format`, and the caller re-arms once it has started.
 - Codex rollouts whose records carry `ordinal`. Older rollouts without ordinals fail with `unsupported_format`.
 
@@ -164,7 +166,7 @@ In a child rollout, records before `subagent_history_start_ordinal` are inherite
 
 ### Target state at arm time
 
-Arming reports `target_state`: `running`, `idle`, or `unknown`. It's computed by scanning backward from the end of the source in 1 MiB chunks to the last turn boundary and replaying the decoder forward from there. The scan stops after 64 MiB; beyond that the state is `unknown`. Codex rollouts can exceed 700 MB, so a forward scan from the start isn't an option.
+Arming reports `target_state`: `running`, `idle`, or `unknown`. It's computed by scanning backward from the end of the source in 1 MiB chunks to the last turn boundary and replaying the decoder forward from there. The scan stops after 64 MiB; beyond that the state is `unknown`. The record that fixes the state is hashed from the same read that decoded it. After decoding forward, the scan checks that record and the final one again, and rescans, up to three times, if either changed or the path now names a different file. Codex rollouts can exceed 700 MB, so a forward scan from the start isn't an option.
 
 A turn already running at arm time produces `turn_end` when it finishes, because its end record lands after the cursor. An idle target produces nothing until a later turn ends.
 
@@ -175,11 +177,11 @@ A watch target is a logical session:
 - Claude Code: a session id, one transcript file.
 - Codex: a thread id. A thread can have several rollout files: every file whose `session_meta.id` equals the thread id is a candidate.
 
-The active Codex rollout is the candidate whose last complete record has the latest `timestamp`. Neither `session_meta` timestamps nor Codex's own `threads.rollout_path` decide it. Review round 3 found a thread whose newer replacement rollout had gone quiet while Codex, resumed on the original rollout, kept appending to it. Codex held the original open for writing and it grew by 450 KB during the review.
+The active Codex rollout is the candidate whose last record with a valid `timestamp`, searched back at most 4 MiB, is latest. A corrupt last line doesn't make an active rollout look idle; the watch reports it as a corrupt record when it reads it. Neither `session_meta` timestamps nor Codex's own `threads.rollout_path` decide it. Review round 3 found a thread whose newer replacement rollout had gone quiet while Codex, resumed on the original rollout, kept appending to it. Codex held the original open for writing and it grew by 450 KB during the review.
 
 Resolution, at arm time and on every resume:
 
-1. Resolve the caller's id to a canonical id with an indexed DB query, under the call's context.
+1. Resolve the caller's id to a canonical id with a DB query under the call's context: an exact match first, then a bare-UUID suffix match, which scans session ids.
 2. Locate the source on disk with a provider locator, bounded by the call's deadline. Claude: glob each config directory's `projects/*/<id>.jsonl`. Codex: glob `sessions/*/*/*/rollout-*-<thread id>*.jsonl` and read each candidate's first record.
 3. If the DB has no row, step 2 runs directly on the caller's id when it's a full UUID. There's no sync at arm time.
 
@@ -223,7 +225,7 @@ Arming mints a phrase or channel when asked, using the anchor generator. The int
 
 Each poll:
 
-1. Open the file. Compare device and inode with the cursor before anything else. A mismatch returns `gap`, reason `replaced`.
+1. Open the file. Compare its identity with the cursor before anything else: device and inode on Unix, volume serial number and file index from the open handle on Windows. A mismatch returns `gap`, reason `replaced`.
 2. Stat the open file. A size below `off` returns `gap`, reason `truncated`.
 3. Read the record ending at `off` and compare its hash with `tail`. A mismatch returns `gap`, reason `rewritten`.
 4. Note the size as this read's frontier. Read complete, newline-terminated records from `off` up to the frontier. An unterminated last line is left for a later poll.
@@ -232,7 +234,7 @@ Each poll:
 
 Size and mtime are compared with the previous poll only to skip unchanged files. They never replace steps 1 to 3.
 
-A malformed complete record returns `gap`, reason `corrupt`, with a cursor past it. The caller decides whether to read the transcript.
+A malformed complete record returns `gap`, reason `corrupt`, with a cursor past it. The caller decides whether to read the transcript. Decoders parse strictly only the record types they act on, so a malformed field in an ignored record type isn't reported. Because the skipped record could have started or ended a turn, the decoder state after it is `unknown` until a record that fixes the state on its own, and the next turn end carries `partial: true`. The backward scan treats records it can't decode the same way. Across 2.5 million local records in 191 Claude Code transcripts and 1,446 Codex rollouts, strict decoding rejected none.
 
 A `gap` result carries a fresh cursor and a fresh `target_state`. The fresh cursor's `gen` is one higher. Event ids built from positions or ordinals include `gen`, so records written after a truncation that reuse old ordinals or offsets get new ids, and a caller deduplicating by id doesn't drop them. Claude record uuids are unique per record and identify events without `gen`.
 
@@ -248,7 +250,7 @@ The cursor's `off`, `tail`, `gen` and `ds` always describe the same boundary: th
 - The returned cursor points just past the last returned record.
 - When nothing matched, the call returns `waiting` with a cursor past all records read, so non-matching history isn't reread.
 
-A cursor reused against an unchanged source returns the same events with the same ids. Against a source that has grown since, it returns the same events first, possibly followed by more.
+A cursor reused against an unchanged source returns the same events with the same ids, in the same order. A call whose deadline cuts the read short returns the events collected so far, or, if none matched, a cursor past the records it read, so short waits still work through a large backlog. A replay can therefore return a prefix of an earlier batch, never different events. Against a source that has grown since, it returns the same events first, possibly followed by more.
 
 ## Signals
 
@@ -339,7 +341,7 @@ Errors: `not_found`, `unsupported_condition`, `unsupported_format`, `cursor_inva
 
 - The deadline starts when the call arrives and covers arming as well as waiting.
 - The default of 20 s stays under the shortest known client tool timeout, Copilot CLI's 30 s. The tool description tells agents that longer waits need a client configured for them.
-- When the request has a progress token, the handler sends progress notifications every 10 s with strictly increasing `progress` and stops when the call returns. Nothing depends on a client resetting its timeout because of them. Codex's current source logs progress notifications without resetting its timeout.
+- When the request has a progress token, the handler sends progress notifications every 10 s while waiting, with strictly increasing `progress`, and stops when the call returns. Arming doesn't wait and sends none. Nothing depends on a client resetting its timeout because of them. Codex's current source logs progress notifications without resetting its timeout.
 - The stdio server runs with 16 workers. At most 8 waits run at once. A wait beyond that returns `busy` at once, with the caller's cursor unchanged.
 - Client cancellation and disconnection end the wait through mcp-go v1.5.0's request context, with one exception. When all workers are busy and the request queue of 100 is full, mcp-go runs the next tool call on its read loop. While that call runs, the server doesn't read cancellations or notice disconnection. A wait in that position still ends at its deadline. Reaching this needs 116 concurrent requests.
 
@@ -410,7 +412,7 @@ Prerequisites in `internal/core/liveness`:
 
 ## Acceptance tests
 
-Fixtures are real transcript excerpts, anonymized, checked into `testdata`.
+Fixtures are records with the shape of real transcript records and the content replaced, written inline in the tests.
 
 Claude Code decoder, one fixture each:
 

@@ -240,17 +240,18 @@ func startProgress(ctx context.Context, request mcp.CallToolRequest) func() {
 
 func makeSendSessionSignalHandler(watcher *watch.Watcher) server.ToolHandlerFunc {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		var args SendSessionSignalArgs
-		if err := decodeArgs(request, &args); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("invalid arguments: %v", err)), nil
-		}
-		// An explicit empty body is a valid signal; a missing one is a mistake.
+		// Check presence and type before decoding, so a missing or non-string
+		// body reports invalid_body. An explicit empty body is a valid signal.
 		raw, _ := request.Params.Arguments.(map[string]interface{})
 		if _, ok := raw["channel"].(string); !ok {
-			return watchError(&watch.Error{Code: watch.CodeInvalidArgument, Message: "channel is required"}), nil
+			return watchError(&watch.Error{Code: watch.CodeInvalidArgument, Message: "channel is required and must be a string"}), nil
 		}
 		if _, ok := raw["body"].(string); !ok {
-			return watchError(&watch.Error{Code: "invalid_body", Message: "body is required; pass an empty string for a signal with no message"}), nil
+			return watchError(&watch.Error{Code: "invalid_body", Message: "body is required and must be a string; pass an empty string for a signal with no message"}), nil
+		}
+		var args SendSessionSignalArgs
+		if err := decodeArgs(request, &args); err != nil {
+			return watchError(&watch.Error{Code: watch.CodeInvalidArgument, Message: err.Error()}), nil
 		}
 		sig, dup, err := watcher.SendSignal(ctx, db.SendSignalOptions{
 			Channel: args.Channel, Body: args.Body,

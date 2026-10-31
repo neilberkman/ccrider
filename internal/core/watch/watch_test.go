@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/neilberkman/ccrider/internal/core/db"
+	"github.com/neilberkman/ccrider/pkg/sessionevents"
 )
 
 func newWatcher(t *testing.T) *Watcher {
@@ -236,6 +237,20 @@ func TestCursorInvariants(t *testing.T) {
 	for i, c := range bad {
 		if _, err := w.Wait(ctx, c.encode(), Spec{}, Limits{}); codeOf(err) != CodeCursorInvalid {
 			t.Errorf("case %d: err = %v, want cursor_invalid", i, err)
+		}
+	}
+}
+
+func TestSignalCursorRejectsTranscriptFields(t *testing.T) {
+	w := newWatcher(t)
+	st := sessionevents.State{Turn: sessionevents.TurnIdle}
+	for i, c := range []cursor{
+		{V: cursorVersion, DV: decoderVersion, Until: []string{CondSignal}, Channel: "c", TailLen: 5},
+		{V: cursorVersion, DV: decoderVersion, Until: []string{CondSignal}, Channel: "c", Gen: 1},
+		{V: cursorVersion, DV: decoderVersion, Until: []string{CondSignal}, Channel: "c", State: &st},
+	} {
+		if _, err := w.Wait(context.Background(), c.encode(), Spec{}, Limits{}); codeOf(err) != CodeCursorInvalid {
+			t.Errorf("case %d: err = %v", i, err)
 		}
 	}
 }

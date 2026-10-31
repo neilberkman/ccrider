@@ -3,6 +3,7 @@ package codexsessions
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -122,9 +123,24 @@ func (d *CodexDecoder) Decode(record []byte) ([]sessionevents.Event, error) {
 	if *r.Ordinal < d.meta.HistoryStartOrdinal {
 		return nil, nil // inherited from the parent thread
 	}
+	// Only records the decoder acts on are parsed strictly; a malformed one
+	// is an error, so the watch reports it instead of skipping it.
+	var kind struct {
+		Type string `json:"type"`
+		Role string `json:"role"`
+	}
+	_ = json.Unmarshal(r.Payload, &kind)
+	if !codexHandled(r.Type, kind.Type, kind.Role) {
+		return nil, nil
+	}
 	var p codexWatchPayload
 	if err := json.Unmarshal(r.Payload, &p); err != nil {
-		return nil, nil
+		return nil, fmt.Errorf("%s %s payload: %w", r.Type, kind.Type, err)
+	}
+	if r.Type == "response_item" {
+		if _, err := codexOutputTextStrict(p.Content); err != nil {
+			return nil, err
+		}
 	}
 	key := strconv.FormatInt(*r.Ordinal, 10)
 	at := RecordTimestamp(record)
@@ -210,6 +226,30 @@ func codexErrorCode(raw json.RawMessage) string {
 		}
 	}
 	return ""
+}
+
+// codexHandled reports whether the decoder acts on a record.
+func codexHandled(recordType, payloadType, role string) bool {
+	switch recordType {
+	case "response_item":
+		return payloadType == "message" && role == "assistant"
+	case "event_msg":
+		return payloadType == "task_started" || payloadType == "task_complete" || payloadType == "turn_aborted"
+	}
+	return false
+}
+
+// codexOutputTextStrict is codexOutputText, failing on content that isn't a
+// list of blocks.
+func codexOutputTextStrict(raw json.RawMessage) (string, error) {
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(raw, &blocks); err != nil {
+		return "", fmt.Errorf("assistant message content: %w", err)
+	}
+	return codexOutputText(raw), nil
 }
 
 // codexOutputText joins an assistant message's output_text blocks.

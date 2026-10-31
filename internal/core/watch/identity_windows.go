@@ -2,8 +2,17 @@
 
 package watch
 
-import "os"
+import (
+	"os"
+	"syscall"
+)
 
-// fileIdentity has no portable device/inode on Windows. Replacement is then
-// caught only by the size and boundary-hash checks.
-func fileIdentity(_ os.FileInfo) (dev, ino uint64) { return 0, 0 }
+// fileIdentity returns the volume serial number and file index of an open
+// file, which together identify it the way device and inode do on Unix.
+func fileIdentity(f *os.File) (dev, ino uint64, err error) {
+	var d syscall.ByHandleFileInformation
+	if err := syscall.GetFileInformationByHandle(syscall.Handle(f.Fd()), &d); err != nil {
+		return 0, 0, err
+	}
+	return uint64(d.VolumeSerialNumber), uint64(d.FileIndexHigh)<<32 | uint64(d.FileIndexLow), nil
+}

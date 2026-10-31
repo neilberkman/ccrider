@@ -234,6 +234,20 @@ func (w *Watcher) Wait(ctx context.Context, cursorStr string, spec Spec, limits 
 	if !c.sameConditions(spec) {
 		return Result{}, newError(CodeCursorMismatch, "the conditions given don't match the cursor's; omit them or arm a new watch")
 	}
+	if spec.SessionID != "" {
+		// Compare targets, not strings: a Codex rollout name and its bare
+		// thread id name the same watch.
+		if c.Until[0] == CondSignal {
+			return Result{}, newError(CodeCursorMismatch, "a signal cursor has no session; omit session_id")
+		}
+		t, err := w.resolveTarget(ctx, spec.SessionID)
+		if err != nil {
+			return Result{}, err
+		}
+		if t.provider != c.Provider || t.id != c.SessionID {
+			return Result{}, newError(CodeCursorMismatch, "session_id names a different session than the cursor; omit it or arm a new watch")
+		}
+	}
 	limits = limits.withDefaults()
 	if c.Until[0] != CondSignal {
 		return w.waitTranscript(ctx, c, limits)

@@ -97,17 +97,12 @@ func (w *Watcher) armTranscript(ctx context.Context, spec Spec, conds []string) 
 	if err != nil {
 		return Result{}, err
 	}
-	f, err := os.Open(src.path)
-	if err != nil {
-		return Result{}, newError(CodeNotFound, err.Error())
-	}
-	defer func() { _ = f.Close() }()
-	info, err := f.Stat()
-	if err != nil {
-		return Result{}, err
-	}
 	if t.provider == providerClaude && slices.Contains(conds, CondTurnEnd) {
-		switch ep := claudeEntrypoint(f); ep {
+		ep, err := claudeEntrypoint(ctx, src.path)
+		if err != nil {
+			return Result{}, err
+		}
+		switch ep {
 		case "cli":
 		case "":
 			return Result{}, newError(CodeUnsupportedFormat, "this Claude Code session has no records naming its entrypoint yet; arm again once it has started")
@@ -115,11 +110,10 @@ func (w *Watcher) armTranscript(ctx context.Context, spec Spec, conds []string) 
 			return Result{}, newError(CodeUnsupportedFormat, fmt.Sprintf("turn_end needs an interactive Claude Code session; this one's entrypoint is %q, which doesn't record turn ends. message and phrase still work", ep))
 		}
 	}
-	b, err := scanState(ctx, f, info.Size(), factoryFor(t.provider, src))
+	dev, ino, b, err := snapshot(ctx, src.path, factoryFor(t.provider, src))
 	if err != nil {
-		return Result{}, decodeError(err)
+		return Result{}, err
 	}
-	dev, ino := fileIdentity(info)
 	c := cursor{
 		V: cursorVersion, DV: decoderVersion, Until: conds, Phrase: phrase,
 		SessionID: t.id, Provider: t.provider, Source: src.src, Dev: dev, Ino: ino,
@@ -132,6 +126,9 @@ func (w *Watcher) armTranscript(ctx context.Context, spec Spec, conds []string) 
 }
 
 func decodeError(err error) error {
+	if errors.Is(err, errSourceChanged) {
+		return err
+	}
 	if errors.Is(err, sessionevents.ErrUnsupportedFormat) {
 		return newError(CodeUnsupportedFormat, "this transcript uses a format session watches don't support (Codex rollouts without record ordinals)")
 	}
@@ -150,19 +147,68 @@ func (c cursor) boundary() boundary {
 
 // claudeEntrypoint returns the entrypoint named by the first record that has
 // one, reading at most entrypointScanBytes.
-func claudeEntrypoint(f *os.File) string {
+func claudeEntrypoint(ctx context.Context, path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", newError(CodeNotFound, err.Error())
+	}
+	defer func() { _ = f.Close() }()
 	r := bufio.NewReader(io.NewSectionReader(f, 0, entrypointScanBytes))
 	for {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		line, err := r.ReadBytes('\n')
 		if len(line) > 0 && line[len(line)-1] == '\n' {
 			if ep := ccsessions.ClaudeEntrypoint(line); ep != "" {
-				return ep
+				return ep, nil
 			}
 		}
 		if err != nil {
-			return ""
+			return "", nil
 		}
 	}
+}
+
+// snapshotAttempts bounds how many times snapshot rescans a file that keeps
+// changing under it.
+const snapshotAttempts = 3
+
+// snapshot opens path and returns its identity and the boundary at its end,
+// with decoder state from a backward scan. If the file changes or is
+// replaced during the scan, it scans again.
+func snapshot(ctx context.Context, path string, mk decoderFactory) (dev, ino uint64, b boundary, err error) {
+	for attempt := 0; attempt < snapshotAttempts; attempt++ {
+		dev, ino, b, err = snapshotOnce(ctx, path, mk)
+		if !errors.Is(err, errSourceChanged) {
+			return dev, ino, b, err
+		}
+	}
+	return 0, 0, boundary{}, fmt.Errorf("%s kept changing while being scanned; try again", path)
+}
+
+func snapshotOnce(ctx context.Context, path string, mk decoderFactory) (uint64, uint64, boundary, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, 0, boundary{}, newError(CodeNotFound, err.Error())
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		return 0, 0, boundary{}, err
+	}
+	dev, ino, err := fileIdentity(f)
+	if err != nil {
+		return 0, 0, boundary{}, err
+	}
+	b, err := scanState(ctx, f, info.Size(), mk)
+	if err != nil {
+		return 0, 0, boundary{}, decodeError(err)
+	}
+	if pinfo, err := os.Stat(path); err != nil || !os.SameFile(info, pinfo) {
+		return 0, 0, boundary{}, errSourceChanged
+	}
+	return dev, ino, b, nil
 }
 
 func (w *Watcher) waitTranscript(ctx context.Context, c cursor, limits Limits) (Result, error) {
@@ -254,8 +300,10 @@ func (w *Watcher) pollTranscript(ctx context.Context, c *cursor, t target, src s
 		}
 		if err != nil {
 			if len(batch) == 0 {
+				// The record could have changed the turn, so the state after
+				// it is uncertain until a reset record fixes it.
 				corrupt = true
-				after.State = before
+				after.State = uncertain(before)
 				commit = after
 			}
 			return errStopBatch
@@ -278,12 +326,19 @@ func (w *Watcher) pollTranscript(ctx context.Context, c *cursor, t target, src s
 		batch = append(batch, events...)
 		batchBytes += n
 		commit = after
+		if len(batch) >= limits.MaxEvents {
+			return errStopBatch
+		}
 		return nil
 	})
-	if err != nil && !errors.Is(err, errStopBatch) {
-		if errors.Is(err, sessionevents.ErrUnsupportedFormat) {
-			return Result{}, false, decodeError(err)
-		}
+	switch {
+	case err == nil, errors.Is(err, errStopBatch):
+	case ctx.Err() != nil && errors.Is(err, ctx.Err()):
+		// The deadline cut the read short. Keep what was read: the events
+		// collected so far, or the progress past records that didn't match.
+	case errors.Is(err, sessionevents.ErrUnsupportedFormat):
+		return Result{}, false, decodeError(err)
+	default:
 		return Result{}, false, err
 	}
 
@@ -321,7 +376,11 @@ func checkContinuity(f *os.File, path string, c cursor, b boundary) (int64, stri
 	if err != nil {
 		return 0, "", err
 	}
-	if dev, ino := fileIdentity(info); dev != c.Dev || ino != c.Ino {
+	dev, ino, err := fileIdentity(f)
+	if err != nil {
+		return 0, "", err
+	}
+	if dev != c.Dev || ino != c.Ino {
 		return 0, GapReplaced, nil
 	}
 	if pinfo, err := os.Stat(path); err != nil || !os.SameFile(info, pinfo) {
@@ -412,22 +471,13 @@ func (w *Watcher) gapResult(ctx context.Context, c cursor, t target, src source,
 		}
 		src = fresh
 	}
-	f, err := os.Open(src.path)
-	if err != nil {
-		return Result{}, false, newError(CodeNotFound, err.Error())
-	}
-	defer func() { _ = f.Close() }()
-	info, err := f.Stat()
+	dev, ino, b, err := snapshot(ctx, src.path, factoryFor(t.provider, src))
 	if err != nil {
 		return Result{}, false, err
 	}
-	b, err := scanState(ctx, f, info.Size(), factoryFor(t.provider, src))
-	if err != nil {
-		return Result{}, false, decodeError(err)
-	}
 	next := c
 	next.Source = src.src
-	next.Dev, next.Ino = fileIdentity(info)
+	next.Dev, next.Ino = dev, ino
 	next.Gen++
 	next.setBoundary(b)
 	res := Result{

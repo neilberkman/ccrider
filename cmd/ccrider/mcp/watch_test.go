@@ -197,3 +197,11 @@ func TestSendSessionSignalValidation(t *testing.T) {
 		t.Fatalf("oversized sender = %s", text)
 	}
 }
+
+func TestSendSessionSignalNonStringBody(t *testing.T) {
+	watcher, _ := newWatchHandlers(t)
+	res, text := callTool(t, makeSendSessionSignalHandler(watcher), map[string]any{"channel": "c", "body": 123})
+	if !res.IsError || !strings.Contains(text, "invalid_body") {
+		t.Fatalf("numeric body = %s", text)
+	}
+}

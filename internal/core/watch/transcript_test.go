@@ -494,3 +494,151 @@ func TestTranscriptArmValidation(t *testing.T) {
 		}
 	}
 }
+
+// Round 5: a rewrite of the reset record between the backward scan and the
+// forward decode must not leave the cursor with the old record's state. The
+// reset record is mid-file, so only re-checking it catches the rewrite.
+func TestArmRescansWhenResetRecordChanges(t *testing.T) {
+	file, _ := setupHomes(t)
+	w := newWatcher(t)
+	dur := `{"type":"system","subtype":"turn_duration","uuid":"dx","durationMs":1,"pad":"` + strings.Repeat("p", 120) + `"}`
+	apiErr := `{"type":"assistant","uuid":"ax","isApiErrorMessage":true,"message":{"role":"assistant","content":[{"type":"text","text":"API Error"}]}}`
+	apiErr = apiErr[:len(apiErr)-1] + strings.Repeat(" ", len(dur)-len(apiErr)) + "}"
+	appendLines(t, file, tPrompt, tText, dur, tPrompt2)
+	afterBackwardScan = func() {
+		afterBackwardScan = nil
+		data, _ := os.ReadFile(file)
+		if err := os.WriteFile(file, []byte(strings.Replace(string(data), dur, apiErr, 1)), 0o644); err != nil {
+			t.Error(err)
+		}
+	}
+	defer func() { afterBackwardScan = nil }()
+	armed := arm(t, w, Spec{SessionID: claudeSID, Until: []string{CondTurnEnd}})
+	appendLines(t, file, tDur2)
+	res := waitShort(t, w, armed.Cursor, Limits{})
+	// The file now holds one turn whose last assistant record is an API
+	// error; decoding the old duration record's state would say completed.
+	if got := outcomes(res); len(got) != 1 || got[0] != "failed" {
+		t.Fatalf("outcomes = %v, want [failed]", got)
+	}
+}
+
+// Round 5: a wait cut short by its deadline keeps its progress, so a large
+// backlog is eventually read through short waits.
+func TestShortWaitsMakeProgressThroughBacklog(t *testing.T) {
+	file, _ := setupHomes(t)
+	w := newWatcher(t)
+	appendLines(t, file, tPrompt)
+	armed := arm(t, w, Spec{SessionID: claudeSID, Until: []string{CondPhrase}, Phrase: "needle-phrase"})
+	filler := `{"type":"attachment","uuid":"f","data":"` + strings.Repeat("x", 200) + `"}`
+	lines := make([]string, 0, 150001)
+	for i := 0; i < 150000; i++ {
+		lines = append(lines, filler)
+	}
+	lines = append(lines, `{"type":"assistant","uuid":"needle","message":{"role":"assistant","content":[{"type":"text","text":"needle-phrase"}]}}`)
+	appendLines(t, file, lines...)
+	cur := armed.Cursor
+	for i := 0; i < 400; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		res, err := w.Wait(ctx, cur, Spec{}, Limits{})
+		cancel()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Status == StatusEvent {
+			if res.Events[0].EventID != "claude:"+claudeSID+":needle:0" {
+				t.Fatalf("event = %+v", res.Events[0])
+			}
+			return
+		}
+		cur = res.Cursor
+	}
+	t.Fatal("short waits never reached the phrase")
+}
+
+func TestCorruptRecordsOfHandledTypes(t *testing.T) {
+	t.Run("claude numeric content", func(t *testing.T) {
+		file, _ := setupHomes(t)
+		w := newWatcher(t)
+		appendLines(t, file, tPrompt, tText, tDur)
+		armed := arm(t, w, Spec{SessionID: claudeSID, Until: []string{CondTurnEnd}})
+		appendLines(t, file, `{"type":"assistant","uuid":"bad","message":{"role":"assistant","content":42}}`, tDur2)
+		res := waitShort(t, w, armed.Cursor, Limits{})
+		if res.Status != StatusGap || res.GapReason != GapCorrupt {
+			t.Fatalf("result = %+v, want corrupt gap", res)
+		}
+		if res.TargetState != sessionevents.TurnUnknown {
+			t.Fatalf("state after corrupt record = %q, want unknown", res.TargetState)
+		}
+		next := waitShort(t, w, res.Cursor, Limits{})
+		if len(next.Events) != 1 || !next.Events[0].Partial {
+			t.Fatalf("turn end after corrupt record = %+v, want partial", next)
+		}
+	})
+	t.Run("codex numeric turn id", func(t *testing.T) {
+		_, dir := setupHomes(t)
+		w := newWatcher(t)
+		path := filepath.Join(dir, "rollout-2026-10-30T09-44-51-"+codexThread+".jsonl")
+		appendLines(t, path, codexMeta(codexThread, "2026-10-30T09:44:51Z"))
+		armed := arm(t, w, Spec{SessionID: codexThread, Until: []string{CondTurnEnd}})
+		appendLines(t, path, codexRec(1, "2026-10-30T09:45:00Z", `{"type":"task_complete","turn_id":7}`))
+		if res := waitShort(t, w, armed.Cursor, Limits{}); res.Status != StatusGap || res.GapReason != GapCorrupt {
+			t.Fatalf("result = %+v, want corrupt gap", res)
+		}
+	})
+}
+
+// Round 5: a corrupt last line on the active rollout must not make a quiet
+// rollout look newer.
+func TestCodexCorruptTailKeepsActiveRollout(t *testing.T) {
+	_, dir := setupHomes(t)
+	w := newWatcher(t)
+	orig := filepath.Join(dir, "rollout-2026-09-26T09-41-27-"+codexThread+".jsonl")
+	repl := filepath.Join(dir, "rollout-2026-10-04T17-18-21-"+codexThread+"_"+codexRepl+".jsonl")
+	appendLines(t, repl, codexMeta(codexThread, "2026-10-04T17:18:21Z"),
+		codexRec(1, "2026-10-30T08:00:00Z", `{"type":"task_complete","turn_id":"r"}`))
+	appendLines(t, orig, codexMeta(codexThread, "2026-09-26T09:41:27Z"),
+		codexRec(1, "2026-10-30T09:00:00Z", `{"type":"task_complete","turn_id":"o"}`))
+	armed := arm(t, w, Spec{SessionID: codexThread, Until: []string{CondTurnEnd}})
+	appendLines(t, orig, `{"not valid json`)
+	res := waitShort(t, w, armed.Cursor, Limits{})
+	if res.Status != StatusGap || res.GapReason != GapCorrupt {
+		t.Fatalf("result = %+v, want corrupt gap on the original rollout", res)
+	}
+}
+
+// Round 5: the original Codex session id, repeated with a cursor, names the
+// same watch as the thread id stored in it.
+func TestCodexRolloutNameMatchesCursor(t *testing.T) {
+	_, dir := setupHomes(t)
+	w := newWatcher(t)
+	name := "rollout-2026-10-30T09-44-51-" + codexThread
+	appendLines(t, filepath.Join(dir, name+".jsonl"), codexMeta(codexThread, "2026-10-30T09:44:51Z"))
+	armed := arm(t, w, Spec{SessionID: name, Until: []string{CondTurnEnd}})
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if _, err := w.Wait(ctx, armed.Cursor, Spec{SessionID: name}, Limits{}); err != nil {
+		t.Fatalf("repeating the rollout name: %v", err)
+	}
+	ctx2, cancel2 := context.WithTimeout(context.Background(), time.Second)
+	defer cancel2()
+	if _, err := w.Wait(ctx2, armed.Cursor, Spec{SessionID: claudeSID}, Limits{}); codeOf(err) != CodeCursorMismatch && codeOf(err) != CodeNotFound {
+		t.Fatalf("different session: %v", err)
+	}
+}
+
+// Round 5: a reset record starting exactly at the scan window's lower edge
+// is used.
+func TestBackwardScanUsesRecordAtWindowEdge(t *testing.T) {
+	file, _ := setupHomes(t)
+	w := newWatcher(t)
+	appendLines(t, file, tPrompt, tText, tDur, tPrompt2)
+	old := scanLimit
+	// The window starts exactly where tDur starts.
+	scanLimit = int64(len(tDur) + 1 + len(tPrompt2) + 1)
+	defer func() { scanLimit = old }()
+	armed := arm(t, w, Spec{SessionID: claudeSID, Until: []string{CondTurnEnd}})
+	if armed.TargetState != sessionevents.TurnRunning {
+		t.Fatalf("target state = %q, want running from the edge record", armed.TargetState)
+	}
+}

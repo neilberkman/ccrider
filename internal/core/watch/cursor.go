@@ -90,7 +90,8 @@ func (c cursor) validate() error {
 			return errors.New("signal position is negative")
 		}
 		if c.SessionID != "" || c.Provider != "" || c.Source != "" || c.Phrase != "" ||
-			c.Dev != 0 || c.Ino != 0 || c.Offset != 0 || c.Tail != "" {
+			c.Dev != 0 || c.Ino != 0 || c.Offset != 0 || c.Tail != "" ||
+			c.TailLen != 0 || c.Gen != 0 || c.State != nil {
 			return errors.New("signal cursor carries transcript fields")
 		}
 		return nil
@@ -138,9 +139,6 @@ func (c cursor) sameConditions(spec Spec) bool {
 		return false
 	}
 	if spec.Channel != "" && spec.Channel != c.Channel {
-		return false
-	}
-	if spec.SessionID != "" && spec.SessionID != c.SessionID {
 		return false
 	}
 	return true

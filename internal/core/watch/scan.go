@@ -87,8 +87,20 @@ func scanLinesBackward(ctx context.Context, f *os.File, from, to int64, fn func(
 		carry = data[:j+1]
 		lineEnd = pos + int64(j+1)
 	}
-	if from == 0 && len(carry) > 0 {
-		fn(trimEOL(carry), 0, lineEnd)
+	if len(carry) > 0 {
+		// The remaining bytes form a complete line only if it starts exactly
+		// at from: at the file start, or right after a newline.
+		complete := from == 0
+		if !complete {
+			var prev [1]byte
+			if _, err := f.ReadAt(prev[:], from-1); err != nil {
+				return err
+			}
+			complete = prev[0] == '\n'
+		}
+		if complete {
+			fn(trimEOL(carry), from, lineEnd)
+		}
 	}
 	return nil
 }
@@ -170,10 +182,15 @@ func scanState(ctx context.Context, f *os.File, size int64, mk decoderFactory) (
 	if windowStart == 0 {
 		start = sessionevents.State{Turn: sessionevents.TurnIdle}
 	}
+	// The reset record's state and hash come from the same read, so a
+	// rewrite between reads can't pair one record's state with another's
+	// hash. The final check below catches a rewrite after this read.
 	from := int64(-1)
+	var reset boundary
 	err = scanLinesBackward(ctx, f, windowStart, end, func(line []byte, s, e int64) bool {
 		if st, ok := resetState(mk, line); ok {
 			start, from = st, e
+			reset = boundary{Offset: e, Tail: hashLine(line), TailLen: e - s, State: st}
 			return true
 		}
 		return false
@@ -181,22 +198,65 @@ func scanState(ctx context.Context, f *os.File, size int64, mk decoderFactory) (
 	if err != nil {
 		return boundary{}, err
 	}
+	if afterBackwardScan != nil {
+		afterBackwardScan()
+	}
 	if from < 0 {
 		// No reset record in the window. Start at the window's first complete
-		// line; at offset 0 that's the file start.
-		from = windowStart
-		if windowStart > 0 {
-			from, err = nextLineStart(f, windowStart, end)
+		// line: at offset 0 that's the file start.
+		from, err = lineStartAtOrAfter(f, windowStart, end)
+		if err != nil {
+			return boundary{}, err
+		}
+		reset = boundary{Offset: from, State: start}
+		if from > 0 {
+			line, s, e, err := lastCompleteLine(ctx, f, from)
 			if err != nil {
 				return boundary{}, err
 			}
+			if line != nil && e == from {
+				reset.Tail, reset.TailLen = hashLine(line), e-s
+			}
 		}
 	}
-	return decodeForward(ctx, f, from, end, mk(start))
+	b, err := decodeForward(ctx, f, reset, end, mk(start))
+	if err != nil {
+		return boundary{}, err
+	}
+	for _, check := range []boundary{reset, b} {
+		ok, err := verifyBoundary(f, check)
+		if err != nil {
+			return boundary{}, err
+		}
+		if !ok {
+			return boundary{}, errSourceChanged
+		}
+	}
+	return b, nil
 }
 
-// nextLineStart returns the offset just past the first "\n" at or after pos.
-func nextLineStart(f *os.File, pos, limit int64) (int64, error) {
+// afterBackwardScan runs between the backward scan and the forward decode.
+// Tests use it to rewrite the file at that moment.
+var afterBackwardScan func()
+
+// errSourceChanged means a transcript changed while it was being scanned.
+// Callers scan again.
+var errSourceChanged = errors.New("transcript changed during scan")
+
+// lineStartAtOrAfter returns the first offset at or after pos where a line
+// starts: pos itself if it's the file start or follows a newline, otherwise
+// just past the next newline (limit if there is none).
+func lineStartAtOrAfter(f *os.File, pos, limit int64) (int64, error) {
+	if pos == 0 {
+		return 0, nil
+	}
+	var prev [1]byte
+	if _, err := f.ReadAt(prev[:], pos-1); err != nil {
+		return 0, err
+	}
+	if prev[0] == '\n' {
+		return pos, nil
+	}
 	r := bufio.NewReader(io.NewSectionReader(f, pos, limit-pos))
 	skipped, err := r.ReadBytes('\n')
 	if err != nil {
@@ -205,27 +265,32 @@ func nextLineStart(f *os.File, pos, limit int64) (int64, error) {
 	return pos + int64(len(skipped)), nil
 }
 
-// decodeForward decodes complete records in [from, to) with d and returns
-// the boundary after the last one. Records that don't decode are skipped.
-func decodeForward(ctx context.Context, f *os.File, from, to int64, d sessionevents.Decoder) (boundary, error) {
-	b := boundary{Offset: from, State: d.State()}
-	if from > 0 {
-		line, s, e, err := lastCompleteLine(ctx, f, from)
-		if err != nil {
-			return boundary{}, err
-		}
-		if line != nil && e == from {
-			b.Tail, b.TailLen = hashLine(line), e-s
-		}
-	}
-	_, err := ccsessions.ForEachCompleteLine(ctx, io.NewSectionReader(f, from, to-from), from, to, func(l ccsessions.CompleteLine) error {
-		if _, err := d.Decode(l.Bytes); errors.Is(err, sessionevents.ErrUnsupportedFormat) {
+// decodeForward decodes complete records after start, up to to, with d and
+// returns the boundary after the last one. A record that fails to decode
+// leaves the turn state unknown, since it could have changed the turn.
+func decodeForward(ctx context.Context, f *os.File, start boundary, to int64, d sessionevents.Decoder) (boundary, error) {
+	b := start
+	b.State = d.State()
+	_, err := ccsessions.ForEachCompleteLine(ctx, io.NewSectionReader(f, start.Offset, to-start.Offset), start.Offset, to, func(l ccsessions.CompleteLine) error {
+		_, err := d.Decode(l.Bytes)
+		if errors.Is(err, sessionevents.ErrUnsupportedFormat) {
 			return err
+		}
+		if err != nil {
+			d.SetState(uncertain(d.State()))
 		}
 		b = boundary{Offset: l.End, Tail: hashLine(l.Bytes), TailLen: l.End - l.Start, State: d.State()}
 		return nil
 	})
 	return b, err
+}
+
+// uncertain is the state after a record the decoder couldn't read: the turn
+// is unknown until a reset record fixes it, and anything known about the
+// current turn is kept for the partial event that will report it.
+func uncertain(s sessionevents.State) sessionevents.State {
+	s.Turn = sessionevents.TurnUnknown
+	return s
 }
 
 // verifyBoundary reports whether the record ending at b.Offset still has the
