@@ -228,7 +228,13 @@ func (w *Watcher) waitTranscript(ctx context.Context, c cursor, limits Limits) (
 			}
 			located = time.Now()
 			if active.src != c.Source {
-				return w.gap(ctx, c, t, active, GapRolloutChanged)
+				res, err := w.gap(ctx, c, t, active, GapRolloutChanged)
+				if err != nil && ctx.Err() != nil {
+					// Keep the old cursor until the new rollout's state can be
+					// rebuilt; the next wait tries again.
+					return w.waitEnded(ctx, c)
+				}
+				return res, err
 			}
 			src = active
 		}
@@ -347,6 +353,11 @@ func (w *Watcher) pollTranscript(ctx context.Context, c *cursor, t target, src s
 	case errors.Is(err, sessionevents.ErrUnsupportedFormat):
 		return Result{}, false, decodeError(err)
 	default:
+		return Result{}, false, err
+	}
+	// Cancellation means the caller has gone, however the read ended,
+	// including on a full batch. Only a deadline keeps partial work.
+	if err := ctx.Err(); err != nil && !errors.Is(err, context.DeadlineExceeded) {
 		return Result{}, false, err
 	}
 

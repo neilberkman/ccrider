@@ -231,35 +231,22 @@ func readCodexSource(ctx context.Context, path string) (source, bool) {
 	return s, true
 }
 
-// activityScanBytes bounds the backward search for a rollout's last record
-// with a valid timestamp.
-const activityScanBytes = 4 << 20
-
 // lastRecordTime returns the timestamp of the last record that has a valid
 // one. A corrupt last line doesn't make an active rollout look idle: the
 // record before it still shows when the rollout was last written, and the
 // watch reports the corrupt line itself when it reads it.
+//
+// The search walks back record by record, reading each whole, until one has
+// a timestamp. That's normally the last record; compacted records reach
+// several megabytes, and corrupt lines after them are skipped. It is
+// bounded by ctx, not by size.
 func lastRecordTime(ctx context.Context, f *os.File, size int64) (time.Time, bool) {
 	var last time.Time
-	sawLine := false
-	_ = scanLinesBackward(ctx, f, max(0, size-activityScanBytes), size, func(line []byte, _, _ int64) bool {
-		sawLine = true
+	_ = scanLinesBackward(ctx, f, 0, size, func(line []byte, _, _ int64) bool {
 		last = codexsessions.RecordTimestamp(line)
 		return !last.IsZero()
 	})
-	if !last.IsZero() {
-		return last, true
-	}
-	if !sawLine {
-		// The last record is longer than the search window. Read it whole:
-		// compacted records reach several megabytes.
-		if line, _, _, err := lastCompleteLine(ctx, f, size); err == nil && line != nil {
-			if t := codexsessions.RecordTimestamp(line); !t.IsZero() {
-				return t, true
-			}
-		}
-	}
-	return time.Time{}, false
+	return last, !last.IsZero()
 }
 
 // activeCodex picks the rollout with the latest last record. A tie keeps

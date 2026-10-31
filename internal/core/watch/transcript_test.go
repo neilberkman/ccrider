@@ -656,7 +656,7 @@ func TestCodexLargeFinalRecordKeepsActiveRollout(t *testing.T) {
 	appendLines(t, orig, codexMeta(codexThread, "2026-09-26T09:41:27Z"),
 		codexRec(1, "2026-10-30T09:00:00Z", `{"type":"task_started","turn_id":"o"}`))
 	armed := arm(t, w, Spec{SessionID: codexThread, Until: []string{CondTurnEnd}})
-	big := `{"timestamp":"2026-10-30T09:30:00Z","ordinal":2,"type":"compacted","payload":{"message":"` + strings.Repeat("c", activityScanBytes+1024) + `"}}`
+	big := `{"timestamp":"2026-10-30T09:30:00Z","ordinal":2,"type":"compacted","payload":{"message":"` + strings.Repeat("c", 5<<20) + `"}}`
 	appendLines(t, orig, big)
 	// The original's last record is now longer than the search window.
 	cands := codexCandidates(context.Background(), codexThread)
@@ -748,6 +748,75 @@ func TestCancellationDuringReadIsAnError(t *testing.T) {
 	afterRecord = func() { afterRecord = nil; cancel() }
 	defer func() { afterRecord = nil }()
 	if _, err := w.Wait(ctx, armed.Cursor, Spec{}, Limits{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+}
+
+// Round 7: a corrupt line after a large valid record must not hide a newly
+// active rollout.
+func TestCodexCorruptLineAfterLargeRecordStillSwitches(t *testing.T) {
+	_, dir := setupHomes(t)
+	w := newWatcher(t)
+	orig := filepath.Join(dir, "rollout-2026-09-26T09-41-27-"+codexThread+".jsonl")
+	repl := filepath.Join(dir, "rollout-2026-10-04T17-18-21-"+codexThread+"_"+codexRepl+".jsonl")
+	appendLines(t, orig, codexMeta(codexThread, "2026-09-26T09:41:27Z"),
+		codexRec(1, "2026-10-30T08:00:00Z", `{"type":"task_complete","turn_id":"o"}`))
+	armed := arm(t, w, Spec{SessionID: codexThread, Until: []string{CondTurnEnd}})
+	big := `{"timestamp":"2026-10-30T09:30:00Z","ordinal":2,"type":"compacted","payload":{"message":"` + strings.Repeat("c", 5<<20) + `"}}`
+	appendLines(t, repl, codexMeta(codexThread, "2026-10-04T17:18:21Z"), big, `{"broken`)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	res, err := w.Wait(ctx, armed.Cursor, Spec{}, Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != StatusGap || res.GapReason != GapRolloutChanged {
+		t.Fatalf("result = %+v, want rollout_changed to the replacement", res)
+	}
+}
+
+// Round 7: a deadline while rebuilding state for a new rollout keeps the old
+// cursor.
+func TestRolloutChangeDeadlineKeepsCursor(t *testing.T) {
+	_, dir := setupHomes(t)
+	w := newWatcher(t)
+	orig := filepath.Join(dir, "rollout-2026-09-26T09-41-27-"+codexThread+".jsonl")
+	repl := filepath.Join(dir, "rollout-2026-10-04T17-18-21-"+codexThread+"_"+codexRepl+".jsonl")
+	appendLines(t, orig, codexMeta(codexThread, "2026-09-26T09:41:27Z"),
+		codexRec(1, "2026-10-30T08:00:00Z", `{"type":"task_complete","turn_id":"o"}`))
+	armed := arm(t, w, Spec{SessionID: codexThread, Until: []string{CondTurnEnd}})
+	appendLines(t, repl, codexMeta(codexThread, "2026-10-04T17:18:21Z"),
+		codexRec(1, "2026-10-30T10:00:00Z", `{"type":"task_started","turn_id":"r"}`))
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	afterBackwardScan = func() { <-ctx.Done() }
+	defer func() { afterBackwardScan = nil }()
+	res, err := w.Wait(ctx, armed.Cursor, Spec{}, Limits{})
+	if err != nil || res.Status != StatusWaiting || res.Cursor != armed.Cursor {
+		t.Fatalf("res=%+v err=%v, want waiting with the old cursor", res, err)
+	}
+}
+
+// Round 7: cancellation on the record that fills the batch is an error.
+func TestCancellationOnFullBatchIsAnError(t *testing.T) {
+	file, _ := setupHomes(t)
+	w := newWatcher(t)
+	appendLines(t, file, tPrompt)
+	armed := arm(t, w, Spec{SessionID: claudeSID, Until: []string{CondMessage}})
+	var lines []string
+	for i := 0; i < 5; i++ {
+		lines = append(lines, strings.Replace(tText, `"uuid":"a1"`, `"uuid":"m`+strconv.Itoa(i)+`"`, 1))
+	}
+	appendLines(t, file, lines...)
+	ctx, cancel := context.WithCancel(context.Background())
+	n := 0
+	afterRecord = func() {
+		if n++; n == 2 {
+			cancel()
+		}
+	}
+	defer func() { afterRecord = nil }()
+	if _, err := w.Wait(ctx, armed.Cursor, Spec{}, Limits{MaxEvents: 2}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
 	}
 }
