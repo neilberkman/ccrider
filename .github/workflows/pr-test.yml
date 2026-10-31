@@ -66,5 +66,8 @@ jobs:
       - name: Test OpenCode imports and migration checks
         run: go test -v ./pkg/opencodesessions ./internal/core/db
 
+      - name: Test session watches
+        run: go test -v ./internal/core/watch ./pkg/sessionevents
+
       - name: Build ccrider
         run: go build -o ccrider.exe ./cmd/ccrider
