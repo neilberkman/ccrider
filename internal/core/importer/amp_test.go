@@ -189,6 +189,8 @@ func TestAmpClientCommandContextDerivesFromCaller(t *testing.T) {
 }
 
 func TestAmpClientAddsPerCommandDeadline(t *testing.T) {
+	// exportTimeout is left zero, so this also covers exports falling back to
+	// the per-command timeout.
 	client := &ampClient{
 		pageSize: 100,
 		timeout:  time.Second,
@@ -208,6 +210,43 @@ func TestAmpClientAddsPerCommandDeadline(t *testing.T) {
 	}
 	if _, err := client.exportThread(context.Background(), "T-one"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestNewAmpClientGivesLargeExportsMoreTimeThanListPages(t *testing.T) {
+	// Exports of threads past 100 MB can take close to a minute. With the
+	// list-page deadline (30 s) applied to exports, such a thread was killed
+	// on every sync and never refreshed.
+	const largeExportDuration = time.Minute
+	client := newAmpClient()
+	deadlines := map[string]time.Duration{}
+	client.run = func(ctx context.Context, args ...string) ([]byte, error) {
+		if len(args) < 2 {
+			t.Fatalf("amp args = %q, want a threads subcommand", args)
+		}
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			t.Fatalf("amp %s has no deadline", strings.Join(args, " "))
+		}
+		deadlines[args[1]] = time.Until(deadline)
+		if args[1] == "export" {
+			return []byte(`{"id":"T-one","messages":[]}`), nil
+		}
+		return []byte("[]"), nil
+	}
+
+	if _, err := client.listThreads(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.exportThread(context.Background(), "T-one"); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := deadlines["list"]; got > ampCommandTimeout {
+		t.Fatalf("list deadline = %v, want at most %v", got, ampCommandTimeout)
+	}
+	if got := deadlines["export"]; got < 2*largeExportDuration {
+		t.Fatalf("export deadline = %v, want at least %v for large threads", got, 2*largeExportDuration)
 	}
 }
 

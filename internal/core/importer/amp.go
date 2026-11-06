@@ -18,9 +18,19 @@ import (
 )
 
 const (
-	ampProvider         = "amp"
-	ampDefaultPageSize  = 100
-	ampCommandTimeout   = 30 * time.Second
+	ampProvider        = "amp"
+	ampDefaultPageSize = 100
+	// ampCommandTimeout bounds each `amp threads list` page, which returns
+	// small metadata-only JSON.
+	ampCommandTimeout = 30 * time.Second
+	// ampExportTimeout bounds each `amp threads export`. Exports carry the
+	// full transcript and scale with thread size: threads past 100 MB can take
+	// close to a minute, so the list deadline would kill them on every sync and
+	// they would never refresh. A failed export is retried on every sync, so
+	// this stays well below the per-source remote budget (SyncSources,
+	// --sync-timeout, default DefaultRemoteSyncTimeout), which still caps the
+	// whole sync when enabled.
+	ampExportTimeout    = 3 * time.Minute
 	ampProcessWaitDelay = 2 * time.Second
 )
 
@@ -29,11 +39,26 @@ type ampRunFunc func(context.Context, ...string) ([]byte, error)
 type ampClient struct {
 	run      ampRunFunc
 	pageSize int
-	timeout  time.Duration
+	// timeout bounds each list page command.
+	timeout time.Duration
+	// exportTimeout bounds each thread export; zero falls back to timeout.
+	exportTimeout time.Duration
 }
 
 func newAmpClient() *ampClient {
-	return &ampClient{run: runAmp, pageSize: ampDefaultPageSize, timeout: ampCommandTimeout}
+	return &ampClient{
+		run:           runAmp,
+		pageSize:      ampDefaultPageSize,
+		timeout:       ampCommandTimeout,
+		exportTimeout: ampExportTimeout,
+	}
+}
+
+func (c *ampClient) exportDeadline() time.Duration {
+	if c.exportTimeout > 0 {
+		return c.exportTimeout
+	}
+	return c.timeout
 }
 
 func runAmp(ctx context.Context, args ...string) ([]byte, error) {
@@ -137,7 +162,7 @@ func (c *ampClient) listThreads(ctx context.Context) ([]RemoteSessionRef, error)
 }
 
 func (c *ampClient) exportThread(ctx context.Context, threadID string) (*ccsessions.ParsedSession, error) {
-	commandCtx, cancel := context.WithTimeout(ctx, c.timeout)
+	commandCtx, cancel := context.WithTimeout(ctx, c.exportDeadline())
 	defer cancel()
 	output, err := c.run(commandCtx, "threads", "export", threadID)
 	if err != nil {
