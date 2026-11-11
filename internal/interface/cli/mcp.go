@@ -36,7 +36,7 @@ func init() {
 }
 
 func runMCP(cmd *cobra.Command, args []string) error {
-	if err := mcp.StartServer(dbPath); err != nil {
+	if err := mcp.StartServer(dbPath, appVersion); err != nil {
 		return fmt.Errorf("MCP server failed: %w", err)
 	}
 	return nil
