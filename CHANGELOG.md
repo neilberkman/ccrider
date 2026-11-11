@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.15.1] - 2026-11-11
+
+### Fixed
+
+- **The MCP server reports ccrider's version** — `serverInfo.version` in the `initialize` response was always `1.0.0`; it is now the release version, or `dev` for a source build
+
+### Changed
+
+- **Dependency updates** ([#43](https://github.com/neilberkman/ccrider/pull/43)) — modernc.org/sqlite v1.62.0 (SQLite stays 3.54.1), bubbles v1.0.0, the AWS SDK used for Bedrock summaries, langchaingo v0.1.15 and cobra v1.10.2
+- **modernc.org/libc stays on the release modernc.org/sqlite is built against** — v1.80.1 for sqlite v1.62.0. modernc supports only that pairing, and `go get -u` moves libc past it, so CI and releases now fail when the two differ
+- **GitHub release notes come from this changelog** — they used to list commit subjects, which left out dependency and documentation changes. A release whose version has no entry here fails before anything is published
+- **Release tooling** — GitHub Actions on Node 24 and GoReleaser v2.20.1. The Homebrew cask now declares `zap :not_required`
+
 ## [1.15.0] - 2026-10-31
 
 ### Added

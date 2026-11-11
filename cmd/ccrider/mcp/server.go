@@ -161,8 +161,9 @@ func providerFilterDescription() string {
 		strings.Join(quoted[:len(quoted)-1], ", "), quoted[len(quoted)-1])
 }
 
-// StartServer starts the MCP server
-func StartServer(dbPath string) error {
+// StartServer starts the MCP server. version is reported to clients as
+// serverInfo.version.
+func StartServer(dbPath, version string) error {
 	// Open database
 	database, err := db.New(dbPath)
 	if err != nil {
@@ -177,7 +178,7 @@ func StartServer(dbPath string) error {
 	// Create MCP server
 	s := server.NewMCPServer(
 		"CCRider",
-		"1.0.0",
+		version,
 	)
 
 	// One liveness cache per server: a request that annotates results and a

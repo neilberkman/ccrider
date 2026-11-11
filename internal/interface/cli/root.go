@@ -17,10 +17,13 @@ import (
 var (
 	dbPath      string
 	versionInfo string
+	// appVersion is the bare release version, such as 1.15.1, or dev.
+	appVersion = "dev"
 )
 
 // SetVersion sets the version information from build-time ldflags
 func SetVersion(version, commit, date string) {
+	appVersion = version
 	versionInfo = fmt.Sprintf("%s (commit: %s, built: %s)", version, commit, date)
 	rootCmd.Version = versionInfo
 }
