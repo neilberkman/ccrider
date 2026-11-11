@@ -7,6 +7,7 @@ on:
       - '**.go'
       - 'go.mod'
       - 'go.sum'
+      - 'scripts/check-sqlite-libc.sh'
       - '.github/workflows/pr-test.yml'
 
 permissions:
@@ -26,6 +27,9 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      - name: Check modernc.org/libc matches modernc.org/sqlite
+        run: ./scripts/check-sqlite-libc.sh
 
       - name: Run tests
         run: go test -v ./...

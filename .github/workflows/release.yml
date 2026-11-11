@@ -37,6 +37,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-go-
 
+      - name: Check modernc.org/libc matches modernc.org/sqlite
+        run: ./scripts/check-sqlite-libc.sh
+
       - name: Run tests
         run: go test -v ./...
 
