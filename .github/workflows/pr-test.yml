@@ -7,6 +7,7 @@ on:
       - '**.go'
       - 'go.mod'
       - 'go.sum'
+      - 'scripts/check-sqlite-libc.sh'
       - '.github/workflows/pr-test.yml'
 
 permissions:
@@ -17,15 +18,18 @@ jobs:
     runs-on: macos-15
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
+
+      - name: Check modernc.org/libc matches modernc.org/sqlite
+        run: ./scripts/check-sqlite-libc.sh
 
       - name: Run tests
         run: go test -v ./...
@@ -47,7 +51,7 @@ jobs:
           ./ccrider --version
 
       - name: Upload binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ccrider-binary-macos
           path: ccrider
@@ -57,10 +61,10 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
