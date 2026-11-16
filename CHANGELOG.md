@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.15.2] - 2026-11-16
+
+### Fixed
+
+- **Compressed Codex history imports** ([#40](https://github.com/neilberkman/ccrider/issues/40), [#45](https://github.com/neilberkman/ccrider/pull/45)) — Codex archives older rollouts as `.jsonl.zst`; sync now discovers and streams them instead of silently skipping them. Plain files take precedence when both forms exist, session and message IDs survive compression changes, and resume metadata backfills read compressed files too
+- **Large Amp threads refresh successfully** ([#42](https://github.com/neilberkman/ccrider/pull/42)) — exports now have a three-minute deadline instead of sharing the 30-second limit for list pages. Large threads that previously timed out on every sync can refresh, while caller cancellation and the overall sync timeout still apply. Thanks to @oliver-kriska
+
 ## [1.15.1] - 2026-11-11
 
 ### Fixed
