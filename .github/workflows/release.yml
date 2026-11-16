@@ -95,8 +95,8 @@ jobs:
           cp dist/homebrew/Casks/ccrider.rb "$TAP_DIR/Casks/ccrider.rb"
           cd "$TAP_DIR"
           brew style --fix Casks/ccrider.rb || brew style Casks/ccrider.rb
-          git config user.name goreleaserbot
-          git config user.email bot@goreleaser.com
+          git config user.name "Neil Berkman"
+          git config user.email neil@xuku.com
           git add Casks/ccrider.rb
           git commit -m "Brew cask update for ccrider version ${GITHUB_REF_NAME}"
           git push

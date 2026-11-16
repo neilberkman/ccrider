@@ -131,8 +131,8 @@ homebrew_casks:
     binaries:
       - ccrider
     commit_author:
-      name: goreleaserbot
-      email: bot@goreleaser.com
+      name: Neil Berkman
+      email: neil@xuku.com
     commit_msg_template: "Brew cask update for {{ .ProjectName }} version {{ .Tag }}"
     # Homebrew quarantines cask downloads and the binary is only ad-hoc
     # signed, so Gatekeeper blocks it unless the attribute is removed.
@@ -149,6 +149,9 @@ homebrew_casks:
 
 scoops:
   - name: ccrider
+    commit_author:
+      name: Neil Berkman
+      email: neil@xuku.com
     repository:
       owner: neilberkman
       name: scoop-ccrider
