@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -249,7 +248,7 @@ func (i *Importer) PrepareSource(ctx context.Context, src Source) (PreparedSourc
 		}, nil
 	}
 
-	total, err := CountJSONLFiles(src.Path, src.SkipSubagents)
+	files, err := sessionFiles(src.Path, src.SkipSubagents, src.Provider)
 	if err != nil {
 		if ctx.Err() != nil {
 			return PreparedSource{}, ctx.Err()
@@ -262,7 +261,7 @@ func (i *Importer) PrepareSource(ctx context.Context, src Source) (PreparedSourc
 	return PreparedSource{
 		Provider: src.Provider,
 		Path:     src.Path,
-		Total:    total,
+		Total:    len(files),
 		run: func(ctx context.Context, progress ProgressCallback, force bool) (ImportResult, error) {
 			if err := ctx.Err(); err != nil {
 				return ImportResult{}, err
@@ -321,28 +320,10 @@ func SyncSources(ctx context.Context, sources []Source, remoteTimeout time.Durat
 	return nil
 }
 
-// CountJSONLFiles counts importable .jsonl files under dirPath, applying the
-// same subagent/edit-conflict exclusions ImportDirectory uses.
+// CountJSONLFiles counts plain JSONL files using the importer's exclusions.
 func CountJSONLFiles(dirPath string, skipSubagents bool) (int, error) {
-	count := 0
-	err := filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if info.IsDir() || filepath.Ext(path) != ".jsonl" {
-			return nil
-		}
-		basename := filepath.Base(path)
-		if strings.Contains(basename, "Edit conflict") {
-			return nil
-		}
-		if skipSubagents && (strings.Contains(path, "/subagents/") || strings.HasPrefix(basename, "agent-")) {
-			return nil
-		}
-		count++
-		return nil
-	})
-	return count, err
+	files, err := sessionFiles(dirPath, skipSubagents, "")
+	return len(files), err
 }
 
 // SyncAll imports all supplied sources for background consumers and aggregates
@@ -413,18 +394,12 @@ func (i *Importer) BackfillResumeVia(ctx context.Context, src Source) error {
 	}
 
 	paths := make(map[string]string, len(pending))
-	err = filepath.WalkDir(src.Path, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() || filepath.Ext(path) != ".jsonl" {
-			return nil
-		}
-		if id := strings.TrimSuffix(d.Name(), ".jsonl"); pending[id] {
+	files, err := sessionFiles(src.Path, src.SkipSubagents, src.Provider)
+	for _, path := range files {
+		if id := sessionFileID(path, src.Provider); pending[id] {
 			paths[id] = path
 		}
-		return nil
-	})
+	}
 	if err != nil {
 		return fmt.Errorf("walk %s: %w", src.Path, err)
 	}
