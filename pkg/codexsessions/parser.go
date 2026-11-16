@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -87,7 +86,7 @@ var errStop = errors.New("stop")
 // rollouts can run to gigabytes, so backfilling this field must not parse the
 // whole transcript.
 func ReadResumeVia(path string) (string, error) {
-	file, err := os.Open(path)
+	file, err := openRolloutFile(path)
 	if err != nil {
 		return "", err
 	}
@@ -124,7 +123,7 @@ func deterministicUUID(sessionID string, sequence int) string {
 }
 
 func ParseFile(path string) (*ccsessions.ParsedSession, error) {
-	file, err := os.Open(path)
+	file, err := openRolloutFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open file: %w", err)
 	}
@@ -135,7 +134,7 @@ func ParseFile(path string) (*ccsessions.ParsedSession, error) {
 		return nil, fmt.Errorf("failed to stat file: %w", err)
 	}
 
-	sessionID := filepath.Base(path)
+	sessionID := strings.TrimSuffix(filepath.Base(path), ".zst")
 	sessionID = sessionID[:len(sessionID)-len(filepath.Ext(sessionID))]
 
 	session := &ccsessions.ParsedSession{

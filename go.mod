@@ -13,6 +13,7 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/dustin/go-humanize v1.1.0
+	github.com/klauspost/compress v1.20.4
 	github.com/mark3labs/mcp-go v1.5.0
 	github.com/muesli/reflow v0.3.0
 	github.com/olebedev/when v1.1.0

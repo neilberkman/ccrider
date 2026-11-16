@@ -283,29 +283,7 @@ func (i *Importer) importSession(session *ccsessions.ParsedSession, existingMess
 // Returns structured per-file outcomes and any fatal setup or cancellation error.
 func (i *Importer) ImportDirectory(ctx context.Context, dirPath string, progress ProgressCallback, force bool, skipSubagents bool, parseFn ParseFunc, provider string) (ImportResult, error) {
 	result := ImportResult{}
-	// Find all .jsonl files (optionally skipping subagents)
-	var files []string
-	err := filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if !info.IsDir() && filepath.Ext(path) == ".jsonl" {
-			basename := filepath.Base(path)
-			if strings.Contains(basename, "Edit conflict") {
-				return nil
-			}
-			if skipSubagents {
-				if strings.Contains(path, "/subagents/") {
-					return nil
-				}
-				if strings.HasPrefix(basename, "agent-") {
-					return nil
-				}
-			}
-			files = append(files, path)
-		}
-		return nil
-	})
+	files, err := sessionFiles(dirPath, skipSubagents, provider)
 	if err != nil {
 		return result, fmt.Errorf("failed to walk directory: %w", err)
 	}
@@ -365,8 +343,7 @@ func (i *Importer) ImportDirectory(ctx context.Context, dirPath string, progress
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
-		sessionID := filepath.Base(file)
-		sessionID = strings.TrimSuffix(sessionID, ".jsonl")
+		sessionID := sessionFileID(file, provider)
 
 		metadata, exists := sessionMetadata[sessionID]
 		messageCount := 0
@@ -664,6 +641,9 @@ func sessionImportID(session *ccsessions.ParsedSession) string {
 		return id
 	}
 	fileSessionID := filepath.Base(session.FilePath)
+	if strings.HasSuffix(fileSessionID, ".jsonl.zst") {
+		fileSessionID = strings.TrimSuffix(fileSessionID, ".zst")
+	}
 	return strings.TrimSuffix(fileSessionID, filepath.Ext(fileSessionID))
 }
 
