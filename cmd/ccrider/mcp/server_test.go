@@ -3,8 +3,10 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -266,5 +268,132 @@ func TestResumeCommandJSONFieldName(t *testing.T) {
 		if got != "cd '/p' && claude --resume 's'" {
 			t.Errorf("%T resume_command = %q, want %q", p, got, "cd '/p' && claude --resume 's'")
 		}
+	}
+}
+
+func TestTruncateMCPSummary(t *testing.T) {
+	if got := truncateMCPSummary("  \n\t  ", 20); got != "" {
+		t.Errorf("whitespace-only = %q, want empty", got)
+	}
+	if got := truncateMCPSummary("\n\nhello\n  world\t!", 20); got != "hello world !" {
+		t.Errorf("collapsed = %q, want %q", got, "hello world !")
+	}
+	// Multi-byte UTF-8 runes must truncate cleanly without splitting bytes.
+	in := strings.Repeat("é", 15)
+	got := truncateMCPSummary(in, 10)
+	want := strings.Repeat("é", 10) + "…"
+	if got != want {
+		t.Errorf("utf8 truncate = %q, want %q", got, want)
+	}
+}
+
+func TestSessionConvertersTruncateHugeSummaries(t *testing.T) {
+	huge := strings.Repeat("a", maxResponseBytes())
+	match := toSessionMatch(search.SessionSearchResult{
+		SessionID:      "s1",
+		SessionSummary: huge,
+		ProjectPath:    "/p",
+		Provider:       "claude",
+	}, nil)
+	if len([]rune(match.Summary)) != maxSummaryRunes+1 {
+		t.Errorf("SessionMatch.Summary rune len = %d, want %d", len([]rune(match.Summary)), maxSummaryRunes+1)
+	}
+
+	summary := toSessionSummary(db.Session{
+		SessionID:   "s1",
+		Summary:     huge,
+		ProjectPath: "/p",
+		Provider:    "claude",
+		UpdatedAt:   time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC),
+	}, nil)
+	if len([]rune(summary.Summary)) != maxSummaryRunes+1 {
+		t.Errorf("SessionSummary.Summary rune len = %d, want %d", len([]rune(summary.Summary)), maxSummaryRunes+1)
+	}
+}
+
+func TestFormatOpenSessionsResponseTightensSummariesBeforeDropping(t *testing.T) {
+	// ~110 sessions with 200-char summaries exceed 36KB, but fit once summaries
+	// are tightened to maxCompactSummaryRunes (80 chars) without dropping any.
+	var groups []OpenSessionGroup
+	for i := 0; i < 110; i++ {
+		groups = append(groups, OpenSessionGroup{
+			Project: fmt.Sprintf("/Users/dev/project-%02d", i%10),
+			Sessions: []OpenSession{{
+				Provider:    "claude",
+				SessionID:   fmt.Sprintf("session-%03d-0000-0000-0000-000000000000", i),
+				Summary:     strings.Repeat("x", maxOpenSummaryRunes),
+				TTY:         fmt.Sprintf("ttys%03d", i),
+				PID:         int32(1000 + i),
+				Match:       "declared",
+				IdleSeconds: int64(i * 60),
+			}},
+		})
+	}
+	if len(mustMarshal(OpenSessionsResponse{Groups: groups})) <= maxResponseBytes() {
+		t.Fatal("test setup should exceed budget before tightening")
+	}
+
+	resp := formatOpenSessionsResponse(groups)
+	if len(mustMarshal(resp)) > maxResponseBytes() {
+		t.Fatalf("response exceeds budget: %d > %d", len(mustMarshal(resp)), maxResponseBytes())
+	}
+	if resp.Truncated {
+		t.Fatalf("expected tightening summaries to avoid dropping sessions, got Truncated=true (%s)", resp.TruncatedMessage)
+	}
+	if countOpenSessions(resp.Groups) != 110 {
+		t.Fatalf("kept %d sessions, want all 110", countOpenSessions(resp.Groups))
+	}
+	// Recently active sessions should keep their full summary while stale ones are compacted first.
+	if got := len([]rune(resp.Groups[0].Sessions[0].Summary)); got != maxOpenSummaryRunes {
+		t.Fatalf("most-active session summary rune len = %d, want %d (uncompacted)", got, maxOpenSummaryRunes)
+	}
+	if got := len([]rune(resp.Groups[len(resp.Groups)-1].Sessions[0].Summary)); got != maxCompactSummaryRunes+1 {
+		t.Fatalf("most-idle session summary rune len = %d, want %d (compacted)", got, maxCompactSummaryRunes+1)
+	}
+}
+
+func TestFormatOpenSessionsResponseDropsMostIdleWhenOverBudget(t *testing.T) {
+	// 300 sessions exceed budget even after tightening summaries.
+	var groups []OpenSessionGroup
+	for i := 0; i < 300; i++ {
+		groups = append(groups, OpenSessionGroup{
+			Project: fmt.Sprintf("/Users/dev/project-%03d", i),
+			Sessions: []OpenSession{{
+				Provider:    "claude",
+				SessionID:   fmt.Sprintf("session-%03d-0000-0000-0000-000000000000", i),
+				Summary:     strings.Repeat("y", maxOpenSummaryRunes),
+				TTY:         fmt.Sprintf("ttys%03d", i),
+				PID:         int32(2000 + i),
+				Match:       "declared",
+				IdleSeconds: int64(i * 100),
+			}},
+		})
+	}
+
+	resp := formatOpenSessionsResponse(groups)
+	if len(mustMarshal(resp)) > maxResponseBytes() {
+		t.Fatalf("response exceeds budget: %d > %d", len(mustMarshal(resp)), maxResponseBytes())
+	}
+	if !resp.Truncated || resp.TotalSessions != 300 || resp.TruncatedMessage == "" {
+		t.Fatalf("missing truncation metadata: %+v", resp)
+	}
+	kept := countOpenSessions(resp.Groups)
+	if kept == 0 || kept >= 300 {
+		t.Fatalf("unexpected kept count: %d", kept)
+	}
+	// Most-active sessions (lowest IdleSeconds) must be preserved over stale ones.
+	var maxKeptIdle int64
+	for _, g := range resp.Groups {
+		if len(g.Sessions) == 0 {
+			t.Fatalf("empty group left behind: %q", g.Project)
+		}
+		for _, s := range g.Sessions {
+			if s.IdleSeconds > maxKeptIdle {
+				maxKeptIdle = s.IdleSeconds
+			}
+		}
+	}
+	if maxKeptIdle >= int64(kept*100) {
+		t.Fatalf("expected only the %d least-idle sessions (idle < %d), got max idle %d", kept, kept*100, maxKeptIdle)
 	}
 }

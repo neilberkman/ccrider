@@ -154,11 +154,7 @@ func formatAnchorPage(anchors []db.SessionAnchor, offset, limit int, cfg *config
 			SessionID: a.SessionID, Sessions: []SessionSummary{}, SessionCount: len(a.Sessions),
 		}
 		for _, s := range a.Sessions {
-			summary := toSessionSummary(s, cfg)
-			if text := []rune(summary.Summary); len(text) > 500 {
-				summary.Summary = string(text[:500]) + "…"
-			}
-			entry.Sessions = append(entry.Sessions, summary)
+			entry.Sessions = append(entry.Sessions, toSessionSummary(s, cfg))
 		}
 		result.Anchors = append(result.Anchors, entry)
 	}
