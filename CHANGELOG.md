@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.15.3] - 2026-11-22
+
+### Fixed
+
+- **MCP `list_open_sessions` stays within response token limits** — session summaries (which fall back to the first user message and can be tens of kilobytes for pasted prompts) are now whitespace-normalized and capped, and `list_open_sessions` enforces the 9k-token response budget. When many sessions are open, summaries are compacted starting with the most-idle sessions so recently active ones keep fuller summaries; if still over budget, the most-idle sessions are omitted first with truncation metadata. `search_sessions` and `list_recent_sessions` also cap per-session summaries so a single oversized prompt cannot push other results out of the response
+
 ## [1.15.2] - 2026-11-16
 
 ### Fixed
