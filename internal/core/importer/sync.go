@@ -62,6 +62,10 @@ type Source struct {
 	// parsing the transcript. File sources that record ResumeVia set it so
 	// sync can backfill rows imported before the field existed.
 	ResumeViaFn func(path string) (string, error)
+	// EntrypointFn reads a session file's ParsedSession.Entrypoint without
+	// parsing the transcript. File sources that record Entrypoint set it so
+	// sync can backfill rows imported before the field existed.
+	EntrypointFn func(ctx context.Context, path string) (string, error)
 }
 
 // DefaultSources returns the standard import sources. Local optional providers
@@ -84,6 +88,7 @@ func DefaultSources(ampEnabled bool) []Source {
 			ParseFn:       ccsessions.ParseFile,
 			Provider:      "claude",
 			SkipSubagents: true,
+			EntrypointFn:  ccsessions.ReadEntrypoint,
 		})
 	}
 
@@ -267,10 +272,20 @@ func (i *Importer) PrepareSource(ctx context.Context, src Source) (PreparedSourc
 				return ImportResult{}, err
 			}
 			result, err := i.ImportDirectory(ctx, src.Path, progress, force, src.SkipSubagents, src.ParseFn, src.Provider)
-			if err != nil || src.ResumeViaFn == nil {
+			if err != nil {
 				return result, err
 			}
-			return result, i.BackfillResumeVia(ctx, src)
+			if src.ResumeViaFn != nil {
+				if err := i.BackfillResumeVia(ctx, src); err != nil {
+					return result, err
+				}
+			}
+			if src.EntrypointFn != nil {
+				if err := i.BackfillEntrypoint(ctx, src); err != nil {
+					return result, err
+				}
+			}
+			return result, nil
 		},
 	}, nil
 }
@@ -372,22 +387,38 @@ func summarizeIDs(ids []string, limit int) string {
 // rest are recorded. Progress commits per batch, so a cancelled run resumes
 // where it stopped on the next sync.
 func (i *Importer) BackfillResumeVia(ctx context.Context, src Source) error {
-	rows, err := i.db.Query(`SELECT session_id FROM sessions WHERE provider = ? AND resume_via IS NULL`, src.Provider)
+	return i.backfillColumn(ctx, src, "resume_via", src.ResumeViaFn)
+}
+
+// BackfillEntrypoint records entrypoint for src's sessions imported before
+// the column existed (NULL rows), reading each file through src.EntrypointFn
+// instead of re-importing it. It follows the same rules as BackfillResumeVia.
+func (i *Importer) BackfillEntrypoint(ctx context.Context, src Source) error {
+	return i.backfillColumn(ctx, src, "entrypoint", func(path string) (string, error) {
+		return src.EntrypointFn(ctx, path)
+	})
+}
+
+// backfillColumn fills the sessions column named column, for src's rows where
+// it is NULL, with read(path) of each session's file. column is always a
+// constant from this package, never user input.
+func (i *Importer) backfillColumn(ctx context.Context, src Source, column string, read func(path string) (string, error)) error {
+	rows, err := i.db.Query(`SELECT session_id FROM sessions WHERE provider = ? AND `+column+` IS NULL`, src.Provider)
 	if err != nil {
-		return fmt.Errorf("load sessions missing resume_via: %w", err)
+		return fmt.Errorf("load sessions missing %s: %w", column, err)
 	}
 	pending := make(map[string]bool)
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
 			_ = rows.Close()
-			return fmt.Errorf("scan session missing resume_via: %w", err)
+			return fmt.Errorf("scan session missing %s: %w", column, err)
 		}
 		pending[id] = true
 	}
 	_ = rows.Close()
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("load sessions missing resume_via: %w", err)
+		return fmt.Errorf("load sessions missing %s: %w", column, err)
 	}
 	if len(pending) == 0 {
 		return nil
@@ -412,14 +443,14 @@ func (i *Importer) BackfillResumeVia(ctx context.Context, src Source) error {
 	var readErrs []error
 	for start := 0; start < len(ids); start += batchSize {
 		end := min(start+batchSize, len(ids))
-		if err := i.backfillResumeViaBatch(ctx, src, ids[start:end], paths, &readErrs); err != nil {
+		if err := i.backfillColumnBatch(ctx, column, read, ids[start:end], paths, &readErrs); err != nil {
 			return err
 		}
 	}
 	return errors.Join(readErrs...)
 }
 
-func (i *Importer) backfillResumeViaBatch(ctx context.Context, src Source, ids []string, paths map[string]string, readErrs *[]error) error {
+func (i *Importer) backfillColumnBatch(ctx context.Context, column string, read func(path string) (string, error), ids []string, paths map[string]string, readErrs *[]error) error {
 	tx, err := i.db.Begin()
 	if err != nil {
 		return err
@@ -433,15 +464,15 @@ func (i *Importer) backfillResumeViaBatch(ctx context.Context, src Source, ids [
 			}
 			return err
 		}
-		via := ""
+		value := ""
 		if path, ok := paths[id]; ok {
-			if via, err = src.ResumeViaFn(path); err != nil {
-				*readErrs = append(*readErrs, fmt.Errorf("read resume_via for %s: %w", id, err))
+			if value, err = read(path); err != nil {
+				*readErrs = append(*readErrs, fmt.Errorf("read %s for %s: %w", column, id, err))
 				continue
 			}
 		}
-		if _, err := tx.Exec(`UPDATE sessions SET resume_via = ? WHERE session_id = ?`, via, id); err != nil {
-			return fmt.Errorf("record resume_via for %s: %w", id, err)
+		if _, err := tx.Exec(`UPDATE sessions SET `+column+` = ? WHERE session_id = ?`, value, id); err != nil {
+			return fmt.Errorf("record %s for %s: %w", column, id, err)
 		}
 	}
 	return tx.Commit()

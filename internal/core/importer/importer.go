@@ -125,8 +125,9 @@ func (i *Importer) importSession(session *ccsessions.ParsedSession, existingMess
 		INSERT INTO sessions (
 			session_id, project_path, summary, leaf_uuid, cwd,
 			created_at, updated_at, message_count, file_hash,
-			file_size, file_mtime, file_inode, file_device, provider, resume_via
-		) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)
+			file_size, file_mtime, file_inode, file_device, provider, resume_via,
+			entrypoint
+		) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(session_id) DO UPDATE SET
 			project_path = excluded.project_path,
 			summary = excluded.summary,
@@ -139,7 +140,8 @@ func (i *Importer) importSession(session *ccsessions.ParsedSession, existingMess
 			file_inode = excluded.file_inode,
 			file_device = excluded.file_device,
 			provider = excluded.provider,
-			resume_via = excluded.resume_via
+			resume_via = excluded.resume_via,
+			entrypoint = excluded.entrypoint
 	`,
 		fileSessionID,
 		projectPath,
@@ -155,6 +157,7 @@ func (i *Importer) importSession(session *ccsessions.ParsedSession, existingMess
 		fileDevice,
 		provider,
 		session.ResumeVia,
+		session.Entrypoint,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to upsert session: %w", err)
