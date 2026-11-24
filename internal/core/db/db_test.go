@@ -446,3 +446,40 @@ func TestMigration007AddsResumeViaColumn(t *testing.T) {
 		t.Errorf("file_hash/file_size = %q/%d, want h1/10", hash, size)
 	}
 }
+
+func TestMigration010AddsEntrypointColumn(t *testing.T) {
+	database, err := New(filepath.Join(t.TempDir(), "old.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	// Simulate a database created before entrypoint existed.
+	if _, err := database.conn.Exec(`ALTER TABLE sessions DROP COLUMN entrypoint`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.conn.Exec(`
+		INSERT INTO sessions (session_id, project_path, provider, file_hash, file_size)
+		VALUES ('claude-1', '/p', 'claude', 'h1', 10)
+	`); err != nil {
+		t.Fatal(err)
+	}
+	for run := 1; run <= 2; run++ {
+		if err := database.migrate(); err != nil {
+			t.Fatalf("migrate() run %d error = %v", run, err)
+		}
+	}
+
+	var ep sql.NullString
+	var hash string
+	var size int64
+	if err := database.conn.QueryRow(`SELECT entrypoint, file_hash, file_size FROM sessions WHERE session_id = 'claude-1'`).Scan(&ep, &hash, &size); err != nil {
+		t.Fatal(err)
+	}
+	if ep.Valid {
+		t.Errorf("entrypoint = %q, want NULL (not yet recorded)", ep.String)
+	}
+	// File tracking is untouched: unchanged files are not re-parsed.
+	if hash != "h1" || size != 10 {
+		t.Errorf("file_hash/file_size = %q/%d, want h1/10", hash, size)
+	}
+}

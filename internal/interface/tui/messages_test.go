@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/neilberkman/ccrider/internal/core/db"
 )
 
@@ -222,5 +223,73 @@ func TestSyncFinishedReloadsAsynchronouslyAndShowsWarnings(t *testing.T) {
 	loaded, ok := cmd().(sessionsLoadedMsg)
 	if !ok || !loaded.restoreSelection {
 		t.Fatalf("reload message = %#v, want selection-restoring session load", loaded)
+	}
+}
+
+func TestHeadlessSessionsHiddenUntilToggled(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "headless.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	for _, s := range []struct{ id, entrypoint string }{
+		{"interactive", "cli"},
+		{"headless", "sdk-cli"},
+	} {
+		res, err := database.Exec(`
+			INSERT INTO sessions (session_id, project_path, summary, provider, entrypoint, created_at, updated_at)
+			VALUES (?, '/p', 'Test session', 'claude', ?, datetime('now'), datetime('now'))
+		`, s.id, s.entrypoint)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rowID, err := res.LastInsertId()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := database.Exec(`
+			INSERT INTO messages (uuid, session_id, type, sender, text_content, timestamp, sequence)
+			VALUES (?, ?, 'user', 'user', 'hello', datetime('now'), 1)
+		`, s.id+"-msg", rowID); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	loadedIDs := func(msg tea.Msg) []string {
+		t.Helper()
+		loaded, ok := msg.(sessionsLoadedMsg)
+		if !ok {
+			t.Fatalf("load message = %#v, want sessionsLoadedMsg", msg)
+		}
+		var ids []string
+		for _, s := range loaded.sessions {
+			ids = append(ids, s.ID)
+		}
+		return ids
+	}
+
+	model := NewWithContext(context.Background(), database)
+	defer model.Close()
+	if model.showHeadless {
+		t.Fatal("showHeadless = true on a new model, want headless sessions hidden by default")
+	}
+	if got := loadedIDs(loadSessionsNow(database, false, model.showHeadless, "", 1, false)); !reflect.DeepEqual(got, []string{"interactive"}) {
+		t.Errorf("default load = %v, want [interactive]", got)
+	}
+
+	updated, cmd := model.updateList(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if !updated.(Model).showHeadless {
+		t.Fatal("showHeadless = false after pressing a, want true")
+	}
+	if got := loadedIDs(cmd()); len(got) != 2 {
+		t.Errorf("load after pressing a = %v, want both sessions", got)
+	}
+
+	updated, cmd = updated.(Model).updateList(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	if updated.(Model).showHeadless {
+		t.Fatal("showHeadless = true after pressing a twice, want false")
+	}
+	if got := loadedIDs(cmd()); !reflect.DeepEqual(got, []string{"interactive"}) {
+		t.Errorf("load after pressing a twice = %v, want [interactive]", got)
 	}
 }

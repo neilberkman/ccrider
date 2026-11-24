@@ -143,7 +143,13 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.projectFilterEnabled = !m.projectFilterEnabled
 		// Reload sessions with new filter
 		m.sessionsLoadGeneration++
-		return m, loadSessions(m.db, m.projectFilterEnabled, m.currentDirectory, m.sessionsLoadGeneration, false)
+		return m, loadSessions(m.db, m.projectFilterEnabled, m.showHeadless, m.currentDirectory, m.sessionsLoadGeneration, false)
+
+	case "a":
+		// Toggle headless (`claude -p`) sessions
+		m.showHeadless = !m.showHeadless
+		m.sessionsLoadGeneration++
+		return m, loadSessions(m.db, m.projectFilterEnabled, m.showHeadless, m.currentDirectory, m.sessionsLoadGeneration, false)
 
 	case "s":
 		if m.syncing {
@@ -227,7 +233,7 @@ func (m Model) viewList() string {
 	} else if m.syncing {
 		helpText = "⏳ Syncing..."
 	} else {
-		helpText = "↑/k up • ↓/j down • / filter • e export • q quit • ? more"
+		helpText = "↑/k up • ↓/j down • / filter • a headless • e export • q quit • ? more"
 	}
 
 	if len(m.sessions) == 0 {

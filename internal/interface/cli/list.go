@@ -50,7 +50,7 @@ func runList(cmd *cobra.Command, args []string) error {
 	}()
 
 	// Use core function to get sessions
-	coreSessions, err := database.ListSessions(listProject, listProvider)
+	coreSessions, err := database.ListSessions(listProject, false, listProvider)
 	if err != nil {
 		return fmt.Errorf("failed to list sessions: %w", err)
 	}

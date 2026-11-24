@@ -52,6 +52,11 @@ func (db *DB) migrate() error {
 		return err
 	}
 
+	// Migration 10: Record how each Claude session was started.
+	if err := db.migration010AddEntrypointColumn(); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -340,6 +345,26 @@ func (db *DB) migration007AddResumeViaColumn() error {
 	}
 
 	_, err = db.conn.Exec(`ALTER TABLE sessions ADD COLUMN resume_via TEXT`)
+	return err
+}
+
+// migration010AddEntrypointColumn adds entrypoint, NULL on existing rows. The
+// importer writes it on every import, so NULL means not yet recorded; sync
+// backfills NULL rows of sources that can read it cheaply (see
+// importer.Source.EntrypointFn) without re-parsing them.
+func (db *DB) migration010AddEntrypointColumn() error {
+	var count int
+	err := db.conn.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name='entrypoint'
+	`).Scan(&count)
+	if err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+
+	_, err = db.conn.Exec(`ALTER TABLE sessions ADD COLUMN entrypoint TEXT`)
 	return err
 }
 

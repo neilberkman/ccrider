@@ -88,8 +88,14 @@ type Session struct {
 	ResumeVia    string // Session to resume in place of this one; empty means itself
 }
 
+// headlessEntrypointPattern matches the entrypoints Claude Code records for
+// sessions started programmatically (`claude -p` records "sdk-cli"; the SDKs
+// record "sdk-ts" and "sdk-py") rather than by a person.
+const headlessEntrypointPattern = "sdk-%"
+
 // ListSessions returns all sessions, optionally filtered by project path and provider.
-// Sessions with no meaningful content (warmup-only, etc) are excluded.
+// hideHeadless leaves out sessions started programmatically rather than by a
+// person. Sessions with no meaningful content (warmup-only, etc) are excluded.
 // summaryExpr computes a session's display summary with fallbacks: the LLM
 // one-line summary, then the stored llm_summary, then — when the recorded
 // summary is a placeholder — the first meaningful user message. It requires
@@ -133,7 +139,7 @@ const summaryExpr = `COALESCE(
 	''
 )`
 
-func (db *DB) ListSessions(projectPath string, provider ...string) ([]Session, error) {
+func (db *DB) ListSessions(projectPath string, hideHeadless bool, provider ...string) ([]Session, error) {
 	query := `
 		SELECT
 			s.session_id,
@@ -184,6 +190,10 @@ func (db *DB) ListSessions(projectPath string, provider ...string) ([]Session, e
 	if len(provider) > 0 && provider[0] != "" {
 		query += " AND COALESCE(s.provider, 'claude') = ?"
 		args = append(args, provider[0])
+	}
+	if hideHeadless {
+		query += " AND COALESCE(s.entrypoint, '') NOT LIKE ?"
+		args = append(args, headlessEntrypointPattern)
 	}
 
 	query += `

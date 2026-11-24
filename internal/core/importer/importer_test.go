@@ -1729,7 +1729,7 @@ func TestImportSession_CodexSubAgentResumesThroughRoot(t *testing.T) {
 	if detail.ResumeVia != root {
 		t.Errorf("GetSessionDetail ResumeVia = %q, want %q", detail.ResumeVia, root)
 	}
-	sessions, err := database.ListSessions("", "codex")
+	sessions, err := database.ListSessions("", false, "codex")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -103,19 +103,19 @@ func performSearch(database *db.DB, query string, seq uint64) tea.Cmd {
 	}
 }
 
-func loadSessions(database *db.DB, filterByProject bool, projectPath string, generation uint64, restoreSelection bool) tea.Cmd {
+func loadSessions(database *db.DB, filterByProject bool, showHeadless bool, projectPath string, generation uint64, restoreSelection bool) tea.Cmd {
 	return func() tea.Msg {
-		return loadSessionsNow(database, filterByProject, projectPath, generation, restoreSelection)
+		return loadSessionsNow(database, filterByProject, showHeadless, projectPath, generation, restoreSelection)
 	}
 }
 
-func loadSessionsNow(database *db.DB, filterByProject bool, projectPath string, generation uint64, restoreSelection bool) tea.Msg {
+func loadSessionsNow(database *db.DB, filterByProject bool, showHeadless bool, projectPath string, generation uint64, restoreSelection bool) tea.Msg {
 	filterPath := ""
 	if filterByProject {
 		filterPath = projectPath
 	}
 
-	coreSessions, err := database.ListSessions(filterPath)
+	coreSessions, err := database.ListSessions(filterPath, !showHeadless)
 	if err != nil {
 		return sessionsLoadFailedMsg{err: err, generation: generation}
 	}
