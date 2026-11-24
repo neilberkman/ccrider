@@ -1,6 +1,9 @@
 package ccsessions
 
 import (
+	"context"
+	"errors"
+	"io/fs"
 	"testing"
 )
 
@@ -94,5 +97,52 @@ func TestParseFile_NoSummary(t *testing.T) {
 	// Check message count
 	if len(session.Messages) != 2 {
 		t.Errorf("Message count = %v, want 2", len(session.Messages))
+	}
+}
+
+func TestParseFile_Entrypoint(t *testing.T) {
+	session, err := ParseFile("testdata/headless-session.jsonl")
+	if err != nil {
+		t.Fatalf("ParseFile() error = %v", err)
+	}
+	// The first record (a queue operation) names no entrypoint; the first
+	// record that does decides it.
+	if session.Entrypoint != "sdk-cli" {
+		t.Errorf("Entrypoint = %q, want %q", session.Entrypoint, "sdk-cli")
+	}
+}
+
+func TestParseFile_NoEntrypoint(t *testing.T) {
+	session, err := ParseFile("testdata/no-summary.jsonl")
+	if err != nil {
+		t.Fatalf("ParseFile() error = %v", err)
+	}
+	if session.Entrypoint != "" {
+		t.Errorf("Entrypoint = %q, want empty for a transcript that names none", session.Entrypoint)
+	}
+}
+
+func TestReadEntrypoint(t *testing.T) {
+	tests := []struct {
+		path string
+		want string
+	}{
+		{"testdata/headless-session.jsonl", "sdk-cli"},
+		{"testdata/no-summary.jsonl", ""},
+	}
+	for _, tt := range tests {
+		got, err := ReadEntrypoint(context.Background(), tt.path)
+		if err != nil {
+			t.Fatalf("ReadEntrypoint(%s) error = %v", tt.path, err)
+		}
+		if got != tt.want {
+			t.Errorf("ReadEntrypoint(%s) = %q, want %q", tt.path, got, tt.want)
+		}
+	}
+}
+
+func TestReadEntrypoint_MissingFile(t *testing.T) {
+	if _, err := ReadEntrypoint(context.Background(), "testdata/does-not-exist.jsonl"); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("ReadEntrypoint(missing) error = %v, want fs.ErrNotExist", err)
 	}
 }
