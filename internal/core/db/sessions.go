@@ -93,9 +93,6 @@ type Session struct {
 // record "sdk-ts" and "sdk-py") rather than by a person.
 const HeadlessEntrypointPattern = "sdk-%"
 
-// ListSessions returns all sessions, optionally filtered by project path and provider.
-// hideHeadless leaves out sessions started programmatically rather than by a
-// person. Sessions with no meaningful content (warmup-only, etc) are excluded.
 // SummaryExpr computes a session's display summary with fallbacks: the LLM
 // one-line summary, then the stored llm_summary, then — when the recorded
 // summary is a placeholder — the first meaningful user message. It requires
@@ -147,6 +144,10 @@ type ListSessionsOptions struct {
 	HideHeadless bool   // exclude headless runs (claude -p, Agent SDK)
 }
 
+// ListSessions returns all sessions, optionally filtered by project path,
+// provider and whether they were started by a person (see
+// ListSessionsOptions). Sessions with no meaningful content (warmup-only,
+// etc) are excluded.
 func (db *DB) ListSessions(opts ListSessionsOptions) ([]Session, error) {
 	query := `
 		SELECT
