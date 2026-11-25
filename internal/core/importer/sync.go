@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -466,7 +467,9 @@ func (i *Importer) backfillColumnBatch(ctx context.Context, column string, read 
 		}
 		value := ""
 		if path, ok := paths[id]; ok {
-			if value, err = read(path); err != nil {
+			if value, err = read(path); errors.Is(err, fs.ErrNotExist) {
+				value = "" // listed but unopenable, e.g. a dangling symlink
+			} else if err != nil {
 				*readErrs = append(*readErrs, fmt.Errorf("read %s for %s: %w", column, id, err))
 				continue
 			}

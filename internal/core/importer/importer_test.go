@@ -1877,10 +1877,15 @@ func TestBackfillEntrypoint(t *testing.T) {
 		"headless":    "headless-session.jsonl",
 		"unannounced": "no-summary.jsonl",
 	})
+	// Listed by the walk but unopenable: its target has been deleted.
+	if err := os.Symlink(filepath.Join(dir, "deleted-target.jsonl"), filepath.Join(dir, "dangling.jsonl")); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := database.Exec(`
 		INSERT INTO sessions (session_id, project_path, provider, entrypoint) VALUES
 			('headless', '/p', 'claude', NULL),
 			('unannounced', '/p', 'claude', NULL),
+			('dangling', '/p', 'claude', NULL),
 			('gone', '/p', 'claude', NULL),
 			('recorded', '/p', 'claude', 'cli'),
 			('other-provider', '/p', 'codex', NULL)
@@ -1896,6 +1901,7 @@ func TestBackfillEntrypoint(t *testing.T) {
 	want := map[string]sql.NullString{
 		"headless":       {String: "sdk-cli", Valid: true},
 		"unannounced":    {String: "", Valid: true},
+		"dangling":       {String: "", Valid: true},
 		"gone":           {String: "", Valid: true},
 		"recorded":       {String: "cli", Valid: true},
 		"other-provider": {},
