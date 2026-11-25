@@ -293,3 +293,33 @@ func TestHeadlessSessionsHiddenUntilToggled(t *testing.T) {
 		t.Errorf("load after pressing a twice = %v, want [interactive]", got)
 	}
 }
+
+func TestListViewShowsWhetherHeadlessSessionsAreHidden(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "headless-view.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	model := NewWithContext(context.Background(), database)
+	defer model.Close()
+	model.initialLoad = false
+	model.syncing = false
+
+	for _, tc := range []struct {
+		showHeadless bool
+		footer       string
+		empty        string
+	}{
+		{false, "a show headless", "No sessions found. Headless sessions are hidden: press 'a' to show them, or 's' to sync."},
+		{true, "a hide headless", "No sessions found. Press 's' to sync."},
+	} {
+		model.showHeadless = tc.showHeadless
+		view := model.viewList()
+		if !strings.Contains(view, tc.footer) {
+			t.Errorf("showHeadless=%v: view = %q, want footer containing %q", tc.showHeadless, view, tc.footer)
+		}
+		if !strings.HasPrefix(view, tc.empty) {
+			t.Errorf("showHeadless=%v: view = %q, want empty state %q", tc.showHeadless, view, tc.empty)
+		}
+	}
+}

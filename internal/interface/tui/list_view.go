@@ -233,12 +233,19 @@ func (m Model) viewList() string {
 	} else if m.syncing {
 		helpText = "⏳ Syncing..."
 	} else {
-		helpText = "↑/k up • ↓/j down • / filter • a headless • e export • q quit • ? more"
+		headlessKey := "a show headless"
+		if m.showHeadless {
+			headlessKey = "a hide headless"
+		}
+		helpText = "↑/k up • ↓/j down • / filter • " + headlessKey + " • e export • q quit • ? more"
 	}
 
 	if len(m.sessions) == 0 {
 		if m.initialLoad {
 			return "Loading sessions...\n\n" + helpText
+		}
+		if !m.showHeadless {
+			return "No sessions found. Headless sessions are hidden: press 'a' to show them, or 's' to sync.\n\n" + helpText
 		}
 		return "No sessions found. Press 's' to sync.\n\n" + helpText
 	}
