@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.16.0] - 2026-11-25
+
+### Added
+
+- **The TUI hides headless sessions** ([#47](https://github.com/neilberkman/ccrider/pull/47)) — sessions started by `claude -p` or the Agent SDKs no longer fill the session list. On a machine that runs scripts or cron jobs through `claude -p`, they can make up most of it. Press `a` to show or hide them; the footer shows which. Claude Code records how each session was started (an `entrypoint` of `sdk-cli`, `sdk-ts` or `sdk-py` for headless runs), and ccrider now stores it. The first sync after upgrading reads it from the start of each existing transcript, so sessions whose transcripts have been deleted stay visible. `ccrider list`, search and the MCP server still return every session. Thanks to @penguinboi
+
 ## [1.15.3] - 2026-11-22
 
 ### Fixed
