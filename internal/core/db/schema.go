@@ -53,6 +53,8 @@ func (db *DB) initSchema() error {
 
 	CREATE INDEX IF NOT EXISTS idx_messages_uuid ON messages(uuid);
 	CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id);
+	-- Reads a session's messages in order, e.g. its first prompt for a summary
+	CREATE INDEX IF NOT EXISTS idx_messages_session_sequence ON messages(session_id, sequence);
 	CREATE INDEX IF NOT EXISTS idx_messages_parent_uuid ON messages(parent_uuid);
 	CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
 

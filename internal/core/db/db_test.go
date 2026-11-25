@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -481,5 +482,46 @@ func TestMigration010AddsEntrypointColumn(t *testing.T) {
 	// File tracking is untouched: unchanged files are not re-parsed.
 	if hash != "h1" || size != 10 {
 		t.Errorf("file_hash/file_size = %q/%d, want h1/10", hash, size)
+	}
+}
+
+func TestSummaryLookupUsesSessionSequenceIndex(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "existing.db")
+	database, err := New(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a database created before the index existed.
+	if _, err := database.conn.Exec(`DROP INDEX IF EXISTS idx_messages_session_sequence`); err != nil {
+		t.Fatal(err)
+	}
+	_ = database.Close()
+
+	database, err = New(path)
+	if err != nil {
+		t.Fatalf("reopen error = %v", err)
+	}
+	defer func() { _ = database.Close() }()
+
+	rows, err := database.conn.Query(`EXPLAIN QUERY PLAN SELECT ` + SummaryExpr + `
+		FROM sessions s LEFT JOIN session_summaries ss ON s.id = ss.session_id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = rows.Close() }()
+	var plan []string
+	for rows.Next() {
+		var id, parent, notUsed int
+		var detail string
+		if err := rows.Scan(&id, &parent, &notUsed, &detail); err != nil {
+			t.Fatal(err)
+		}
+		plan = append(plan, detail)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(plan, "\n"), "idx_messages_session_sequence") {
+		t.Errorf("summary lookup plan does not use idx_messages_session_sequence:\n%s", strings.Join(plan, "\n"))
 	}
 }
