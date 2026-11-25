@@ -1,11 +1,11 @@
 package watch
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"slices"
 	"strconv"
@@ -35,10 +35,6 @@ const MaxPhraseRunes = 200
 // codexRelocateInterval is how often a Codex watch checks whether another
 // rollout of the thread has become active.
 const codexRelocateInterval = 5 * time.Second
-
-// entrypointScanBytes bounds the search for a Claude Code record that names
-// the session's entrypoint.
-const entrypointScanBytes = 4 << 20
 
 func validatePhrase(p string) error {
 	if p == "" {
@@ -98,7 +94,11 @@ func (w *Watcher) armTranscript(ctx context.Context, spec Spec, conds []string) 
 		return Result{}, err
 	}
 	if t.provider == providerClaude && slices.Contains(conds, CondTurnEnd) {
-		ep, err := claudeEntrypoint(ctx, src.path)
+		ep, err := ccsessions.ReadEntrypoint(ctx, src.path)
+		var pathErr *fs.PathError
+		if errors.As(err, &pathErr) {
+			return Result{}, newError(CodeNotFound, err.Error())
+		}
 		if err != nil {
 			return Result{}, err
 		}
@@ -143,31 +143,6 @@ func (c *cursor) setBoundary(b boundary) {
 
 func (c cursor) boundary() boundary {
 	return boundary{Offset: c.Offset, Tail: c.Tail, TailLen: c.TailLen, State: *c.State}
-}
-
-// claudeEntrypoint returns the entrypoint named by the first record that has
-// one, reading at most entrypointScanBytes.
-func claudeEntrypoint(ctx context.Context, path string) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", newError(CodeNotFound, err.Error())
-	}
-	defer func() { _ = f.Close() }()
-	r := bufio.NewReader(io.NewSectionReader(f, 0, entrypointScanBytes))
-	for {
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-		line, err := r.ReadBytes('\n')
-		if len(line) > 0 && line[len(line)-1] == '\n' {
-			if ep := ccsessions.ClaudeEntrypoint(line); ep != "" {
-				return ep, nil
-			}
-		}
-		if err != nil {
-			return "", nil
-		}
-	}
 }
 
 // snapshotAttempts bounds how many times snapshot rescans a file that keeps

@@ -41,7 +41,10 @@ type Model struct {
 
 	// Project filter state
 	projectFilterEnabled bool
-	currentDirectory     string
+	// showHeadless lists sessions started programmatically (`claude -p`),
+	// which are hidden by default.
+	showHeadless     bool
+	currentDirectory string
 
 	// Search state
 	searchInput       textinput.Model
@@ -220,7 +223,7 @@ func (m Model) Init() tea.Cmd {
 	}
 
 	return tea.Batch(
-		loadSessions(m.db, m.projectFilterEnabled, m.currentDirectory, m.sessionsLoadGeneration, false),
+		loadSessions(m.db, m.projectFilterEnabled, m.showHeadless, m.currentDirectory, m.sessionsLoadGeneration, false),
 		syncSessions(m.syncManager, m.db),
 	)
 }
@@ -381,7 +384,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(msg.warnings) > 0 {
 			m.statusMsg = "Sync completed with warnings:\n\n- " + strings.Join(msg.warnings, "\n- ")
 		}
-		return m, loadSessions(m.db, m.projectFilterEnabled, m.currentDirectory, m.sessionsLoadGeneration, true)
+		return m, loadSessions(m.db, m.projectFilterEnabled, m.showHeadless, m.currentDirectory, m.sessionsLoadGeneration, true)
 
 	case sessionDetailLoadedMsg:
 		m.currentSession = &msg.detail

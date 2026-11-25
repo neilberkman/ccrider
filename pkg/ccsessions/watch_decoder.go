@@ -1,8 +1,12 @@
 package ccsessions
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -72,6 +76,36 @@ func ClaudeEntrypoint(record []byte) string {
 		return ""
 	}
 	return r.Entrypoint
+}
+
+// entrypointScanBytes bounds the search for a record that names the
+// session's entrypoint.
+const entrypointScanBytes = 4 << 20
+
+// ReadEntrypoint returns the entrypoint named by the first record in the
+// transcript at path that has one, reading at most entrypointScanBytes. It
+// returns "" when no record in that range names one.
+func ReadEntrypoint(ctx context.Context, path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = f.Close() }()
+	r := bufio.NewReader(io.NewSectionReader(f, 0, entrypointScanBytes))
+	for {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		line, err := r.ReadBytes('\n')
+		if len(line) > 0 && line[len(line)-1] == '\n' {
+			if ep := ClaudeEntrypoint(line); ep != "" {
+				return ep, nil
+			}
+		}
+		if err != nil {
+			return "", nil
+		}
+	}
 }
 
 func (d *ClaudeDecoder) Decode(record []byte) ([]sessionevents.Event, error) {

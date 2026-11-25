@@ -1,6 +1,7 @@
 package db
 
 import (
+	"database/sql"
 	"errors"
 	"os"
 	"testing"
@@ -171,5 +172,70 @@ func TestGetSessionLaunchInfoResolvesBareUUID(t *testing.T) {
 	}
 	if info.SessionID != codexFull {
 		t.Errorf("SessionID = %q, want %q", info.SessionID, codexFull)
+	}
+}
+
+func TestListSessionsHideHeadless(t *testing.T) {
+	database := newSessionTestDB(t)
+	seed := []struct {
+		sessionID  string
+		entrypoint sql.NullString
+	}{
+		{"interactive", sql.NullString{String: "cli", Valid: true}},
+		{"headless-cli", sql.NullString{String: "sdk-cli", Valid: true}},
+		{"headless-ts", sql.NullString{String: "sdk-ts", Valid: true}},
+		{"unrecorded", sql.NullString{}},
+		{"unknown", sql.NullString{String: "", Valid: true}},
+	}
+	for _, s := range seed {
+		res, err := database.Exec(`
+			INSERT INTO sessions (session_id, project_path, summary, provider, entrypoint, created_at, updated_at)
+			VALUES (?, '/test/project', 'Test session', 'claude', ?, datetime('now'), datetime('now'))
+		`, s.sessionID, s.entrypoint)
+		if err != nil {
+			t.Fatalf("failed to insert session %s: %v", s.sessionID, err)
+		}
+		rowID, err := res.LastInsertId()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := database.Exec(`
+			INSERT INTO messages (uuid, session_id, type, sender, text_content, timestamp, sequence)
+			VALUES (?, ?, 'user', 'user', 'hello', datetime('now'), 1)
+		`, s.sessionID+"-msg", rowID); err != nil {
+			t.Fatalf("failed to insert message: %v", err)
+		}
+	}
+
+	ids := func(hideHeadless bool) map[string]bool {
+		t.Helper()
+		sessions, err := database.ListSessions(ListSessionsOptions{HideHeadless: hideHeadless})
+		if err != nil {
+			t.Fatalf("ListSessions(hideHeadless=%v) error = %v", hideHeadless, err)
+		}
+		got := make(map[string]bool)
+		for _, s := range sessions {
+			got[s.SessionID] = true
+		}
+		return got
+	}
+
+	shown := ids(true)
+	for _, id := range []string{"interactive", "unrecorded", "unknown", "8650b828-b3a9-4db4-81c0-64d0fee6dd70"} {
+		if !shown[id] {
+			t.Errorf("hideHeadless=true hid %s, want it shown", id)
+		}
+	}
+	for _, id := range []string{"headless-cli", "headless-ts"} {
+		if shown[id] {
+			t.Errorf("hideHeadless=true showed %s, want it hidden", id)
+		}
+	}
+
+	all := ids(false)
+	for _, s := range seed {
+		if !all[s.sessionID] {
+			t.Errorf("hideHeadless=false hid %s, want every session shown", s.sessionID)
+		}
 	}
 }

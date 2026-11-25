@@ -29,6 +29,7 @@ SESSION LIST VIEW
   E            Export session (blank path, type your own)
   o            Open session in new terminal tab
   /            Search messages
+  a            Show/hide headless sessions (claude -p, SDK)
   ?            Show this help
   q            Quit
 

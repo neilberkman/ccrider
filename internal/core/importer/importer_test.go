@@ -1729,7 +1729,7 @@ func TestImportSession_CodexSubAgentResumesThroughRoot(t *testing.T) {
 	if detail.ResumeVia != root {
 		t.Errorf("GetSessionDetail ResumeVia = %q, want %q", detail.ResumeVia, root)
 	}
-	sessions, err := database.ListSessions("", "codex")
+	sessions, err := database.ListSessions(db.ListSessionsOptions{Provider: "codex"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1813,4 +1813,159 @@ func TestBackfillResumeVia(t *testing.T) {
 	if err := New(database).BackfillResumeVia(context.Background(), src); err != nil {
 		t.Fatalf("BackfillResumeVia() with nothing pending error = %v", err)
 	}
+}
+
+// writeClaudeFixtures copies ccsessions fixtures into a fresh directory as
+// <name>.jsonl and returns the directory.
+func writeClaudeFixtures(t *testing.T, fixtures map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for name, fixture := range fixtures {
+		data, err := os.ReadFile("../../../pkg/ccsessions/testdata/" + fixture)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name+".jsonl"), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
+func entrypointOf(t *testing.T, database *db.DB, sessionID string) sql.NullString {
+	t.Helper()
+	var got sql.NullString
+	if err := database.QueryRow(`SELECT entrypoint FROM sessions WHERE session_id = ?`, sessionID).Scan(&got); err != nil {
+		t.Fatalf("entrypoint of %s: %v", sessionID, err)
+	}
+	return got
+}
+
+func TestImportRecordsEntrypoint(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "entrypoint.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	dir := writeClaudeFixtures(t, map[string]string{
+		"headless":    "headless-session.jsonl",
+		"unannounced": "no-summary.jsonl",
+	})
+
+	if _, err := New(database).ImportDirectory(context.Background(), dir, nil, false, true, ccsessions.ParseFile, "claude"); err != nil {
+		t.Fatalf("ImportDirectory() error = %v", err)
+	}
+
+	want := map[string]sql.NullString{
+		"headless":    {String: "sdk-cli", Valid: true},
+		"unannounced": {String: "", Valid: true},
+	}
+	for id, w := range want {
+		if got := entrypointOf(t, database, id); got != w {
+			t.Errorf("%s entrypoint = %+v, want %+v", id, got, w)
+		}
+	}
+}
+
+func TestBackfillEntrypoint(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "backfill.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	dir := writeClaudeFixtures(t, map[string]string{
+		"headless":    "headless-session.jsonl",
+		"unannounced": "no-summary.jsonl",
+	})
+	// Listed by the walk but unopenable: its target has been deleted.
+	if err := os.Symlink(filepath.Join(dir, "deleted-target.jsonl"), filepath.Join(dir, "dangling.jsonl")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`
+		INSERT INTO sessions (session_id, project_path, provider, entrypoint) VALUES
+			('headless', '/p', 'claude', NULL),
+			('unannounced', '/p', 'claude', NULL),
+			('dangling', '/p', 'claude', NULL),
+			('gone', '/p', 'claude', NULL),
+			('recorded', '/p', 'claude', 'cli'),
+			('other-provider', '/p', 'codex', NULL)
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	src := Source{Path: dir, Provider: "claude", SkipSubagents: true, EntrypointFn: ccsessions.ReadEntrypoint}
+	if err := New(database).BackfillEntrypoint(context.Background(), src); err != nil {
+		t.Fatalf("BackfillEntrypoint() error = %v", err)
+	}
+
+	want := map[string]sql.NullString{
+		"headless":       {String: "sdk-cli", Valid: true},
+		"unannounced":    {String: "", Valid: true},
+		"dangling":       {String: "", Valid: true},
+		"gone":           {String: "", Valid: true},
+		"recorded":       {String: "cli", Valid: true},
+		"other-provider": {},
+	}
+	for id, w := range want {
+		if got := entrypointOf(t, database, id); got != w {
+			t.Errorf("%s entrypoint = %+v, want %+v", id, got, w)
+		}
+	}
+
+	// With nothing left to record, the source directory is not read: a
+	// missing path would fail the walk.
+	src.Path = filepath.Join(t.TempDir(), "missing")
+	if err := New(database).BackfillEntrypoint(context.Background(), src); err != nil {
+		t.Fatalf("BackfillEntrypoint() with nothing pending error = %v", err)
+	}
+}
+
+func TestSyncBackfillsEntrypointOfUnchangedSessions(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "sync.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	dir := writeClaudeFixtures(t, map[string]string{"headless": "headless-session.jsonl"})
+	src := Source{Path: dir, ParseFn: ccsessions.ParseFile, Provider: "claude", SkipSubagents: true, EntrypointFn: ccsessions.ReadEntrypoint}
+	imp := New(database)
+
+	sync := func() {
+		t.Helper()
+		prepared, err := imp.PrepareSource(context.Background(), src)
+		if err != nil {
+			t.Fatalf("PrepareSource() error = %v", err)
+		}
+		if _, err := prepared.Run(context.Background(), nil, false); err != nil {
+			t.Fatalf("Run() error = %v", err)
+		}
+	}
+	sync()
+	// Simulate a session imported before entrypoint was recorded. Its file
+	// is unchanged, so the next sync skips re-importing it.
+	if _, err := database.Exec(`UPDATE sessions SET entrypoint = NULL WHERE session_id = 'headless'`); err != nil {
+		t.Fatal(err)
+	}
+	sync()
+
+	if got := entrypointOf(t, database, "headless"); got != (sql.NullString{String: "sdk-cli", Valid: true}) {
+		t.Errorf("entrypoint after sync = %+v, want sdk-cli", got)
+	}
+}
+
+func TestDefaultSourcesClaudeReadsEntrypoint(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".claude", "projects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, src := range DefaultSources(false) {
+		if src.Provider == "claude" {
+			if src.EntrypointFn == nil {
+				t.Fatal("claude source has no EntrypointFn, so sync cannot backfill entrypoints")
+			}
+			return
+		}
+	}
+	t.Fatal("DefaultSources() has no claude source")
 }

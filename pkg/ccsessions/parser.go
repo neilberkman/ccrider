@@ -21,10 +21,14 @@ type ParsedSession struct {
 	ProjectPath string
 	Summary     string
 	LeafUUID    string
-	Messages    []ParsedMessage
-	FilePath    string
-	FileSize    int64
-	FileMtime   time.Time
+	// Entrypoint is how the session was started, as named by its first
+	// record that names one ("cli" for interactive, "sdk-cli" for headless
+	// `claude -p` runs). Empty when no record names it.
+	Entrypoint string
+	Messages   []ParsedMessage
+	FilePath   string
+	FileSize   int64
+	FileMtime  time.Time
 }
 
 // ParsedMessage represents a parsed JSONL message entry
@@ -57,6 +61,7 @@ type rawEntry struct {
 	CWD         string          `json:"cwd,omitempty"`
 	GitBranch   string          `json:"gitBranch,omitempty"`
 	Version     string          `json:"version,omitempty"`
+	Entrypoint  string          `json:"entrypoint,omitempty"`
 }
 
 // ParseFile parses a Claude Code session JSONL file.
@@ -100,6 +105,10 @@ func ParseFile(path string) (session *ParsedSession, err error) {
 			// Skip corrupted lines (null bytes, truncated writes, etc.)
 			// rather than discarding the entire session
 			return nil
+		}
+
+		if session.Entrypoint == "" {
+			session.Entrypoint = raw.Entrypoint
 		}
 
 		// Handle summary if present (may not be first line, or may not exist)

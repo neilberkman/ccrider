@@ -88,8 +88,14 @@ type Session struct {
 	ResumeVia    string // Session to resume in place of this one; empty means itself
 }
 
+// headlessEntrypointPattern matches the entrypoints Claude Code records for
+// sessions started programmatically (`claude -p` records "sdk-cli"; the SDKs
+// record "sdk-ts" and "sdk-py") rather than by a person.
+const headlessEntrypointPattern = "sdk-%"
+
 // ListSessions returns all sessions, optionally filtered by project path and provider.
-// Sessions with no meaningful content (warmup-only, etc) are excluded.
+// hideHeadless leaves out sessions started programmatically rather than by a
+// person. Sessions with no meaningful content (warmup-only, etc) are excluded.
 // summaryExpr computes a session's display summary with fallbacks: the LLM
 // one-line summary, then the stored llm_summary, then — when the recorded
 // summary is a placeholder — the first meaningful user message. It requires
@@ -133,7 +139,15 @@ const summaryExpr = `COALESCE(
 	''
 )`
 
-func (db *DB) ListSessions(projectPath string, provider ...string) ([]Session, error) {
+// ListSessionsOptions narrows the sessions ListSessions returns. Zero
+// values apply no filter.
+type ListSessionsOptions struct {
+	ProjectPath  string // substring of the session's project path
+	Provider     string // exact provider name, e.g. "claude" or "codex"
+	HideHeadless bool   // exclude headless runs (claude -p, Agent SDK)
+}
+
+func (db *DB) ListSessions(opts ListSessionsOptions) ([]Session, error) {
 	query := `
 		SELECT
 			s.session_id,
@@ -177,13 +191,17 @@ func (db *DB) ListSessions(projectPath string, provider ...string) ([]Session, e
 		  )`
 
 	args := []interface{}{}
-	if projectPath != "" {
+	if opts.ProjectPath != "" {
 		query += " AND s.project_path LIKE ?"
-		args = append(args, "%"+projectPath+"%")
+		args = append(args, "%"+opts.ProjectPath+"%")
 	}
-	if len(provider) > 0 && provider[0] != "" {
+	if opts.Provider != "" {
 		query += " AND COALESCE(s.provider, 'claude') = ?"
-		args = append(args, provider[0])
+		args = append(args, opts.Provider)
+	}
+	if opts.HideHeadless {
+		query += " AND COALESCE(s.entrypoint, '') NOT LIKE ?"
+		args = append(args, headlessEntrypointPattern)
 	}
 
 	query += `
