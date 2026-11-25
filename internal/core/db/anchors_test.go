@@ -180,3 +180,47 @@ func TestSessionAnchorExplicitBindingAndValidation(t *testing.T) {
 		t.Fatalf("failed calls must not persist anchors: %+v, err = %v", anchors, err)
 	}
 }
+
+func TestPhraseWordsRedrawsHyphenatedWords(t *testing.T) {
+	draws := [][]string{
+		{"t-shirt", "alpha", "yo-yo", "beta"},
+		{"drop-down", "gamma"},
+		{"delta"},
+	}
+	var asked []int
+	generate := func(n int) ([]string, error) {
+		asked = append(asked, n)
+		next := draws[0]
+		draws = draws[1:]
+		return next, nil
+	}
+
+	words, err := phraseWords(4, generate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(words, ","); got != "alpha,beta,gamma,delta" {
+		t.Errorf("words = %s, want alpha,beta,gamma,delta", got)
+	}
+	// Each redraw asks only for the words still missing.
+	if len(asked) != 3 || asked[0] != 4 || asked[1] != 2 || asked[2] != 1 {
+		t.Errorf("generate asked for %v, want [4 2 1]", asked)
+	}
+
+	failing := func(int) ([]string, error) { return nil, errors.New("no entropy") }
+	if _, err := phraseWords(4, failing); err == nil {
+		t.Error("phraseWords returned no error when generate failed")
+	}
+}
+
+func TestRandomPhraseHasFourWords(t *testing.T) {
+	for range 2000 {
+		phrase, err := RandomPhrase()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if parts := strings.Split(phrase, "-"); len(parts) != 4 {
+			t.Fatalf("RandomPhrase() = %q, want four hyphen-separated words", phrase)
+		}
+	}
+}
