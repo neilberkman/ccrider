@@ -53,6 +53,9 @@ type SessionSearchResult struct {
 // Default sort order for search results (most recent first)
 const defaultOrderBy = "m.timestamp DESC"
 
+// hitsOrderBy is defaultOrderBy applied to the matched-message rows
+const hitsOrderBy = "hits.timestamp DESC"
+
 // Search performs a full-text search using the natural language FTS table
 // Results are ordered by timestamp (most recent first)
 func Search(database *db.DB, query string) ([]SearchResult, error) {
@@ -181,27 +184,46 @@ func search(database *db.DB, query string, ftsTable string, limit int) ([]Search
 	// Escape query for FTS5 - wraps each token in quotes to handle special characters
 	escapedQuery := escapeFTS5Query(query)
 
+	// Matches are found first and each session's summary is computed once:
+	// the summary fallback scans the session's messages, so computing it per
+	// matching message multiplies that scan by the session's match count.
 	sql := fmt.Sprintf(`
+		WITH hits AS (
+			SELECT
+				m.uuid,
+				m.session_id,
+				snippet(%s, -1, '', '', '...', 64) as snippet,
+				m.timestamp,
+				m.sequence
+			FROM %s
+			JOIN messages m ON %s.rowid = m.id
+			WHERE %s MATCH ?
+			ORDER BY %s
+			LIMIT ?
+		),
+		summaries AS MATERIALIZED (
+			SELECT s.id, %s as summary
+			FROM sessions s
+			LEFT JOIN session_summaries ss ON s.id = ss.session_id
+			WHERE s.id IN (SELECT session_id FROM hits)
+		)
 		SELECT
-			m.uuid,
+			hits.uuid,
 			s.session_id,
-			COALESCE(ss.one_line_summary, s.llm_summary, s.summary, ''),
-			snippet(%s, -1, '', '', '...', 64) as snippet,
-			m.timestamp,
+			summaries.summary,
+			hits.snippet,
+			hits.timestamp,
 			s.project_path,
 			COALESCE(s.cwd, s.project_path),
 			s.message_count,
-			m.sequence,
+			hits.sequence,
 			COALESCE(s.provider, 'claude'),
 			COALESCE(s.resume_via, '')
-		FROM %s
-		JOIN messages m ON %s.rowid = m.id
-		JOIN sessions s ON s.id = m.session_id
-		LEFT JOIN session_summaries ss ON s.id = ss.session_id
-		WHERE %s MATCH ?
+		FROM hits
+		JOIN sessions s ON s.id = hits.session_id
+		JOIN summaries ON summaries.id = s.id
 		ORDER BY %s
-		LIMIT ?
-	`, ftsTable, ftsTable, ftsTable, ftsTable, defaultOrderBy)
+	`, ftsTable, ftsTable, ftsTable, ftsTable, defaultOrderBy, db.SummaryExpr, hitsOrderBy)
 
 	rows, err := database.Query(sql, escapedQuery, limit)
 	if err != nil {
@@ -277,7 +299,7 @@ func filterOnlySessions(database *db.DB, filters SearchFilters) ([]SessionSearch
 	query := `
 		SELECT
 			s.session_id,
-			COALESCE(ss.one_line_summary, s.llm_summary, s.summary, ''),
+			` + db.SummaryExpr + `,
 			s.project_path,
 			COALESCE(s.cwd, s.project_path),
 			s.updated_at,

@@ -175,7 +175,7 @@ func (db *DB) ListSessionAnchors(ctx context.Context, filters SessionAnchorFilte
 }
 
 func (db *DB) sessionsForAnchor(ctx context.Context, a SessionAnchor, filters SessionAnchorFilters) ([]Session, error) {
-	query := `SELECT s.session_id, ` + summaryExpr + `, s.project_path,
+	query := `SELECT s.session_id, ` + SummaryExpr + `, s.project_path,
 		(SELECT COUNT(*) FROM messages WHERE session_id = s.id),
 		s.updated_at, s.created_at, COALESCE(s.provider, 'claude'), COALESCE(s.resume_via, '')
 		FROM sessions s LEFT JOIN session_summaries ss ON s.id = ss.session_id WHERE `
