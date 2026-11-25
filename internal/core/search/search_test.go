@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"testing"
 
 	"github.com/neilberkman/ccrider/internal/core/db"
@@ -477,5 +479,64 @@ func TestSearchSummaryFallsBackToFirstPrompt(t *testing.T) {
 	}
 	if len(filtered) != 1 || filtered[0].SessionSummary != want {
 		t.Errorf("filter-only summaries = %+v, want one session titled %q", filtered, want)
+	}
+}
+
+func TestSearchHideHeadless(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "headless.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	for _, s := range []struct{ id, entrypoint string }{
+		{"interactive", "cli"},
+		{"headless", "sdk-cli"},
+		{"unclassified", ""},
+	} {
+		res, err := database.Exec(`
+			INSERT INTO sessions (session_id, project_path, summary, entrypoint, created_at, updated_at)
+			VALUES (?, '/test/project', 'Deploy notes', ?, datetime('now'), datetime('now'))
+		`, s.id, s.entrypoint)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rowID, err := res.LastInsertId()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := database.Exec(`
+			INSERT INTO messages (uuid, session_id, type, text_content, timestamp, sequence)
+			VALUES (?, ?, 'user', 'check the deploy', datetime('now'), 1)
+		`, s.id+"-msg", rowID); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ids := func(filters SearchFilters) []string {
+		t.Helper()
+		results, err := SearchWithFilters(database, filters)
+		if err != nil {
+			t.Fatalf("SearchWithFilters(%+v) error = %v", filters, err)
+		}
+		var got []string
+		for _, r := range results {
+			got = append(got, r.SessionID)
+		}
+		sort.Strings(got)
+		return got
+	}
+	for _, tc := range []struct {
+		name    string
+		filters SearchFilters
+		want    []string
+	}{
+		{"text, headless shown", SearchFilters{Query: "deploy"}, []string{"headless", "interactive", "unclassified"}},
+		{"text, headless hidden", SearchFilters{Query: "deploy", HideHeadless: true}, []string{"interactive", "unclassified"}},
+		{"filter-only, headless shown", SearchFilters{ProjectPath: "/test"}, []string{"headless", "interactive", "unclassified"}},
+		{"filter-only, headless hidden", SearchFilters{ProjectPath: "/test", HideHeadless: true}, []string{"interactive", "unclassified"}},
+	} {
+		if got := ids(tc.filters); !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%s: sessions = %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }

@@ -88,10 +88,10 @@ type Session struct {
 	ResumeVia    string // Session to resume in place of this one; empty means itself
 }
 
-// headlessEntrypointPattern matches the entrypoints Claude Code records for
+// HeadlessEntrypointPattern matches the entrypoints Claude Code records for
 // sessions started programmatically (`claude -p` records "sdk-cli"; the SDKs
 // record "sdk-ts" and "sdk-py") rather than by a person.
-const headlessEntrypointPattern = "sdk-%"
+const HeadlessEntrypointPattern = "sdk-%"
 
 // ListSessions returns all sessions, optionally filtered by project path and provider.
 // hideHeadless leaves out sessions started programmatically rather than by a
@@ -201,7 +201,7 @@ func (db *DB) ListSessions(opts ListSessionsOptions) ([]Session, error) {
 	}
 	if opts.HideHeadless {
 		query += " AND COALESCE(s.entrypoint, '') NOT LIKE ?"
-		args = append(args, headlessEntrypointPattern)
+		args = append(args, HeadlessEntrypointPattern)
 	}
 
 	query += `
