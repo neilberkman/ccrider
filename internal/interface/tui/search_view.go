@@ -59,7 +59,7 @@ func (m Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.searchSelectedIdx = 0
 	m.searchViewOffset = 0 // Reset scroll on new search
 	m.searchSeq++          // Increment sequence to invalidate in-flight searches
-	return m, tea.Batch(cmd, performSearch(m.db, query, m.searchSeq))
+	return m, tea.Batch(cmd, performSearch(m.db, query, m.showHeadless, m.searchSeq))
 }
 
 func (m Model) viewSearch() string {
@@ -76,9 +76,17 @@ func (m Model) viewSearch() string {
 	if m.searchResults == nil {
 		b.WriteString(searchMetaStyle.Render("Type to search (minimum 2 characters)"))
 	} else if len(m.searchResults) == 0 {
-		b.WriteString(searchMetaStyle.Render("No results found"))
+		if m.showHeadless {
+			b.WriteString(searchMetaStyle.Render("No results found"))
+		} else {
+			b.WriteString(searchMetaStyle.Render("No results found. Headless sessions are hidden: press esc, then 'a' to show them."))
+		}
 	} else {
-		fmt.Fprintf(&b, searchMetaStyle.Render("Found %d sessions:"), len(m.searchResults))
+		hiddenNote := " (headless hidden)"
+		if m.showHeadless {
+			hiddenNote = ""
+		}
+		fmt.Fprintf(&b, searchMetaStyle.Render("Found %d sessions%s:"), len(m.searchResults), hiddenNote)
 		b.WriteString("\n\n")
 
 		// Calculate max results based on screen height
