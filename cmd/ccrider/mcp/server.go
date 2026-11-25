@@ -521,7 +521,7 @@ func makeListRecentSessionsHandler(database *db.DB, liveCache *liveness.Cache) f
 		}
 
 		// Use core function to get sessions
-		coreSessions, err := database.ListSessions(args.Project, false, args.Provider)
+		coreSessions, err := database.ListSessions(db.ListSessionsOptions{ProjectPath: args.Project, Provider: args.Provider})
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("query failed: %v", err)), nil
 		}

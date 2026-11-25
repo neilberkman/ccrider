@@ -115,7 +115,7 @@ func loadSessionsNow(database *db.DB, filterByProject bool, showHeadless bool, p
 		filterPath = projectPath
 	}
 
-	coreSessions, err := database.ListSessions(filterPath, !showHeadless)
+	coreSessions, err := database.ListSessions(db.ListSessionsOptions{ProjectPath: filterPath, HideHeadless: !showHeadless})
 	if err != nil {
 		return sessionsLoadFailedMsg{err: err, generation: generation}
 	}

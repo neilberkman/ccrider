@@ -209,7 +209,7 @@ func TestListSessionsHideHeadless(t *testing.T) {
 
 	ids := func(hideHeadless bool) map[string]bool {
 		t.Helper()
-		sessions, err := database.ListSessions("", hideHeadless)
+		sessions, err := database.ListSessions(ListSessionsOptions{HideHeadless: hideHeadless})
 		if err != nil {
 			t.Fatalf("ListSessions(hideHeadless=%v) error = %v", hideHeadless, err)
 		}

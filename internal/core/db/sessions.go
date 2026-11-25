@@ -139,7 +139,15 @@ const summaryExpr = `COALESCE(
 	''
 )`
 
-func (db *DB) ListSessions(projectPath string, hideHeadless bool, provider ...string) ([]Session, error) {
+// ListSessionsOptions narrows the sessions ListSessions returns. Zero
+// values apply no filter.
+type ListSessionsOptions struct {
+	ProjectPath  string // substring of the session's project path
+	Provider     string // exact provider name, e.g. "claude" or "codex"
+	HideHeadless bool   // exclude headless runs (claude -p, Agent SDK)
+}
+
+func (db *DB) ListSessions(opts ListSessionsOptions) ([]Session, error) {
 	query := `
 		SELECT
 			s.session_id,
@@ -183,15 +191,15 @@ func (db *DB) ListSessions(projectPath string, hideHeadless bool, provider ...st
 		  )`
 
 	args := []interface{}{}
-	if projectPath != "" {
+	if opts.ProjectPath != "" {
 		query += " AND s.project_path LIKE ?"
-		args = append(args, "%"+projectPath+"%")
+		args = append(args, "%"+opts.ProjectPath+"%")
 	}
-	if len(provider) > 0 && provider[0] != "" {
+	if opts.Provider != "" {
 		query += " AND COALESCE(s.provider, 'claude') = ?"
-		args = append(args, provider[0])
+		args = append(args, opts.Provider)
 	}
-	if hideHeadless {
+	if opts.HideHeadless {
 		query += " AND COALESCE(s.entrypoint, '') NOT LIKE ?"
 		args = append(args, headlessEntrypointPattern)
 	}
