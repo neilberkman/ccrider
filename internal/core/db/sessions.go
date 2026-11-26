@@ -96,11 +96,11 @@ const headlessEntrypointPattern = "sdk-%"
 // ListSessions returns all sessions, optionally filtered by project path and provider.
 // hideHeadless leaves out sessions started programmatically rather than by a
 // person. Sessions with no meaningful content (warmup-only, etc) are excluded.
-// summaryExpr computes a session's display summary with fallbacks: the LLM
+// SummaryExpr computes a session's display summary with fallbacks: the LLM
 // one-line summary, then the stored llm_summary, then — when the recorded
 // summary is a placeholder — the first meaningful user message. It requires
 // `sessions s LEFT JOIN session_summaries ss` aliases in the enclosing query.
-const summaryExpr = `COALESCE(
+const SummaryExpr = `COALESCE(
 	NULLIF(ss.one_line_summary, ''),
 	NULLIF(s.llm_summary, ''),
 	CASE
@@ -151,7 +151,7 @@ func (db *DB) ListSessions(opts ListSessionsOptions) ([]Session, error) {
 	query := `
 		SELECT
 			s.session_id,
-			` + summaryExpr + ` as summary,
+			` + SummaryExpr + ` as summary,
 			s.project_path,
 			COALESCE(
 				(SELECT cwd FROM messages
@@ -381,7 +381,7 @@ func (db *DB) SessionsForProjectPath(projectPath string, limit int) ([]Session, 
 	query := `
 		SELECT
 			s.session_id,
-			` + summaryExpr + ` as summary,
+			` + SummaryExpr + ` as summary,
 			s.project_path,
 			(SELECT COUNT(*) FROM messages WHERE session_id = s.id) as message_count,
 			s.updated_at,
@@ -423,7 +423,7 @@ func (db *DB) GetSessionOverview(sessionID string) (*Session, error) {
 	query := `
 		SELECT
 			s.session_id,
-			` + summaryExpr + ` as summary,
+			` + SummaryExpr + ` as summary,
 			s.project_path,
 			(SELECT COUNT(*) FROM messages WHERE session_id = s.id) as message_count,
 			s.updated_at,

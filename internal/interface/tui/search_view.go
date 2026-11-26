@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	coresession "github.com/neilberkman/ccrider/internal/core/session"
 )
 
 func (m Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -117,15 +118,6 @@ func (m Model) viewSearch() string {
 			result := m.searchResults[i]
 			isSelected := i == m.searchSelectedIdx
 
-			// Session header
-			summary := result.Summary
-			if summary == "" && len(result.Matches) > 0 {
-				summary = firstLine(result.Matches[0].Snippet, 60)
-			}
-			if summary == "" {
-				summary = "[No summary]"
-			}
-
 			// Calculate max summary length to fit on one line
 			// Format: "► summary (N matches) | time ago"
 			// Reserve: 4 for prefix, ~20 for match count, ~15 for time = ~40
@@ -133,8 +125,14 @@ func (m Model) viewSearch() string {
 			if maxSummaryLen < 30 {
 				maxSummaryLen = 30
 			}
-			if len(summary) > maxSummaryLen {
-				summary = summary[:maxSummaryLen-3] + "..."
+
+			// Session header (one rune of the budget is kept for the ellipsis)
+			summary := coresession.DisplaySummary(result.Summary, maxSummaryLen-1)
+			if summary == "" && len(result.Matches) > 0 {
+				summary = firstLine(result.Matches[0].Snippet, 60)
+			}
+			if summary == "" {
+				summary = "[No summary]"
 			}
 
 			// Add selection indicator

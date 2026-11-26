@@ -128,14 +128,9 @@ func loadSessionsNow(database *db.DB, filterByProject bool, showHeadless bool, p
 
 	var sessions []sessionItem
 	for _, cs := range coreSessions {
-		summary := cs.Summary
-		if summary != "" {
-			summary = firstLine(summary, 80)
-		}
-
 		s := sessionItem{
 			ID:           cs.SessionID,
-			Summary:      summary,
+			Summary:      coresession.DisplaySummary(cs.Summary, 80),
 			Project:      cs.ProjectPath,
 			LastCwd:      cs.LastCwd,
 			MessageCount: cs.MessageCount,

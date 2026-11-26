@@ -1,7 +1,9 @@
 package search
 
 import (
+	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/neilberkman/ccrider/internal/core/db"
@@ -418,4 +420,62 @@ func TestSearchOrdering(t *testing.T) {
 			// Note: This is a soft assertion as FTS5 ranking can be complex
 		}
 	})
+}
+
+func TestSearchSummaryFallsBackToFirstPrompt(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "summary.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+
+	res, err := database.Exec(`
+		INSERT INTO sessions (session_id, project_path, summary, created_at, updated_at)
+		VALUES ('untitled', '/test/project', '', datetime('now'), datetime('now'))
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rowID, err := res.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, text := range []string{
+		"Rename the export command",
+		"Done: the export command is renamed",
+		"Now check the export tests",
+	} {
+		msgType := "user"
+		if i == 1 {
+			msgType = "assistant"
+		}
+		if _, err := database.Exec(`
+			INSERT INTO messages (uuid, session_id, type, text_content, timestamp, sequence)
+			VALUES (?, ?, ?, ?, datetime('now'), ?)
+		`, fmt.Sprintf("msg-%d", i), rowID, msgType, text, i+1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const want = "Rename the export command"
+
+	results, err := Search(database, "export")
+	if err != nil {
+		t.Fatalf("Search() error = %v", err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("Search() returned %d results, want 3", len(results))
+	}
+	for _, r := range results {
+		if r.SessionSummary != want {
+			t.Errorf("Search() summary = %q, want %q", r.SessionSummary, want)
+		}
+	}
+
+	filtered, err := SearchWithFilters(database, SearchFilters{ProjectPath: "/test/project"})
+	if err != nil {
+		t.Fatalf("SearchWithFilters() error = %v", err)
+	}
+	if len(filtered) != 1 || filtered[0].SessionSummary != want {
+		t.Errorf("filter-only summaries = %+v, want one session titled %q", filtered, want)
+	}
 }

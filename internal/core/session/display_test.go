@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/neilberkman/ccrider/internal/core/config"
@@ -229,4 +230,31 @@ func TestDisplayResumeCommandFor(t *testing.T) {
 			t.Errorf("DisplayResumeCommandFor = %q, want %q", got, want)
 		}
 	})
+}
+
+func TestDisplaySummary(t *testing.T) {
+	tests := []struct {
+		name     string
+		summary  string
+		maxRunes int
+		want     string
+	}{
+		{"short summary unchanged", "Fix the login bug", 80, "Fix the login bug"},
+		{"whitespace only", "  \n\t  ", 20, ""},
+		{"multi-line prompt joins into one line", "\n\nhello\n  world\t!", 20, "hello world !"},
+		{"leading wrapper after blank lines", "\n\n<pasted_content id=\"1\">\nRefactor the parser\n", 80, "Refactor the parser"},
+		{"leading wrapper at the start", "<command-message>review the diff", 80, "review the diff"},
+		{"matching closing tag dropped", "<pasted_content>\nRefactor\n</pasted_content>\n", 80, "Refactor"},
+		{"wrapper with attributes", "<pasted_content id=\"1\">Refactor</pasted_content>", 80, "Refactor"},
+		{"capped with an ellipsis", "one two three four", 7, "one two…"},
+		// Multi-byte UTF-8 runes must truncate cleanly without splitting bytes.
+		{"caps runes, not bytes", strings.Repeat("é", 15), 10, strings.Repeat("é", 10) + "…"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := DisplaySummary(tt.summary, tt.maxRunes); got != tt.want {
+				t.Errorf("DisplaySummary(%q, %d) = %q, want %q", tt.summary, tt.maxRunes, got, tt.want)
+			}
+		})
+	}
 }
