@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.17.0] - 2026-11-25
+
+### Changed
+
+- **The MCP server syncs in the background** ([#52](https://github.com/neilberkman/ccrider/pull/52)) — tools no longer run a full sync of every provider before answering, which took 19–42 s per call and was repeated by every server. Each server syncs when it starts and every 30 seconds, without delaying `initialize`, and the servers on a machine share the work through a lease in the database: one syncs at a time, and a server skips its turn when another one synced within the last 30 seconds. A tool answers at once when the last sync started within 30 seconds, and otherwise waits up to 10 seconds before serving what is already imported. An `anchor_phrase` search that finds nothing still waits for a fresh sync, so a phrase said moments ago is found. In a test with five servers on a real database, `search_sessions` went from about 18 s to 0.3 s. Full syncs from `ccrider sync` and the TUI are recorded so servers don't repeat them, and a provider that fails no longer stops the rest of a background sync
+- **Antigravity is read only when its files change** ([#52](https://github.com/neilberkman/ccrider/pull/52)) — every sync parsed every Antigravity conversation. Sync now records a fingerprint of the files it reads (sizes and modification times) and skips Antigravity when none changed, and parsing checks each conversation's transcript path instead of walking every artifact under `brain/`. A `ccrider sync` with nothing new went from 4.9 s to 0.6 s on a store of 1,050 conversations. `ccrider sync --force` still reads everything
+
+### Fixed
+
+- **The CLI progress bar fits the terminal** ([#50](https://github.com/neilberkman/ccrider/pull/50)) — the bar line was about 139 columns wide, so on a narrower terminal every update left a row behind and the output read as a run-on stream. It is now sized to the terminal and follows resizes. The label shrinks first, multi-line labels stay on one line, and each redraw clears what a longer label left behind
+- **Antigravity project paths stay put** ([#53](https://github.com/neilberkman/ccrider/pull/53)) — Antigravity's workspace cache lists a conversation resumed from a second directory under both, and its project path (and resume command) changed between syncs depending on read order. It now resolves through Antigravity's per-conversation records, and falls back to a fixed choice when they name no workspace
+- **Random anchor phrases always have four words** ([#51](https://github.com/neilberkman/ccrider/pull/51)) — four diceware words contain a hyphen (`drop-down`, `felt-tip`, `t-shirt`, `yo-yo`), so about 0.2% of session anchors and minted phrases split into five parts. Those words are now redrawn
+
 ## [1.16.0] - 2026-11-25
 
 ### Added
