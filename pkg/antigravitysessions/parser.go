@@ -5,15 +5,20 @@
 package antigravitysessions
 
 import (
+	"crypto/sha256"
 	"database/sql"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/neilberkman/ccrider/pkg/ccsessions"
@@ -52,8 +57,16 @@ type historyEntry struct {
 }
 
 type workspaceIndex struct {
+	// byConversation maps each conversation that cache/last_conversations.json
+	// lists under exactly one workspace to that workspace.
 	byConversation map[string]string
-	history        []historyEntry
+	// ambiguous lists, sorted, the workspaces of each conversation that the
+	// cache lists under more than one. The cache records each workspace's
+	// latest conversation, so a conversation continued from a second
+	// directory appears under both, and it cannot say which one is the
+	// conversation's project.
+	ambiguous map[string][]string
+	history   []historyEntry
 	// summaries maps every conversation listed in conversation_summaries.db
 	// to its first workspace, "" when the app recorded none.
 	summaries map[string]string
@@ -95,23 +108,10 @@ func ParseAll(root string) ([]*ccsessions.ParsedSession, error) {
 	}
 
 	index := loadWorkspaceIndex(root)
-	var paths []string
-	err := filepath.Walk(brainRoot, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if info.IsDir() || filepath.Base(path) != "transcript.jsonl" {
-			return nil
-		}
-		if _, ok := conversationIDFromTranscript(path, brainRoot); ok {
-			paths = append(paths, path)
-		}
-		return nil
-	})
+	paths, err := transcriptPaths(brainRoot)
 	if err != nil {
-		return nil, fmt.Errorf("walk Antigravity transcripts: %w", err)
+		return nil, fmt.Errorf("list Antigravity transcripts: %w", err)
 	}
-	sort.Strings(paths)
 
 	sessions := make([]*ccsessions.ParsedSession, 0, len(paths))
 	for _, path := range paths {
@@ -124,6 +124,104 @@ func ParseAll(root string) ([]*ccsessions.ParsedSession, error) {
 		}
 	}
 	return sessions, nil
+}
+
+// transcriptPaths lists the canonical transcripts under brainRoot, sorted.
+// Antigravity writes each conversation's transcript at
+// <id>/.system_generated/logs/transcript.jsonl, next to tens of thousands of
+// other artifacts, so this checks that one path per conversation directory
+// instead of walking every file under brain.
+func transcriptPaths(brainRoot string) ([]string, error) {
+	entries, err := os.ReadDir(brainRoot)
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		path := filepath.Join(brainRoot, entry.Name(), ".system_generated", "logs", "transcript.jsonl")
+		info, err := os.Lstat(path)
+		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if !info.IsDir() {
+			paths = append(paths, path)
+		}
+	}
+	sort.Strings(paths)
+	return paths, nil
+}
+
+// parserVersion is part of every Fingerprint. Bump it whenever ParseAll can
+// return something different for the same files, so fingerprints recorded
+// by an older ccrider stop matching and the next sync reads everything.
+const parserVersion = "2"
+
+// Fingerprint returns a digest of the size and modification time of every
+// file ParseAll reads from root: the transcripts, the workspace index files
+// and the conversation databases, plus parserVersion. Any change that can
+// change ParseAll's result changes the digest, and computing it costs a stat
+// per file rather than a parse.
+func Fingerprint(root string) (string, error) {
+	h := sha256.New()
+	_, _ = fmt.Fprintf(h, "parser\x00%s\n", parserVersion)
+	add := func(path string) error {
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			rel = path
+		}
+		info, err := os.Stat(path)
+		if errors.Is(err, fs.ErrNotExist) {
+			_, _ = fmt.Fprintf(h, "%s\x00missing\n", filepath.ToSlash(rel))
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(h, "%s\x00%d\x00%d\n", filepath.ToSlash(rel), info.Size(), info.ModTime().UnixNano())
+		return nil
+	}
+
+	brainRoot := filepath.Join(root, "brain")
+	transcripts, err := transcriptPaths(brainRoot)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return "", err
+	}
+	for _, path := range transcripts {
+		if err := add(path); err != nil {
+			return "", err
+		}
+	}
+
+	for _, name := range []string{
+		filepath.Join("cache", "last_conversations.json"),
+		"history.jsonl",
+		"conversation_summaries.db",
+		"conversation_summaries.db-wal",
+	} {
+		if err := add(filepath.Join(root, name)); err != nil {
+			return "", err
+		}
+	}
+
+	conversationsDir := filepath.Join(root, "conversations")
+	entries, err := os.ReadDir(conversationsDir)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return "", err
+	}
+	for _, entry := range entries {
+		if name := entry.Name(); strings.HasSuffix(name, ".db") || strings.HasSuffix(name, ".db-wal") {
+			if err := add(filepath.Join(conversationsDir, name)); err != nil {
+				return "", err
+			}
+		}
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func parseFile(path, brainRoot string, index workspaceIndex) (*ccsessions.ParsedSession, error) {
@@ -254,6 +352,7 @@ func parseTime(value string, fallback time.Time) time.Time {
 func loadWorkspaceIndex(root string) workspaceIndex {
 	index := workspaceIndex{
 		byConversation:   make(map[string]string),
+		ambiguous:        make(map[string][]string),
 		summaries:        loadSummaryWorkspaces(filepath.Join(root, "conversation_summaries.db")),
 		conversationsDir: filepath.Join(root, "conversations"),
 	}
@@ -261,8 +360,17 @@ func loadWorkspaceIndex(root string) workspaceIndex {
 	if data, err := os.ReadFile(cachePath); err == nil {
 		var latest map[string]string
 		if json.Unmarshal(data, &latest) == nil {
+			workspaces := make(map[string][]string)
 			for workspace, conversationID := range latest {
-				index.byConversation[conversationID] = workspace
+				workspaces[conversationID] = append(workspaces[conversationID], workspace)
+			}
+			for conversationID, listed := range workspaces {
+				if len(listed) == 1 {
+					index.byConversation[conversationID] = listed[0]
+					continue
+				}
+				sort.Strings(listed)
+				index.ambiguous[conversationID] = listed
 			}
 		}
 	}
@@ -286,10 +394,27 @@ func loadWorkspaceIndex(root string) workspaceIndex {
 // index files come first. The IDE and the desktop app write neither of them,
 // so their conversations resolve through conversation_summaries.db (CLI and
 // desktop) or the conversation's own database (the only record the IDE keeps).
+// A conversation the cache lists under several workspaces resolves through
+// those records too, and only when none of them names a workspace does it
+// take the first of the cache's candidates, so the result does not depend on
+// the order the cache is read in.
 func (index workspaceIndex) workspaceFor(conversationID, firstUserText string, firstUserTime time.Time) string {
 	if workspace := index.byConversation[conversationID]; workspace != "" {
 		return workspace
 	}
+	if workspace := index.recordedWorkspace(conversationID, firstUserText, firstUserTime); workspace != "" {
+		return workspace
+	}
+	if candidates := index.ambiguous[conversationID]; len(candidates) > 0 {
+		return candidates[0]
+	}
+	return ""
+}
+
+// recordedWorkspace looks a conversation up in the records kept per
+// conversation: history.jsonl, conversation_summaries.db and the
+// conversation's own database, in that order.
+func (index workspaceIndex) recordedWorkspace(conversationID, firstUserText string, firstUserTime time.Time) string {
 	if !firstUserTime.IsZero() && firstUserText != "" {
 		for _, entry := range index.history {
 			if entry.Timestamp == firstUserTime.UnixMilli() && strings.TrimSpace(entry.Display) == firstUserText {

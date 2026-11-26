@@ -110,9 +110,28 @@ func anchorLabelPrefix(label string) (string, error) {
 // unlabeled session anchors.
 func RandomPhrase() (string, error) { return generateAnchorPhrase("") }
 
+// phraseWords draws n words with generate, redrawing the few diceware words
+// that contain a hyphen themselves (drop-down, felt-tip, t-shirt, yo-yo), so a
+// phrase joined with hyphens always splits back into exactly n words.
+func phraseWords(n int, generate func(int) ([]string, error)) ([]string, error) {
+	words := make([]string, 0, n)
+	for len(words) < n {
+		drawn, err := generate(n - len(words))
+		if err != nil {
+			return nil, err
+		}
+		for _, word := range drawn {
+			if !strings.Contains(word, "-") {
+				words = append(words, word)
+			}
+		}
+	}
+	return words, nil
+}
+
 func generateAnchorPhrase(prefix string) (string, error) {
 	if prefix == "" {
-		words, err := diceware.Generate(4)
+		words, err := phraseWords(4, diceware.Generate)
 		if err != nil {
 			return "", err
 		}

@@ -3,8 +3,22 @@ package importer
 import (
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
+
+	"github.com/charmbracelet/x/term"
+	"github.com/mattn/go-runewidth"
+)
+
+const (
+	// maxBarWidth is the bar's width on a terminal wide enough for it.
+	maxBarWidth = 50
+	// minBarWidth is the narrowest bar drawn; a terminal with no room for it
+	// shows only the status.
+	minBarWidth = 10
+	// fallbackTermWidth is used when the terminal's width cannot be read.
+	fallbackTermWidth = 80
 )
 
 // ProgressCallback defines the interface for progress reporting
@@ -27,6 +41,9 @@ type ProgressReporter struct {
 	lastMsg     string
 	interactive bool
 	lastDecile  int
+	// termWidth reports the terminal's current width in columns. It is read
+	// on every redraw so a resized window is followed.
+	termWidth func() int
 }
 
 // NewProgressReporter creates a new progress reporter. When interactive is
@@ -39,6 +56,22 @@ func NewProgressReporter(w io.Writer, total int, interactive bool) *ProgressRepo
 		current:     0,
 		startTime:   time.Now(),
 		interactive: interactive,
+		termWidth:   terminalWidth(w),
+	}
+}
+
+// terminalWidth returns a function reporting w's width in columns, or
+// fallbackTermWidth when w is not a terminal or its size cannot be read.
+func terminalWidth(w io.Writer) func() int {
+	f, ok := w.(*os.File)
+	if !ok || !term.IsTerminal(f.Fd()) {
+		return func() int { return fallbackTermWidth }
+	}
+	return func() int {
+		if width, _, err := term.GetSize(f.Fd()); err == nil && width > 0 {
+			return width
+		}
+		return fallbackTermWidth
 	}
 }
 
@@ -71,28 +104,44 @@ func (p *ProgressReporter) render(sessionSummary string) {
 		return
 	}
 
-	// Draw progress bar (50 chars wide)
-	barWidth := 50
-	filled := int(float64(barWidth) * float64(p.current) / float64(p.total))
-	bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
-
-	// Truncate display text to fit terminal
-	displayText := sessionSummary
-	if len(displayText) > 60 {
-		displayText = displayText[:57] + "..."
-	}
-
 	// Calculate ETA
 	elapsed := time.Since(p.startTime)
 	rate := float64(p.current) / elapsed.Seconds()
 	remaining := float64(p.total-p.current) / rate
 	eta := time.Duration(remaining) * time.Second
 
-	// Print progress
-	_, _ = fmt.Fprintf(p.writer, "\r[%s] %3.0f%% (%d/%d) ETA: %s | %s",
-		bar, pct, p.current, p.total, eta.Round(time.Second), displayText)
+	status := fmt.Sprintf(" %3.0f%% (%d/%d) ETA: %s", pct, p.current, p.total, eta.Round(time.Second))
+	label := strings.Join(strings.Fields(sessionSummary), " ")
+	line := progressLine(p.termWidth(), float64(p.current)/float64(p.total), status, label)
 
-	p.lastMsg = displayText
+	// \r returns to the start of the row and \x1b[K clears what a longer
+	// previous line left behind. The line never reaches the last column: a
+	// line that wraps leaves its first row behind on every redraw.
+	_, _ = fmt.Fprintf(p.writer, "\r%s\x1b[K", line)
+
+	p.lastMsg = label
+}
+
+// progressLine lays out "[bar] status | label" in fewer than width columns.
+// The bar narrows to make room for the status, and the label takes whatever
+// is left; on a terminal too narrow for both, the label is dropped and then
+// the bar.
+func progressLine(width int, fraction float64, status, label string) string {
+	avail := width - 1
+	statusWidth := runewidth.StringWidth(status)
+
+	barWidth := min(maxBarWidth, avail-statusWidth-2)
+	if barWidth < minBarWidth {
+		return runewidth.Truncate(strings.TrimSpace(status), max(avail, 0), "")
+	}
+	filled := min(barWidth, max(0, int(float64(barWidth)*fraction)))
+	line := "[" + strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled) + "]" + status
+
+	const sep = " | "
+	if room := avail - runewidth.StringWidth(line) - len(sep); label != "" && room >= 4 {
+		line += sep + runewidth.Truncate(label, room, "…")
+	}
+	return line
 }
 
 // Finish completes the progress display

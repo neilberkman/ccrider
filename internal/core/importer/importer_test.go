@@ -46,7 +46,7 @@ func TestPrepareSourceOptionalEnumerateErrorSkips(t *testing.T) {
 		EnumerateFn: func() ([]*ccsessions.ParsedSession, error) {
 			return nil, boom
 		},
-	})
+	}, false)
 	if err != nil {
 		t.Fatalf("PrepareSource() error = %v, want nil", err)
 	}
@@ -59,7 +59,7 @@ func TestPrepareSourceOptionalEnumerateErrorSkips(t *testing.T) {
 	if prepared.Total != 0 {
 		t.Fatalf("Total = %d, want 0", prepared.Total)
 	}
-	if result, err := prepared.Run(context.Background(), nil, false); err != nil || result.Skipped != 0 {
+	if result, err := prepared.Run(context.Background(), nil); err != nil || result.Skipped != 0 {
 		t.Fatalf("Run() = (%+v, %v), want no skipped sessions", result, err)
 	}
 }
@@ -74,7 +74,7 @@ func TestPrepareSourceEnumerateErrorFatalByDefault(t *testing.T) {
 		EnumerateFn: func() ([]*ccsessions.ParsedSession, error) {
 			return nil, boom
 		},
-	})
+	}, false)
 	if !errors.Is(err, boom) {
 		t.Fatalf("PrepareSource() error = %v, want %v", err, boom)
 	}
@@ -92,7 +92,7 @@ func TestPrepareSourceDoesNotSwallowCancellationForOptionalSource(t *testing.T) 
 			cancel()
 			return nil, errors.New("enumeration interrupted")
 		},
-	})
+	}, false)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("PrepareSource() error = %v, want context cancellation", err)
 	}
@@ -108,14 +108,14 @@ func TestPrepareSourceOptionalRemoteErrorSkips(t *testing.T) {
 		Remote: &RemoteSource{
 			List: func(context.Context) ([]RemoteSessionRef, error) { return nil, boom },
 		},
-	})
+	}, false)
 	if err != nil {
 		t.Fatalf("PrepareSource() error = %v, want nil", err)
 	}
 	if !errors.Is(prepared.Warning, boom) {
 		t.Fatalf("Warning = %v, want %v", prepared.Warning, boom)
 	}
-	if result, err := prepared.Run(context.Background(), nil, false); err != nil || result.Skipped != 0 {
+	if result, err := prepared.Run(context.Background(), nil); err != nil || result.Skipped != 0 {
 		t.Fatalf("Run() = (%+v, %v), want no skipped sessions", result, err)
 	}
 }
@@ -234,7 +234,7 @@ func TestSyncSourcesOptionalRemoteListDeadlineWarnsAndContinues(t *testing.T) {
 	}
 
 	err := SyncSources(context.Background(), sources, 10*time.Millisecond, func(ctx context.Context, src Source) error {
-		prepared, err := imp.PrepareSource(ctx, src)
+		prepared, err := imp.PrepareSource(ctx, src, false)
 		if err != nil {
 			return err
 		}
@@ -278,7 +278,7 @@ func TestSyncSourcesPropagatesParentDeadlineDuringOptionalRemoteList(t *testing.
 	defer cancel()
 
 	err := SyncSources(parent, sources, time.Second, func(ctx context.Context, src Source) error {
-		_, err := imp.PrepareSource(ctx, src)
+		_, err := imp.PrepareSource(ctx, src, false)
 		return err
 	})
 	if !errors.Is(err, context.DeadlineExceeded) {
@@ -335,12 +335,12 @@ func TestPreparedRemoteProgressIncludesFailures(t *testing.T) {
 			return &ccsessions.ParsedSession{SessionID: ref.ImportID, ProjectPath: "/tmp", FileMtime: stamp, Messages: []ccsessions.ParsedMessage{{UUID: "one", Type: "user", Sender: "human", TextContent: "hello", Timestamp: stamp}}}, nil
 		},
 	}}
-	prepared, err := New(database).PrepareSource(context.Background(), source)
+	prepared, err := New(database).PrepareSource(context.Background(), source, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	progress := &unitProgress{}
-	result, err := prepared.Run(context.Background(), progress, false)
+	result, err := prepared.Run(context.Background(), progress)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -379,11 +379,11 @@ func TestPreparedRemoteUsesCallerControlledLifetime(t *testing.T) {
 		},
 	}}
 
-	prepared, err := New(database).PrepareSource(context.Background(), source)
+	prepared, err := New(database).PrepareSource(context.Background(), source, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := prepared.Run(context.Background(), nil, false)
+	result, err := prepared.Run(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -424,14 +424,14 @@ func TestPreparedOptionalRemoteTimeoutKeepsPartialImport(t *testing.T) {
 		},
 	}}
 
-	prepared, err := New(database).PrepareSource(context.Background(), source)
+	prepared, err := New(database).PrepareSource(context.Background(), source, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
 	progress := &unitProgress{}
-	result, err := prepared.Run(ctx, progress, false)
+	result, err := prepared.Run(ctx, progress)
 	if err != nil {
 		t.Fatalf("Run() error = %v, want optional timeout to degrade", err)
 	}
@@ -1932,11 +1932,11 @@ func TestSyncBackfillsEntrypointOfUnchangedSessions(t *testing.T) {
 
 	sync := func() {
 		t.Helper()
-		prepared, err := imp.PrepareSource(context.Background(), src)
+		prepared, err := imp.PrepareSource(context.Background(), src, false)
 		if err != nil {
 			t.Fatalf("PrepareSource() error = %v", err)
 		}
-		if _, err := prepared.Run(context.Background(), nil, false); err != nil {
+		if _, err := prepared.Run(context.Background(), nil); err != nil {
 			t.Fatalf("Run() error = %v", err)
 		}
 	}
@@ -1968,4 +1968,98 @@ func TestDefaultSourcesClaudeReadsEntrypoint(t *testing.T) {
 		}
 	}
 	t.Fatal("DefaultSources() has no claude source")
+}
+
+func TestPrepareSourceSkipsUnchangedFingerprint(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "fingerprint.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	imp := New(database)
+
+	session := &ccsessions.ParsedSession{
+		SessionID: "conversation-1",
+		ImportID:  "conversation-1",
+		Summary:   "fingerprint test",
+		FileMtime: time.Now(),
+		Messages: []ccsessions.ParsedMessage{{
+			UUID: "conversation-1-msg", Type: "user", Sender: "human",
+			TextContent: "hello", Timestamp: time.Now(), Sequence: 1,
+		}},
+	}
+	fingerprint, fingerprintErr := "v1", error(nil)
+	enumerations := 0
+	src := Source{
+		Path:     "/data/antigravity",
+		Provider: "antigravity",
+		EnumerateFn: func() ([]*ccsessions.ParsedSession, error) {
+			enumerations++
+			return []*ccsessions.ParsedSession{session}, nil
+		},
+		FingerprintFn: func() (string, error) { return fingerprint, fingerprintErr },
+	}
+	sync := func(ctx context.Context, force bool) (PreparedSource, error) {
+		t.Helper()
+		prepared, err := imp.PrepareSource(context.Background(), src, force)
+		if err != nil {
+			t.Fatalf("PrepareSource() error = %v", err)
+		}
+		_, err = prepared.Run(ctx, nil)
+		return prepared, err
+	}
+	recorded := func() string {
+		t.Helper()
+		fp, err := database.SourceFingerprint(src.Provider, src.Path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return fp
+	}
+
+	if p, err := sync(context.Background(), false); err != nil || p.Unchanged || enumerations != 1 || recorded() != "v1" {
+		t.Fatalf("first sync: unchanged=%v err=%v enumerations=%d recorded=%q, want an import that records v1", p.Unchanged, err, enumerations, recorded())
+	}
+	if p, _ := sync(context.Background(), false); !p.Unchanged || p.Total != 0 || enumerations != 1 {
+		t.Fatalf("unchanged sync: unchanged=%v total=%d enumerations=%d, want a skip without enumerating", p.Unchanged, p.Total, enumerations)
+	}
+	if p, _ := sync(context.Background(), true); p.Unchanged || enumerations != 2 {
+		t.Fatalf("forced sync: unchanged=%v enumerations=%d, want it to enumerate", p.Unchanged, enumerations)
+	}
+
+	fingerprint = "v2"
+	if p, _ := sync(context.Background(), false); p.Unchanged || enumerations != 3 || recorded() != "v2" {
+		t.Fatalf("changed sync: unchanged=%v enumerations=%d recorded=%q, want an import that records v2", p.Unchanged, enumerations, recorded())
+	}
+
+	// Without a fingerprint the source is read as usual and nothing is recorded.
+	fingerprintErr = errors.New("stat failed")
+	if p, _ := sync(context.Background(), false); p.Unchanged || enumerations != 4 || recorded() != "v2" {
+		t.Fatalf("fingerprint error: unchanged=%v enumerations=%d recorded=%q, want an import that leaves v2", p.Unchanged, enumerations, recorded())
+	}
+
+	// An interrupted import does not vouch for the new fingerprint.
+	fingerprint, fingerprintErr = "v3", nil
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := sync(cancelled, false); err == nil || recorded() != "v2" {
+		t.Fatalf("interrupted sync: err=%v recorded=%q, want an error that leaves v2", err, recorded())
+	}
+}
+
+func TestDefaultSourcesFingerprintAntigravity(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".gemini", "antigravity-cli", "brain"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, src := range DefaultSources(false) {
+		if src.Provider == "antigravity" {
+			if src.FingerprintFn == nil {
+				t.Fatal("antigravity source has no FingerprintFn, so every sync parses every conversation")
+			}
+			return
+		}
+	}
+	t.Fatal("DefaultSources() has no antigravity source")
 }

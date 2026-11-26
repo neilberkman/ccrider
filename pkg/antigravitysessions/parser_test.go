@@ -3,6 +3,7 @@ package antigravitysessions
 import (
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -188,4 +189,187 @@ func execSQL(t *testing.T, dbPath string, statements ...string) {
 // protoField encodes one length-delimited protobuf field (payloads under 128 bytes).
 func protoField(number byte, payload []byte) []byte {
 	return append([]byte{number<<3 | 2, byte(len(payload))}, payload...)
+}
+
+func TestParseAllReadsOnlyCanonicalTranscripts(t *testing.T) {
+	root := t.TempDir()
+	writeTranscript(t, root, "canonical")
+	for _, rel := range []string{
+		"brain/elsewhere/notes/transcript.jsonl",
+		"brain/full-only/.system_generated/logs/transcript_full.jsonl",
+		"brain/stray.jsonl",
+	} {
+		path := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(`{"type":"USER_INPUT","content":"x"}`+"\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A conversation directory whose .system_generated is a file.
+	if err := os.MkdirAll(filepath.Join(root, "brain", "odd"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "brain", "odd", ".system_generated"), nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	sessions, err := ParseAll(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 1 || sessions[0].SessionID != "canonical" {
+		ids := make([]string, len(sessions))
+		for i, s := range sessions {
+			ids[i] = s.SessionID
+		}
+		t.Fatalf("ParseAll() sessions = %v, want [canonical]", ids)
+	}
+}
+
+func TestFingerprintChangesWithParseAllInputs(t *testing.T) {
+	root := t.TempDir()
+	writeTranscript(t, root, "first")
+	fingerprint := func() string {
+		t.Helper()
+		fp, err := Fingerprint(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return fp
+	}
+	write := func(rel, content string) {
+		t.Helper()
+		path := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	transcript := filepath.Join(root, "brain", "first", ".system_generated", "logs", "transcript.jsonl")
+
+	previous := fingerprint()
+	if again := fingerprint(); again != previous {
+		t.Fatal("fingerprint changed with nothing changed")
+	}
+	steps := []struct {
+		name    string
+		change  func()
+		changes bool
+	}{
+		{"artifact outside the transcript path", func() { write("brain/first/notes.md", "notes") }, false},
+		{"transcript appended", func() {
+			f, err := os.OpenFile(transcript, os.O_APPEND|os.O_WRONLY, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _ = f.WriteString(`{"type":"PLANNER_RESPONSE","content":"more"}` + "\n")
+			_ = f.Close()
+		}, true},
+		{"transcript touched", func() {
+			later := time.Now().Add(time.Hour)
+			if err := os.Chtimes(transcript, later, later); err != nil {
+				t.Fatal(err)
+			}
+		}, true},
+		{"new conversation", func() { writeTranscript(t, root, "second") }, true},
+		{"history written", func() { write("history.jsonl", `{"display":"x"}`+"\n") }, true},
+		{"workspace cache written", func() { write("cache/last_conversations.json", `{}`) }, true},
+		{"summaries database written", func() { write("conversation_summaries.db", "x") }, true},
+		{"conversation database written", func() { write("conversations/first.db", "x") }, true},
+		{"unrelated file in conversations", func() { write("conversations/readme.txt", "x") }, false},
+	}
+	for _, step := range steps {
+		step.change()
+		current := fingerprint()
+		if changed := current != previous; changed != step.changes {
+			t.Errorf("%s: fingerprint changed = %v, want %v", step.name, changed, step.changes)
+		}
+		previous = current
+	}
+}
+
+func TestFingerprintOfMissingRoot(t *testing.T) {
+	if _, err := Fingerprint(filepath.Join(t.TempDir(), "missing")); err != nil {
+		t.Fatalf("Fingerprint(missing root) error = %v, want nil", err)
+	}
+}
+
+// writeLastConversations writes the CLI's workspace -> latest conversation
+// cache.
+func writeLastConversations(t *testing.T, root string, latest map[string]string) {
+	t.Helper()
+	data, err := json.Marshal(latest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "cache"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "cache", "last_conversations.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// projectPaths parses root repeatedly and returns every project path seen
+// for each conversation, so order-dependent results show up as several.
+func projectPaths(t *testing.T, root string) map[string]map[string]bool {
+	t.Helper()
+	seen := make(map[string]map[string]bool)
+	for range 30 {
+		sessions, err := ParseAll(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, s := range sessions {
+			if seen[s.SessionID] == nil {
+				seen[s.SessionID] = make(map[string]bool)
+			}
+			seen[s.SessionID][s.ProjectPath] = true
+		}
+	}
+	return seen
+}
+
+func TestAmbiguousCacheEntryResolvesThroughRecords(t *testing.T) {
+	root := t.TempDir()
+	writeTranscript(t, root, "continued")
+	writeTranscript(t, root, "solo")
+	// "continued" was started in one directory and resumed from another, so
+	// the cache lists it as the latest conversation of both.
+	writeLastConversations(t, root, map[string]string{
+		"/redacted/worktree": "continued",
+		"/redacted/lane":     "continued",
+		"/redacted/solo":     "solo",
+	})
+	execSQL(t, filepath.Join(root, "conversation_summaries.db"),
+		"CREATE TABLE conversation_summaries (conversation_id text PRIMARY KEY, workspace_uris text NOT NULL)",
+		`INSERT INTO conversation_summaries VALUES ('continued', '["file:///redacted/lane"]')`,
+	)
+
+	seen := projectPaths(t, root)
+	if len(seen["continued"]) != 1 || !seen["continued"]["/redacted/lane"] {
+		t.Errorf("continued: project paths %v, want only /redacted/lane from conversation_summaries.db", seen["continued"])
+	}
+	if len(seen["solo"]) != 1 || !seen["solo"]["/redacted/solo"] {
+		t.Errorf("solo: project paths %v, want only /redacted/solo from the cache", seen["solo"])
+	}
+}
+
+func TestAmbiguousCacheEntryWithoutRecordsIsStable(t *testing.T) {
+	root := t.TempDir()
+	writeTranscript(t, root, "continued")
+	writeLastConversations(t, root, map[string]string{
+		"/redacted/b-second": "continued",
+		"/redacted/a-first":  "continued",
+		"/redacted/c-third":  "continued",
+	})
+
+	seen := projectPaths(t, root)
+	if len(seen["continued"]) != 1 || !seen["continued"]["/redacted/a-first"] {
+		t.Errorf("continued: project paths %v, want only /redacted/a-first, the first candidate", seen["continued"])
+	}
 }
