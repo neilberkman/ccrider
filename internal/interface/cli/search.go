@@ -9,6 +9,7 @@ import (
 	"github.com/dustin/go-humanize"
 	"github.com/neilberkman/ccrider/internal/core/db"
 	"github.com/neilberkman/ccrider/internal/core/search"
+	coresession "github.com/neilberkman/ccrider/internal/core/session"
 	"github.com/spf13/cobra"
 )
 
@@ -83,8 +84,8 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		sessionCount++
 
 		fmt.Printf("=== Session %d ===\n", sessionCount)
-		if session.SessionSummary != "" {
-			fmt.Printf("%s\n", session.SessionSummary)
+		if summary := coresession.DisplaySummary(session.SessionSummary, 80); summary != "" {
+			fmt.Printf("%s\n", summary)
 		} else {
 			fmt.Printf("[No summary]\n")
 		}

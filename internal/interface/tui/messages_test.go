@@ -323,3 +323,61 @@ func TestListViewShowsWhetherHeadlessSessionsAreHidden(t *testing.T) {
 		}
 	}
 }
+
+// pastedFirstPrompt is a first prompt the way Claude Code stores a paste:
+// blank lines, then a wrapper tag around a multi-line document.
+const pastedFirstPrompt = "\n\n<pasted_content>\nRefactor the parser\nso it streams\n</pasted_content>"
+
+func TestListTitlesPastedFirstPromptOnOneLine(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "pasted.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	res, err := database.Exec(`
+		INSERT INTO sessions (session_id, project_path, summary, provider, created_at, updated_at)
+		VALUES ('pasted', '/p', '', 'claude', datetime('now'), datetime('now'))
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rowID, err := res.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`
+		INSERT INTO messages (uuid, session_id, type, sender, text_content, timestamp, sequence)
+		VALUES ('pasted-msg', ?, 'user', 'user', ?, datetime('now'), 1)
+	`, rowID, pastedFirstPrompt); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, ok := loadSessionsNow(database, false, true, "", 1, false).(sessionsLoadedMsg)
+	if !ok || len(loaded.sessions) != 1 {
+		t.Fatalf("load = %#v, want one session", loaded)
+	}
+	want := "Refactor the parser so it streams"
+	if got := loaded.sessions[0].Summary; got != want {
+		t.Errorf("Summary = %q, want %q", got, want)
+	}
+}
+
+func TestSearchViewTitlesPastedFirstPromptOnOneLine(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "pasted-search.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	model := NewWithContext(context.Background(), database)
+	defer model.Close()
+	model.width, model.height = 120, 40
+	model.searchResults = []searchResult{{SessionID: "pasted", Summary: pastedFirstPrompt, Project: "/p"}}
+
+	view := model.viewSearch()
+	if !strings.Contains(view, "Refactor the parser so it streams") {
+		t.Errorf("view = %q, want the prompt joined onto one title line", view)
+	}
+	if strings.Contains(view, "<pasted_content>") {
+		t.Errorf("view = %q, want the leading wrapper tag removed", view)
+	}
+}

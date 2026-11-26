@@ -1,6 +1,8 @@
 package session
 
 import (
+	"strings"
+
 	"github.com/neilberkman/ccrider/internal/core/config"
 	"github.com/neilberkman/ccrider/internal/core/db"
 )
@@ -45,4 +47,29 @@ func DisplayResumeCommandFor(src LaunchInfoSource, sessionID string) string {
 		return DisplayResumeCommand("", sessionID, "", "", false)
 	}
 	return DisplayResumeCommand(info.Provider, ResumeTarget(info.SessionID, info.ResumeVia, false), info.ProjectPath, lastCwd, false)
+}
+
+// DisplaySummary turns a stored session summary into a one-line title capped
+// at maxRunes runes, so every interface (CLI, TUI, MCP) shows the same title.
+// A summary that falls back to the first prompt can span many lines or be a
+// whole pasted document, so it drops one leading wrapper tag (such as
+// <pasted_content>) and its closing tag, collapses all whitespace to single spaces and marks a
+// cut with an ellipsis.
+func DisplaySummary(summary string, maxRunes int) string {
+	summary = strings.TrimSpace(summary)
+	if strings.HasPrefix(summary, "<") {
+		if end := strings.Index(summary, ">"); end >= 0 {
+			tag := strings.Fields(summary[1:end])
+			summary = summary[end+1:]
+			if len(tag) > 0 {
+				summary = strings.TrimSuffix(strings.TrimSpace(summary), "</"+tag[0]+">")
+			}
+		}
+	}
+	summary = strings.Join(strings.Fields(summary), " ")
+	runes := []rune(summary)
+	if len(runes) <= maxRunes {
+		return summary
+	}
+	return string(runes[:maxRunes]) + "…"
 }

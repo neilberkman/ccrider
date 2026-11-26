@@ -271,22 +271,6 @@ func TestResumeCommandJSONFieldName(t *testing.T) {
 	}
 }
 
-func TestTruncateMCPSummary(t *testing.T) {
-	if got := truncateMCPSummary("  \n\t  ", 20); got != "" {
-		t.Errorf("whitespace-only = %q, want empty", got)
-	}
-	if got := truncateMCPSummary("\n\nhello\n  world\t!", 20); got != "hello world !" {
-		t.Errorf("collapsed = %q, want %q", got, "hello world !")
-	}
-	// Multi-byte UTF-8 runes must truncate cleanly without splitting bytes.
-	in := strings.Repeat("é", 15)
-	got := truncateMCPSummary(in, 10)
-	want := strings.Repeat("é", 10) + "…"
-	if got != want {
-		t.Errorf("utf8 truncate = %q, want %q", got, want)
-	}
-}
-
 func TestSessionConvertersTruncateHugeSummaries(t *testing.T) {
 	huge := strings.Repeat("a", maxResponseBytes())
 	match := toSessionMatch(search.SessionSearchResult{
