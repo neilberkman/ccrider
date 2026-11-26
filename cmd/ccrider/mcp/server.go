@@ -72,18 +72,6 @@ const (
 // maxResponseBytes returns the byte budget corresponding to MaxResponseTokens.
 func maxResponseBytes() int { return MaxResponseTokens * 4 }
 
-// truncateMCPSummary collapses whitespace and caps s to maxRunes runes so
-// multi-kilobyte fallback summaries (e.g. a pasted document as the first user
-// message) don't bloat MCP tool responses.
-func truncateMCPSummary(s string, maxRunes int) string {
-	s = strings.Join(strings.Fields(s), " ")
-	runes := []rune(s)
-	if len(runes) <= maxRunes {
-		return s
-	}
-	return string(runes[:maxRunes]) + "…"
-}
-
 // SessionMatch represents a session search result
 type SessionMatch struct {
 	SessionID     string         `json:"session_id"`
@@ -151,7 +139,7 @@ type SessionMessagesResponse struct {
 func toSessionMatch(cs search.SessionSearchResult, cfg *config.Config) SessionMatch {
 	return SessionMatch{
 		SessionID:     cs.SessionID,
-		Summary:       truncateMCPSummary(cs.SessionSummary, maxSummaryRunes),
+		Summary:       session.DisplaySummary(cs.SessionSummary, maxSummaryRunes),
 		Project:       cs.ProjectPath,
 		UpdatedAt:     cs.UpdatedAt,
 		Provider:      cs.Provider,
@@ -165,7 +153,7 @@ func toSessionMatch(cs search.SessionSearchResult, cfg *config.Config) SessionMa
 func toSessionSummary(cs db.Session, cfg *config.Config) SessionSummary {
 	return SessionSummary{
 		SessionID:     cs.SessionID,
-		Summary:       truncateMCPSummary(cs.Summary, maxSummaryRunes),
+		Summary:       session.DisplaySummary(cs.Summary, maxSummaryRunes),
 		Project:       cs.ProjectPath,
 		UpdatedAt:     cs.UpdatedAt.Format("2006-01-02 15:04:05"),
 		Provider:      cs.Provider,
@@ -719,7 +707,7 @@ func makeListOpenSessionsHandler(database *db.DB, liveCache *liveness.Cache, syn
 				group.Sessions = append(group.Sessions, OpenSession{
 					Provider:    l.Provider,
 					SessionID:   l.SessionID,
-					Summary:     truncateMCPSummary(l.Summary, maxOpenSummaryRunes),
+					Summary:     session.DisplaySummary(l.Summary, maxOpenSummaryRunes),
 					TTY:         l.TTY,
 					PID:         l.PID,
 					Match:       l.Match,
@@ -811,7 +799,7 @@ func formatOpenSessionsResponse(groups []OpenSessionGroup) OpenSessionsResponse 
 
 	for _, ref := range refs {
 		s := &work[ref.g].Sessions[ref.s]
-		compacted := truncateMCPSummary(s.Summary, maxCompactSummaryRunes)
+		compacted := session.DisplaySummary(s.Summary, maxCompactSummaryRunes)
 		if compacted == s.Summary {
 			continue
 		}

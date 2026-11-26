@@ -98,7 +98,7 @@ func runList(cmd *cobra.Command, args []string) error {
 			fmt.Printf("[%d] %s\n", i+1, s.sessionID)
 		}
 		if s.summary.Valid && s.summary.String != "" {
-			summary := truncateSummary(s.summary.String, 80)
+			summary := session.DisplaySummary(s.summary.String, 80)
 			fmt.Printf("    Summary: %s\n", summary)
 		}
 		fmt.Printf("    Project: %s\n", s.projectPath)
@@ -123,26 +123,6 @@ type sessionInfo struct {
 	updatedAt    time.Time
 	createdAt    time.Time
 	provider     string
-}
-
-// truncateSummary truncates long summaries for display
-func truncateSummary(summary string, maxLen int) string {
-	// Remove newlines and excessive whitespace
-	summary = strings.ReplaceAll(summary, "\n", " ")
-	summary = strings.Join(strings.Fields(summary), " ")
-
-	if len(summary) <= maxLen {
-		return summary
-	}
-
-	// Find a good break point (end of word)
-	truncated := summary[:maxLen]
-	lastSpace := strings.LastIndex(truncated, " ")
-	if lastSpace > maxLen-20 {
-		truncated = truncated[:lastSpace]
-	}
-
-	return truncated + "..."
 }
 
 // formatTimestamp formats a timestamp in a human-friendly way

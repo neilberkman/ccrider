@@ -407,7 +407,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.seq != m.searchSeq {
 			return m, nil
 		}
-		return m, performSearch(m.db, m.searchInput.Value(), m.searchSeq)
+		return m, performSearch(m.db, m.searchInput.Value(), m.showHeadless, m.searchSeq)
 
 	case searchResultsMsg:
 		// Only accept results if sequence matches current search (discard stale results)

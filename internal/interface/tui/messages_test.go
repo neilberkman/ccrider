@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -321,5 +322,129 @@ func TestListViewShowsWhetherHeadlessSessionsAreHidden(t *testing.T) {
 		if !strings.HasPrefix(view, tc.empty) {
 			t.Errorf("showHeadless=%v: view = %q, want empty state %q", tc.showHeadless, view, tc.empty)
 		}
+	}
+}
+
+// pastedFirstPrompt is a first prompt the way Claude Code stores a paste:
+// blank lines, then a wrapper tag around a multi-line document.
+const pastedFirstPrompt = "\n\n<pasted_content>\nRefactor the parser\nso it streams\n</pasted_content>"
+
+func TestListTitlesPastedFirstPromptOnOneLine(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "pasted.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	res, err := database.Exec(`
+		INSERT INTO sessions (session_id, project_path, summary, provider, created_at, updated_at)
+		VALUES ('pasted', '/p', '', 'claude', datetime('now'), datetime('now'))
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rowID, err := res.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`
+		INSERT INTO messages (uuid, session_id, type, sender, text_content, timestamp, sequence)
+		VALUES ('pasted-msg', ?, 'user', 'user', ?, datetime('now'), 1)
+	`, rowID, pastedFirstPrompt); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, ok := loadSessionsNow(database, false, true, "", 1, false).(sessionsLoadedMsg)
+	if !ok || len(loaded.sessions) != 1 {
+		t.Fatalf("load = %#v, want one session", loaded)
+	}
+	want := "Refactor the parser so it streams"
+	if got := loaded.sessions[0].Summary; got != want {
+		t.Errorf("Summary = %q, want %q", got, want)
+	}
+}
+
+func TestSearchViewTitlesPastedFirstPromptOnOneLine(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "pasted-search.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	model := NewWithContext(context.Background(), database)
+	defer model.Close()
+	model.width, model.height = 120, 40
+	model.searchResults = []searchResult{{SessionID: "pasted", Summary: pastedFirstPrompt, Project: "/p"}}
+
+	view := model.viewSearch()
+	if !strings.Contains(view, "Refactor the parser so it streams") {
+		t.Errorf("view = %q, want the prompt joined onto one title line", view)
+	}
+	if strings.Contains(view, "<pasted_content>") {
+		t.Errorf("view = %q, want the leading wrapper tag removed", view)
+	}
+}
+
+func TestSearchFollowsHeadlessToggle(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "headless-search.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	for _, s := range []struct{ id, entrypoint string }{
+		{"interactive", "cli"},
+		{"headless", "sdk-cli"},
+	} {
+		res, err := database.Exec(`
+			INSERT INTO sessions (session_id, project_path, summary, provider, entrypoint, created_at, updated_at)
+			VALUES (?, '/p', 'Deploy notes', 'claude', ?, datetime('now'), datetime('now'))
+		`, s.id, s.entrypoint)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rowID, err := res.LastInsertId()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := database.Exec(`
+			INSERT INTO messages (uuid, session_id, type, sender, text_content, timestamp, sequence)
+			VALUES (?, ?, 'user', 'user', 'check the deploy', datetime('now'), 1)
+		`, s.id+"-msg", rowID); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	searchIDs := func(showHeadless bool) []string {
+		t.Helper()
+		msg, ok := performSearch(database, "deploy", showHeadless, 1)().(searchResultsMsg)
+		if !ok {
+			t.Fatalf("performSearch(showHeadless=%v) did not return searchResultsMsg", showHeadless)
+		}
+		var ids []string
+		for _, r := range msg.results {
+			ids = append(ids, r.SessionID)
+		}
+		sort.Strings(ids)
+		return ids
+	}
+	if got := searchIDs(false); !reflect.DeepEqual(got, []string{"interactive"}) {
+		t.Errorf("search with headless hidden = %v, want [interactive]", got)
+	}
+	if got := searchIDs(true); !reflect.DeepEqual(got, []string{"headless", "interactive"}) {
+		t.Errorf("search with headless shown = %v, want [headless interactive]", got)
+	}
+
+	model := NewWithContext(context.Background(), database)
+	defer model.Close()
+	model.width, model.height = 120, 40
+	model.searchResults = []searchResult{}
+	if view := model.viewSearch(); !strings.Contains(view, "No results found. Headless sessions are hidden: press esc, then 'a' to show them.") {
+		t.Errorf("empty search view with headless hidden = %q, want the hidden note", view)
+	}
+	model.searchResults = []searchResult{{SessionID: "interactive", Summary: "Deploy notes"}}
+	if view := model.viewSearch(); !strings.Contains(view, "Found 1 sessions (headless hidden):") {
+		t.Errorf("search view with headless hidden = %q, want the hidden note on the count", view)
+	}
+	model.showHeadless = true
+	if view := model.viewSearch(); !strings.Contains(view, "Found 1 sessions:") {
+		t.Errorf("search view with headless shown = %q, want the plain count", view)
 	}
 }

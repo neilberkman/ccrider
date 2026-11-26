@@ -34,6 +34,7 @@ type SearchFilters struct {
 	ExcludeCurrent   bool   // If true with CurrentSessionID set, exclude that session
 	AfterDate        string // Only results after this timestamp (ISO 8601)
 	BeforeDate       string // Only results before this timestamp (ISO 8601)
+	HideHeadless     bool   // Exclude headless runs (claude -p, Agent SDK)
 }
 
 // SessionSearchResult represents search results grouped by session
@@ -53,10 +54,13 @@ type SessionSearchResult struct {
 // Default sort order for search results (most recent first)
 const defaultOrderBy = "m.timestamp DESC"
 
+// hitsOrderBy is defaultOrderBy applied to the matched-message rows
+const hitsOrderBy = "hits.timestamp DESC"
+
 // Search performs a full-text search using the natural language FTS table
 // Results are ordered by timestamp (most recent first)
 func Search(database *db.DB, query string) ([]SearchResult, error) {
-	return search(database, query, "messages_fts", 1000)
+	return search(database, query, "messages_fts", 1000, false)
 }
 
 // SearchWithFilters performs filtered search and groups results by session
@@ -76,7 +80,7 @@ func SearchWithFilters(database *db.DB, filters SearchFilters) ([]SessionSearchR
 	}
 
 	// Perform core search
-	results, err := Search(database, query)
+	results, err := search(database, query, "messages_fts", 1000, filters.HideHeadless)
 	if err != nil {
 		return nil, err
 	}
@@ -167,11 +171,11 @@ func SearchWithFilters(database *db.DB, filters SearchFilters) ([]SessionSearchR
 // SearchCode performs a full-text search using the code-optimized FTS table
 // This table uses unicode61 tokenizer without stemming to preserve code identifiers
 func SearchCode(database *db.DB, query string) ([]SearchResult, error) {
-	return search(database, query, "messages_fts_code", 1000)
+	return search(database, query, "messages_fts_code", 1000, false)
 }
 
 // search is the internal implementation shared by Search and SearchCode
-func search(database *db.DB, query string, ftsTable string, limit int) ([]SearchResult, error) {
+func search(database *db.DB, query string, ftsTable string, limit int, hideHeadless bool) ([]SearchResult, error) {
 	// Validate query
 	query = strings.TrimSpace(query)
 	if query == "" {
@@ -181,29 +185,58 @@ func search(database *db.DB, query string, ftsTable string, limit int) ([]Search
 	// Escape query for FTS5 - wraps each token in quotes to handle special characters
 	escapedQuery := escapeFTS5Query(query)
 
+	// Headless sessions are excluded before LIMIT so they cannot take the
+	// places of the sessions being searched for.
+	args := []interface{}{escapedQuery}
+	headlessCondition := ""
+	if hideHeadless {
+		headlessCondition = "AND m.session_id NOT IN (SELECT id FROM sessions WHERE entrypoint LIKE ?)"
+		args = append(args, db.HeadlessEntrypointPattern)
+	}
+	args = append(args, limit)
+
+	// Matches are found first and each session's summary is computed once:
+	// the summary fallback scans the session's messages, so computing it per
+	// matching message multiplies that scan by the session's match count.
 	sql := fmt.Sprintf(`
+		WITH hits AS (
+			SELECT
+				m.uuid,
+				m.session_id,
+				snippet(%s, -1, '', '', '...', 64) as snippet,
+				m.timestamp,
+				m.sequence
+			FROM %s
+			JOIN messages m ON %s.rowid = m.id
+			WHERE %s MATCH ? %s
+			ORDER BY %s
+			LIMIT ?
+		),
+		summaries AS MATERIALIZED (
+			SELECT s.id, %s as summary
+			FROM sessions s
+			LEFT JOIN session_summaries ss ON s.id = ss.session_id
+			WHERE s.id IN (SELECT session_id FROM hits)
+		)
 		SELECT
-			m.uuid,
+			hits.uuid,
 			s.session_id,
-			COALESCE(ss.one_line_summary, s.llm_summary, s.summary, ''),
-			snippet(%s, -1, '', '', '...', 64) as snippet,
-			m.timestamp,
+			summaries.summary,
+			hits.snippet,
+			hits.timestamp,
 			s.project_path,
 			COALESCE(s.cwd, s.project_path),
 			s.message_count,
-			m.sequence,
+			hits.sequence,
 			COALESCE(s.provider, 'claude'),
 			COALESCE(s.resume_via, '')
-		FROM %s
-		JOIN messages m ON %s.rowid = m.id
-		JOIN sessions s ON s.id = m.session_id
-		LEFT JOIN session_summaries ss ON s.id = ss.session_id
-		WHERE %s MATCH ?
+		FROM hits
+		JOIN sessions s ON s.id = hits.session_id
+		JOIN summaries ON summaries.id = s.id
 		ORDER BY %s
-		LIMIT ?
-	`, ftsTable, ftsTable, ftsTable, ftsTable, defaultOrderBy)
+	`, ftsTable, ftsTable, ftsTable, ftsTable, headlessCondition, defaultOrderBy, db.SummaryExpr, hitsOrderBy)
 
-	rows, err := database.Query(sql, escapedQuery, limit)
+	rows, err := database.Query(sql, args...)
 	if err != nil {
 		return nil, fmt.Errorf("search query failed: %w", err)
 	}
@@ -277,7 +310,7 @@ func filterOnlySessions(database *db.DB, filters SearchFilters) ([]SessionSearch
 	query := `
 		SELECT
 			s.session_id,
-			COALESCE(ss.one_line_summary, s.llm_summary, s.summary, ''),
+			` + db.SummaryExpr + `,
 			s.project_path,
 			COALESCE(s.cwd, s.project_path),
 			s.updated_at,
@@ -297,6 +330,10 @@ func filterOnlySessions(database *db.DB, filters SearchFilters) ([]SessionSearch
 	if filters.Provider != "" {
 		query += " AND COALESCE(s.provider, 'claude') = ?"
 		args = append(args, filters.Provider)
+	}
+	if filters.HideHeadless {
+		query += " AND COALESCE(s.entrypoint, '') NOT LIKE ?"
+		args = append(args, db.HeadlessEntrypointPattern)
 	}
 	// Date filtering done in Go due to timestamp format inconsistencies
 

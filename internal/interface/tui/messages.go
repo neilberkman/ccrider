@@ -64,10 +64,11 @@ type exportCompletedMsg struct {
 	err      error
 }
 
-func performSearch(database *db.DB, query string, seq uint64) tea.Cmd {
+func performSearch(database *db.DB, query string, showHeadless bool, seq uint64) tea.Cmd {
 	return func() tea.Msg {
 		// Parse filters from query using centralized core parser
 		filters := search.ParseQuery(query)
+		filters.HideHeadless = !showHeadless
 
 		// Call core search with filters
 		coreResults, err := search.SearchWithFilters(database, filters)
@@ -137,14 +138,9 @@ func loadSessionsNow(database *db.DB, filterByProject bool, showHeadless bool, p
 
 	var sessions []sessionItem
 	for _, cs := range coreSessions {
-		summary := cs.Summary
-		if summary != "" {
-			summary = firstLine(summary, 80)
-		}
-
 		s := sessionItem{
 			ID:           cs.SessionID,
-			Summary:      summary,
+			Summary:      coresession.DisplaySummary(cs.Summary, 80),
 			Project:      cs.ProjectPath,
 			LastCwd:      cs.LastCwd,
 			MessageCount: cs.MessageCount,
