@@ -45,14 +45,14 @@ func TestCodexCompressedSyncLifecycle(t *testing.T) {
 	source := Source{Path: dir, Provider: "codex", ParseFn: codexsessions.ParseFile, ResumeViaFn: codexsessions.ReadResumeVia}
 	sync := func(wantImported int) {
 		t.Helper()
-		prepared, err := imp.PrepareSource(context.Background(), source)
+		prepared, err := imp.PrepareSource(context.Background(), source, false)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if prepared.Total != 1 {
 			t.Fatalf("Total = %d, want one rollout", prepared.Total)
 		}
-		result, err := prepared.Run(context.Background(), nil, false)
+		result, err := prepared.Run(context.Background(), nil)
 		if err != nil || len(result.Failures) != 0 {
 			t.Fatalf("Run() = %+v, %v", result, err)
 		}
@@ -98,7 +98,7 @@ func TestCompressedRolloutsAreCodexOnly(t *testing.T) {
 	dir := t.TempDir()
 	writeCodexArchive(t, filepath.Join(dir, "archived.jsonl.zst"), []byte("{}\n"))
 	for _, provider := range []string{"claude", "pi", "codex"} {
-		prepared, err := New(nil).PrepareSource(context.Background(), Source{Path: dir, Provider: provider})
+		prepared, err := New(nil).PrepareSource(context.Background(), Source{Path: dir, Provider: provider}, false)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -57,12 +57,53 @@ func (db *DB) migrate() error {
 		return err
 	}
 
+	// Migration 11: Fingerprints that let sync skip unchanged sources.
+	if err := db.migration011CreateSourceFingerprints(); err != nil {
+		return err
+	}
+
+	// Migration 12: Lease that lets one process at a time sync in the background.
+	if err := db.migration012CreateSyncLease(); err != nil {
+		return err
+	}
+
 	return nil
 }
 
 // migration009CreateWatchSignals creates the signal mailbox. Channel rows
 // record how far pruning has reached so a reader that fell behind retention
 // is told so instead of silently missing signals.
+// migration011CreateSourceFingerprints records, per source, a digest of the
+// inputs it was last imported from completely (see SourceFingerprint).
+func (db *DB) migration011CreateSourceFingerprints() error {
+	_, err := db.conn.Exec(`
+		CREATE TABLE IF NOT EXISTS source_fingerprints (
+			provider TEXT NOT NULL,
+			path TEXT NOT NULL,
+			fingerprint TEXT NOT NULL,
+			recorded_at INTEGER NOT NULL,
+			PRIMARY KEY (provider, path)
+		)
+	`)
+	return err
+}
+
+// migration012CreateSyncLease creates the single-row lease that background
+// sync takes (see AcquireSyncLease), with the times of the last complete pass.
+func (db *DB) migration012CreateSyncLease() error {
+	_, err := db.conn.Exec(`
+		CREATE TABLE IF NOT EXISTS sync_lease (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			holder TEXT NOT NULL DEFAULT '',
+			expires_at INTEGER NOT NULL DEFAULT 0,
+			last_pass_started_at INTEGER NOT NULL DEFAULT 0,
+			last_pass_finished_at INTEGER NOT NULL DEFAULT 0
+		);
+		INSERT OR IGNORE INTO sync_lease (id) VALUES (1);
+	`)
+	return err
+}
+
 func (db *DB) migration009CreateWatchSignals() error {
 	_, err := db.conn.Exec(`
 		CREATE TABLE IF NOT EXISTS watch_signals (

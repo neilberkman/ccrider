@@ -75,7 +75,7 @@ For later retrieval, use `list_session_anchors`. For a known tag in an older con
 
 ### `list_session_anchors`
 
-List saved anchors, newest first, with labels, creation times, and matching sessions. Local transcripts are synced before lookup, and matching has no date cutoff.
+List saved anchors, newest first, with labels, creation times, and matching sessions. Lookups use local transcripts synced within the last 30 seconds (see [Database Sync Strategy](#database-sync-strategy)), and matching has no date cutoff.
 
 **Arguments:**
 
@@ -190,12 +190,15 @@ Following clippy's library-first approach with core/interface separation:
 
 ### Database Sync Strategy
 
-All MCP tools automatically sync the database before executing queries to ensure up-to-date results. The sync is:
+The server keeps its database in step with the session transcripts in the background, so tools rarely wait for a sync:
 
-- **Silent**: No progress output to avoid polluting MCP responses
-- **Incremental**: Only imports new or changed sessions (hash-based deduplication)
-- **Centralized**: Single `syncDatabase()` function called by all tool handlers
-- **Local-only**: MCP request syncs refresh local sources with a short deadline and never contact Amp or other cloud sources. Previously imported Amp sessions remain searchable from the local cache.
+- **Background**: It syncs when it starts and every 30 seconds after that, without delaying the client's `initialize`.
+- **Shared**: Every ccrider server on the machine uses one database, and a lease in it lets one server sync at a time. A server skips its turn when another one synced within the last 30 seconds, so running many agent sessions doesn't multiply the work. A crashed server's lease expires after a minute.
+- **Bounded waits**: A tool reads without waiting when the last sync started within 30 seconds. Otherwise it waits up to 10 seconds for one, then serves what is already imported while the sync finishes. An `anchor_phrase` search that finds nothing waits for a sync that started after its first attempt.
+- **Silent**: No progress output to avoid polluting MCP responses; failures go to stderr.
+- **Incremental**: Only imports new or changed sessions (hash-based deduplication). Antigravity is read only when its files changed since the last import.
+- **Recorded**: `ccrider sync` and the TUI's sync count as a sync of every provider, so servers don't repeat one that just finished.
+- **Local-only**: Background syncs refresh local sources and never contact Amp or other cloud sources. Previously imported Amp sessions remain searchable from the local cache.
 
 ### Technology Stack
 
@@ -262,7 +265,7 @@ Configure an MCP-capable client to run `ccrider serve-mcp`. Claude Desktop uses 
 - ✅ Current session awareness (search within current session or exclude it)
 - ✅ Date filtering (ISO 8601 format)
 - ✅ Project filtering
-- ✅ Automatic database sync before each query
+- ✅ Background database sync shared by every server on the machine (see [Database Sync Strategy](#database-sync-strategy))
 - ✅ Silent incremental sync (hash-based deduplication)
 - ✅ Full conversation retrieval
 - ✅ Session grouping (up to 3 match snippets per session)

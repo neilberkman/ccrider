@@ -23,7 +23,7 @@ func TestSessionAnchorMCPWorkflow(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 	s := server.NewMCPServer("anchor-test", "1.0.0")
-	registerSessionAnchorTools(s, database)
+	registerSessionAnchorTools(s, database, newServerSyncer(database))
 	c, err := client.NewInProcessClient(s)
 	if err != nil {
 		t.Fatal(err)
