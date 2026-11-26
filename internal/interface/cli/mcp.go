@@ -16,6 +16,9 @@ to search and retrieve information from your session history.
 For Claude Code:
   claude mcp add --scope user ccrider $(which ccrider) serve-mcp
 
+For Codex CLI:
+  codex mcp add ccrider -- $(which ccrider) serve-mcp
+
 For Claude Desktop (~/Library/Application Support/Claude/claude_desktop_config.json):
   {
     "mcpServers": {

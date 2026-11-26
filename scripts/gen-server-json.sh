@@ -16,7 +16,7 @@ cat <<EOF
   "\$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.neilberkman/ccrider",
   "title": "CCRider",
-  "description": "Full-text search, browse, and resume across your coding agent sessions (Claude Code, Codex, Amp)",
+  "description": "Search and resume sessions from Claude Code, Codex, Copilot CLI, OpenCode, Pi, Antigravity and Amp",
   "repository": {
     "url": "https://github.com/neilberkman/ccrider",
     "source": "github"
