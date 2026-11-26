@@ -45,8 +45,9 @@ cd ccrider
 go build -o ccrider cmd/ccrider/main.go
 sudo mv ccrider /usr/local/bin/
 
-# Optional: install the MCP server in Claude Code
-claude mcp add --scope user ccrider $(which ccrider) serve-mcp
+# Optional: add the MCP server to your coding agent (others under MCP Server below)
+claude mcp add --scope user ccrider $(which ccrider) serve-mcp   # Claude Code
+codex mcp add ccrider -- $(which ccrider) serve-mcp              # Codex CLI
 ```
 
 <a id="the-king"></a>
@@ -123,6 +124,20 @@ claude mcp add --scope user ccrider $(which ccrider) serve-mcp
 
 # Or for current project only
 claude mcp add ccrider $(which ccrider) serve-mcp
+```
+
+**Codex CLI:**
+
+```bash
+codex mcp add ccrider -- $(which ccrider) serve-mcp
+```
+
+Or add it to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.ccrider]
+command = "ccrider"
+args = ["serve-mcp"]
 ```
 
 **Claude Desktop:**

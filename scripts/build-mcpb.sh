@@ -30,7 +30,7 @@ sed "s/__VERSION__/$VERSION/" > "$STAGE/manifest.json" <<'EOF'
   "name": "ccrider",
   "display_name": "CCRider",
   "version": "__VERSION__",
-  "description": "Search, browse, and resume your coding agent sessions (Claude Code, Codex, Amp) with full-text search.",
+  "description": "Search, browse, and resume your coding agent sessions (Claude Code, Codex CLI, GitHub Copilot CLI, OpenCode, Pi, Antigravity, and Amp) with full-text search.",
   "author": {
     "name": "Neil Berkman",
     "email": "neil@xuku.com",
@@ -42,7 +42,7 @@ sed "s/__VERSION__/$VERSION/" > "$STAGE/manifest.json" <<'EOF'
     "url": "https://github.com/neilberkman/ccrider"
   },
   "license": "MIT",
-  "keywords": ["claude-code", "codex", "sessions", "search", "history"],
+  "keywords": ["coding-agents", "claude-code", "codex", "copilot", "opencode", "pi", "antigravity", "amp", "sessions", "search", "history"],
   "server": {
     "type": "binary",
     "entry_point": "bin/ccrider-darwin",
