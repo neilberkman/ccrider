@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -53,12 +54,16 @@ func (m Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Update text input (all other keys including j/k/q go here)
 	m.searchInput, cmd = m.searchInput.Update(msg)
 
-	// Perform live search on every keystroke
-	query := m.searchInput.Value()
+	// Live search once typing pauses. The database runs one query at a time,
+	// so a search per keystroke would queue every prefix ahead of the query
+	// the user wants.
 	m.searchSelectedIdx = 0
 	m.searchViewOffset = 0 // Reset scroll on new search
 	m.searchSeq++          // Increment sequence to invalidate in-flight searches
-	return m, tea.Batch(cmd, performSearch(m.db, query, m.searchSeq))
+	seq := m.searchSeq
+	return m, tea.Batch(cmd, tea.Tick(searchTypingPause, func(time.Time) tea.Msg {
+		return searchPauseMsg{seq: seq}
+	}))
 }
 
 func (m Model) viewSearch() string {
