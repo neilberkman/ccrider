@@ -400,16 +400,24 @@ func CountJSONLFiles(dirPath string, skipSubagents bool) (int, error) {
 }
 
 // SyncAll imports all supplied sources for background consumers and aggregates
-// individual failures for the interface to report. Callers that can serve
+// individual failures for the interface to report. A source that fails does
+// not stop the ones after it; only the end of ctx does. Callers that can serve
 // cached data should treat the returned error as a degraded refresh, not a
 // failed query.
 func (i *Importer) SyncAll(ctx context.Context, sources []Source, force bool) error {
 	var failures []error
 	for _, src := range sources {
-		prepared, err := i.PrepareSource(ctx, src, force)
-		if err != nil {
+		if err := ctx.Err(); err != nil {
 			failures = append(failures, err)
 			return errors.Join(failures...)
+		}
+		prepared, err := i.PrepareSource(ctx, src, force)
+		if err != nil {
+			failures = append(failures, fmt.Errorf("%s sync failed: %w", src.Provider, err))
+			if ctx.Err() != nil {
+				return errors.Join(failures...)
+			}
+			continue
 		}
 		if prepared.Warning != nil {
 			failures = append(failures, fmt.Errorf("%s sync skipped: %w", prepared.Provider, prepared.Warning))
@@ -423,8 +431,10 @@ func (i *Importer) SyncAll(ctx context.Context, sources []Source, force bool) er
 			failures = append(failures, fmt.Errorf("%s sync incomplete: %d sessions deferred (%s)", src.Provider, len(result.Deferred), summarizeIDs(result.Deferred, 5)))
 		}
 		if runErr != nil {
-			failures = append(failures, runErr)
-			return errors.Join(failures...)
+			failures = append(failures, fmt.Errorf("%s sync failed: %w", src.Provider, runErr))
+			if ctx.Err() != nil {
+				return errors.Join(failures...)
+			}
 		}
 	}
 	return errors.Join(failures...)

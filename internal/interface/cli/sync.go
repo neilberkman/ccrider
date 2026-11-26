@@ -112,7 +112,8 @@ func runSync(cmd *cobra.Command, args []string) error {
 		sources = importer.DefaultSources(cfg.AmpEnabled)
 	}
 
-	return importer.SyncSources(cmd.Context(), sources, syncTimeout, func(sourceCtx context.Context, src importer.Source) error {
+	started := time.Now()
+	err = importer.SyncSources(cmd.Context(), sources, syncTimeout, func(sourceCtx context.Context, src importer.Source) error {
 		prepared, err := imp.PrepareSource(sourceCtx, src, syncForce)
 		if err != nil {
 			return fmt.Errorf("failed to prepare %s sessions: %w", src.Provider, err)
@@ -155,6 +156,17 @@ func runSync(cmd *cobra.Command, args []string) error {
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	// A sync of every provider spares background sync (the MCP server) from
+	// repeating it right away.
+	if len(args) == 0 {
+		if err := database.RecordSyncPass(started, time.Now()); err != nil {
+			fmt.Fprintf(os.Stderr, "WARN: could not record the sync: %v\n", err)
+		}
+	}
+	return nil
 }
 
 func deferredIDs(ids []string, limit int) string {

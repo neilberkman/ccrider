@@ -15,21 +15,25 @@ import (
 	"github.com/neilberkman/ccrider/internal/core/search"
 )
 
-func TestSyncDatabaseServesCachedDataWhenSyncIsCanceled(t *testing.T) {
+func TestRefreshBeforeReadReturnsWhenTheCallIsCancelled(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	database, err := db.New(filepath.Join(t.TempDir(), "cached.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = database.Close() }()
+	syncer := newServerSyncer(database)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := syncDatabase(ctx, database); err != nil {
-		t.Fatalf("syncDatabase() error = %v, want cached-data fallback", err)
+	start := time.Now()
+	refreshBeforeRead(ctx, syncer)
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("refreshBeforeRead() took %v after its call was cancelled, want an immediate return", elapsed)
 	}
 }
 
-func TestSyncDatabaseServesCachedDataAfterSessionFailure(t *testing.T) {
+func TestRefreshBeforeReadCompletesAfterSessionFailure(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	sessionDir := filepath.Join(home, ".claude", "projects")
@@ -45,8 +49,13 @@ func TestSyncDatabaseServesCachedDataAfterSessionFailure(t *testing.T) {
 	}
 	defer func() { _ = database.Close() }()
 
-	if err := syncDatabase(context.Background(), database); err != nil {
-		t.Fatalf("syncDatabase() error = %v, want cached-data fallback", err)
+	before := time.Now()
+	refreshBeforeRead(context.Background(), newServerSyncer(database))
+	// A session that fails to import still lets the pass complete, so the
+	// next tool call is not stuck re-running it.
+	started, err := database.LastSyncPassStarted()
+	if err != nil || started.UnixMilli() < before.UnixMilli() {
+		t.Fatalf("last pass started %v (err %v), want a complete pass after %v", started, err, before)
 	}
 }
 

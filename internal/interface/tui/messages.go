@@ -300,6 +300,7 @@ func startSyncWithProgress(manager *syncManager, database *db.DB) tea.Cmd {
 		cfg, _ := config.Load()
 		sources := importer.DefaultSources(cfg.AmpEnabled)
 
+		started := time.Now()
 		err := importer.SyncSources(parent, sources, importer.DefaultRemoteSyncTimeout, func(sourceCtx context.Context, src importer.Source) error {
 			p, err := imp.PrepareSource(sourceCtx, src, false)
 			if err != nil {
@@ -329,6 +330,13 @@ func startSyncWithProgress(manager *syncManager, database *db.DB) tea.Cmd {
 		})
 		if err != nil && parent.Err() == nil {
 			warnings = append(warnings, fmt.Sprintf("sync stopped: %v", err))
+		}
+		// A sync of every provider spares background sync (the MCP server)
+		// from repeating it right away.
+		if err == nil && parent.Err() == nil {
+			if recordErr := database.RecordSyncPass(started, time.Now()); recordErr != nil {
+				warnings = append(warnings, fmt.Sprintf("could not record the sync: %v", recordErr))
+			}
 		}
 	}, func() {
 		// The manager is inactive before completion becomes observable, so an

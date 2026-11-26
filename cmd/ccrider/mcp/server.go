@@ -201,6 +201,13 @@ func StartServer(dbPath, version string) error {
 		}
 	}()
 
+	// Sync in the background from the start, so tools find recent data and
+	// the client's initialize request is answered without waiting for it.
+	// The deferred stop runs before the database closes.
+	syncer := newServerSyncer(database)
+	stopSync := syncer.Start(context.Background())
+	defer stopSync()
+
 	// Create MCP server
 	s := server.NewMCPServer(
 		"CCRider",
@@ -217,7 +224,7 @@ func StartServer(dbPath, version string) error {
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithOpenWorldHintAnnotation(false),
 		mcp.WithIdempotentHintAnnotation(true),
-		mcp.WithDescription("Search coding agent sessions for a query string across all message content. Can search current session only, exclude current session, or search all sessions. Supports date, project, and provider filtering.\n\nTO FIND EARLIER CONTEXT IN YOUR CURRENT SESSION (disappeared due to context compaction): Use anchor_phrase with a unique phrase you just said or saw - this identifies your session. Then query searches only within that session. The database syncs before every search so even recent messages are searchable."),
+		mcp.WithDescription("Search coding agent sessions for a query string across all message content. Can search current session only, exclude current session, or search all sessions. Supports date, project, and provider filtering.\n\nTO FIND EARLIER CONTEXT IN YOUR CURRENT SESSION (disappeared due to context compaction): Use anchor_phrase with a unique phrase you just said or saw - this identifies your session. Then query searches only within that session. The server syncs its database in the background, and an anchor_phrase search that finds nothing waits for a fresh sync and retries, so even messages from moments ago are searchable."),
 		mcp.WithString("query",
 			mcp.Required(),
 			mcp.Description("Search term to match against message content")),
@@ -240,7 +247,7 @@ func StartServer(dbPath, version string) error {
 		mcp.WithString("provider",
 			mcp.Description(providerFilterDescription())),
 	)
-	s.AddTool(searchTool, makeSearchSessionsHandler(database, liveCache))
+	s.AddTool(searchTool, makeSearchSessionsHandler(database, liveCache, syncer))
 
 	// Register list_recent_sessions tool
 	listTool := mcp.NewTool("list_recent_sessions",
@@ -256,7 +263,7 @@ func StartServer(dbPath, version string) error {
 		mcp.WithString("provider",
 			mcp.Description(providerFilterDescription())),
 	)
-	s.AddTool(listTool, makeListRecentSessionsHandler(database, liveCache))
+	s.AddTool(listTool, makeListRecentSessionsHandler(database, liveCache, syncer))
 
 	// Register get_session_messages tool
 	messagesTool := mcp.NewTool("get_session_messages",
@@ -275,7 +282,7 @@ func StartServer(dbPath, version string) error {
 		mcp.WithNumber("context_size",
 			mcp.Description("Messages before/after around_sequence (default: 10)")),
 	)
-	s.AddTool(messagesTool, makeGetSessionMessagesHandler(database, liveCache))
+	s.AddTool(messagesTool, makeGetSessionMessagesHandler(database, liveCache, syncer))
 
 	// Register list_open_sessions tool
 	openTool := mcp.NewTool("list_open_sessions",
@@ -285,9 +292,9 @@ func StartServer(dbPath, version string) error {
 		mcp.WithIdempotentHintAnnotation(false),
 		mcp.WithDescription("List coding agent sessions that currently have a live process attached, grouped by project and annotated with idle time. Use this to see what's open right now, find stale sessions, or check whether a session is already open before suggesting its resume_command."),
 	)
-	s.AddTool(openTool, makeListOpenSessionsHandler(database, liveCache))
+	s.AddTool(openTool, makeListOpenSessionsHandler(database, liveCache, syncer))
 
-	registerSessionAnchorTools(s, database)
+	registerSessionAnchorTools(s, database, syncer)
 	registerWatchTools(s, database)
 
 	return server.ServeStdio(s, server.WithWorkerPoolSize(stdioWorkers))
@@ -306,14 +313,40 @@ func coerceStringNumbers(args map[string]interface{}) {
 	}
 }
 
-// syncDatabase ensures the database is up-to-date before running tool queries
-func syncDatabase(ctx context.Context, database *db.DB) error {
-	syncCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	if err := importer.New(database).SyncAll(syncCtx, importer.DefaultSources(false), false); err != nil {
-		fmt.Fprintf(os.Stderr, "WARN: background session sync incomplete; serving cached data: %v\n", err)
+const (
+	// backgroundSyncInterval is how often the servers sharing the database
+	// sync between them; the lease keeps it to one pass per interval however
+	// many servers run.
+	backgroundSyncInterval = 30 * time.Second
+	// toolFreshness is how old the newest sync pass may be when a tool reads
+	// the database without waiting. It matches the background interval, so
+	// tools normally find a recent enough pass and do not wait at all.
+	toolFreshness = backgroundSyncInterval
+	// toolSyncWait is how long a tool waits for a recent enough pass before
+	// it serves what is already imported. It stays well under the shortest
+	// known client tool timeout (Copilot CLI's 30 s).
+	toolSyncWait = 10 * time.Second
+)
+
+// newServerSyncer returns the background syncer the server's tools share.
+func newServerSyncer(database *db.DB) *importer.Syncer {
+	return importer.NewSyncer(database, func() []importer.Source {
+		return importer.DefaultSources(false)
+	}, importer.SyncerOptions{
+		Interval: backgroundSyncInterval,
+		Logf: func(format string, args ...any) {
+			fmt.Fprintf(os.Stderr, "WARN: "+format+"\n", args...)
+		},
+	})
+}
+
+// refreshBeforeRead waits, at most toolSyncWait, for a sync pass recent
+// enough for a tool to read. A slower pass keeps running in the background
+// while the tool serves what is already imported.
+func refreshBeforeRead(ctx context.Context, syncer *importer.Syncer) {
+	if !syncer.Refresh(ctx, time.Now().Add(-toolFreshness), toolSyncWait) && ctx.Err() == nil {
+		fmt.Fprintf(os.Stderr, "WARN: session sync still running; serving data imported so far\n")
 	}
-	return nil
 }
 
 // liveIndex returns the live-session index for annotating results, or nil
@@ -327,12 +360,9 @@ func liveIndex(ctx context.Context, cache *liveness.Cache, database *db.DB) map[
 	return liveness.BySessionID(live)
 }
 
-func makeSearchSessionsHandler(database *db.DB, liveCache *liveness.Cache) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func makeSearchSessionsHandler(database *db.DB, liveCache *liveness.Cache, syncer *importer.Syncer) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		// Sync database before running query (fast incremental check)
-		if err := syncDatabase(ctx, database); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("sync failed: %v", err)), nil
-		}
+		refreshBeforeRead(ctx, syncer)
 
 		var args SearchSessionsArgs
 		if m, ok := request.Params.Arguments.(map[string]interface{}); ok {
@@ -388,10 +418,9 @@ func makeSearchSessionsHandler(database *db.DB, liveCache *liveness.Cache) func(
 						return nil, ctx.Err()
 					case <-timer.C:
 					}
-					if err := syncDatabase(ctx, database); err != nil {
-						lastErr = err
-						continue
-					}
+					// Wait for a pass that started after the wait, so
+					// writes flushed during it are imported.
+					syncer.Refresh(ctx, time.Now(), toolSyncWait)
 				}
 				anchorResults, lastErr = search.SearchWithFilters(database, anchorFilters)
 				if lastErr != nil {
@@ -498,12 +527,9 @@ func makeSearchSessionsHandler(database *db.DB, liveCache *liveness.Cache) func(
 	}
 }
 
-func makeListRecentSessionsHandler(database *db.DB, liveCache *liveness.Cache) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func makeListRecentSessionsHandler(database *db.DB, liveCache *liveness.Cache, syncer *importer.Syncer) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		// Sync database before running query
-		if err := syncDatabase(ctx, database); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("sync failed: %v", err)), nil
-		}
+		refreshBeforeRead(ctx, syncer)
 
 		var args ListRecentSessionsArgs
 		if m, ok := request.Params.Arguments.(map[string]interface{}); ok {
@@ -564,12 +590,9 @@ func makeListRecentSessionsHandler(database *db.DB, liveCache *liveness.Cache) f
 	}
 }
 
-func makeGetSessionMessagesHandler(database *db.DB, liveCache *liveness.Cache) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func makeGetSessionMessagesHandler(database *db.DB, liveCache *liveness.Cache, syncer *importer.Syncer) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		// Sync database before running query
-		if err := syncDatabase(ctx, database); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("sync failed: %v", err)), nil
-		}
+		refreshBeforeRead(ctx, syncer)
 
 		var args GetSessionMessagesArgs
 		if m, ok := request.Params.Arguments.(map[string]interface{}); ok {
@@ -678,12 +701,10 @@ type OpenSessionsResponse struct {
 	TruncatedMessage string             `json:"truncated_message,omitempty"`
 }
 
-func makeListOpenSessionsHandler(database *db.DB, liveCache *liveness.Cache) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func makeListOpenSessionsHandler(database *db.DB, liveCache *liveness.Cache, syncer *importer.Syncer) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		// Sync so idle times reflect the latest transcripts
-		if err := syncDatabase(ctx, database); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("sync failed: %v", err)), nil
-		}
+		// A recent sync keeps idle times close to the latest transcripts.
+		refreshBeforeRead(ctx, syncer)
 
 		live, err := liveCache.Snapshot(ctx, database)
 		if err != nil {

@@ -10,6 +10,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/neilberkman/ccrider/internal/core/config"
 	"github.com/neilberkman/ccrider/internal/core/db"
+	"github.com/neilberkman/ccrider/internal/core/importer"
 )
 
 type GenerateSessionAnchorArgs struct {
@@ -41,7 +42,7 @@ type ListSessionAnchorsResponse struct {
 	NextOffset *int                  `json:"next_offset,omitempty"`
 }
 
-func registerSessionAnchorTools(s *server.MCPServer, database *db.DB) {
+func registerSessionAnchorTools(s *server.MCPServer, database *db.DB, syncer *importer.Syncer) {
 	s.AddTool(mcp.NewTool("generate_session_anchor",
 		mcp.WithReadOnlyHintAnnotation(false),
 		mcp.WithDestructiveHintAnnotation(false),
@@ -50,7 +51,7 @@ func registerSessionAnchorTools(s *server.MCPServer, database *db.DB) {
 		mcp.WithDescription("Generate and save a session anchor for context recovery or later retrieval. Supply a short descriptive label to get a readable tag with a random suffix; omit it for four random words. If you know the session_id, supply it to attach the anchor immediately. Otherwise say the returned phrase and wait for a user reply so it is written to the transcript. Use list_session_anchors to retrieve saved anchors and their matching sessions, including older conversations."),
 		mcp.WithString("label", mcp.Description("Optional descriptive label, up to 120 characters. Choose a short topic from the conversation, e.g. 'add REST endpoint'.")),
 		mcp.WithString("session_id", mcp.Description("Optional known session ID to attach immediately. Full IDs and unambiguous bare UUIDs are accepted. Omit if unknown; do not guess.")),
-	), makeGenerateSessionAnchorHandler(database))
+	), makeGenerateSessionAnchorHandler(database, syncer))
 
 	s.AddTool(mcp.NewTool("list_session_anchors",
 		mcp.WithReadOnlyHintAnnotation(true),
@@ -63,10 +64,10 @@ func registerSessionAnchorTools(s *server.MCPServer, database *db.DB) {
 		mcp.WithString("provider", mcp.Description(providerFilterDescription())),
 		mcp.WithNumber("limit", mcp.Description("Max anchors per page (default: 20, maximum: 100).")),
 		mcp.WithNumber("offset", mcp.Description("Skip this many anchors (default: 0). Use next_offset from the previous response.")),
-	), makeListSessionAnchorsHandler(database))
+	), makeListSessionAnchorsHandler(database, syncer))
 }
 
-func makeGenerateSessionAnchorHandler(database *db.DB) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func makeGenerateSessionAnchorHandler(database *db.DB, syncer *importer.Syncer) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		var args GenerateSessionAnchorArgs
 		argsBytes, err := json.Marshal(request.Params.Arguments)
@@ -77,9 +78,7 @@ func makeGenerateSessionAnchorHandler(database *db.DB) func(context.Context, mcp
 			return mcp.NewToolResultError(fmt.Sprintf("invalid arguments: %v", err)), nil
 		}
 		if args.SessionID != "" {
-			if err := syncDatabase(ctx, database); err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("sync failed: %v", err)), nil
-			}
+			refreshBeforeRead(ctx, syncer)
 		}
 		anchor, err := database.GenerateSessionAnchor(ctx, db.GenerateSessionAnchorOptions{
 			Label: args.Label, SessionID: args.SessionID,
@@ -102,7 +101,7 @@ func makeGenerateSessionAnchorHandler(database *db.DB) func(context.Context, mcp
 	}
 }
 
-func makeListSessionAnchorsHandler(database *db.DB) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func makeListSessionAnchorsHandler(database *db.DB, syncer *importer.Syncer) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		var args ListSessionAnchorsArgs
 		// Normalize only pagination fields: a numeric label/provider/ID is text.
@@ -129,9 +128,7 @@ func makeListSessionAnchorsHandler(database *db.DB) func(context.Context, mcp.Ca
 			args.Limit = 20
 		}
 		args.Limit = min(args.Limit, 100)
-		if err := syncDatabase(ctx, database); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("sync failed: %v", err)), nil
-		}
+		refreshBeforeRead(ctx, syncer)
 		anchors, err := database.ListSessionAnchors(ctx, db.SessionAnchorFilters{
 			SessionID: args.SessionID, ProjectPath: args.Project, Provider: args.Provider,
 		})
