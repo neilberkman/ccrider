@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.18.1] - 2026-11-26
+
+### Changed
+
+- **Listings name every supported agent** ([#55](https://github.com/neilberkman/ccrider/pull/55)) — the MCP registry entry and the `.mcpb` bundle described ccrider as covering Claude Code, Codex and Amp. They now also name GitHub Copilot CLI, OpenCode, Pi and Antigravity, and the bundle's keywords include them
+- **MCP setup for Codex CLI** ([#55](https://github.com/neilberkman/ccrider/pull/55)) — the README and `ccrider serve-mcp --help` showed setup for Claude Code and Claude Desktop only. Both now show `codex mcp add ccrider -- $(which ccrider) serve-mcp` and the equivalent `~/.codex/config.toml` entry
+
 ## [1.18.0] - 2026-11-26
 
 ### Changed
