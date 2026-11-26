@@ -44,6 +44,15 @@ type sessionLaunchInfoMsg struct {
 	summary     string
 }
 
+// searchTypingPause is how long typing must pause before live search runs.
+const searchTypingPause = 250 * time.Millisecond
+
+// searchPauseMsg arrives searchTypingPause after a keystroke in search. It
+// starts the search only if no later keystroke has bumped the sequence.
+type searchPauseMsg struct {
+	seq uint64
+}
+
 type searchResultsMsg struct {
 	results []searchResult
 	seq     uint64 // Sequence number to match against current search
