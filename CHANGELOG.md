@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.18.0] - 2026-11-26
+
+### Changed
+
+- **Search results show each session's first prompt** ([#48](https://github.com/neilberkman/ccrider/pull/48)) — search titled sessions with their stored summary only, so a session without an LLM summary showed `[No summary]` in `ccrider search` and a match snippet in TUI search. Search now falls back to the session's first prompt, as the session list does. Every interface (the TUI list and search, `ccrider list`, `ccrider search` and the MCP server) cleans titles the same way: it drops a leading wrapper tag such as `<pasted_content>`, collapses the title to one line and caps its length with `…`, so a pasted document no longer spills across dozens of lines. A new index on messages keeps search as fast as before; it is built once, the first time a database is opened (about 2.5 s for a million messages). Thanks to @penguinboi
+- **TUI search hides headless sessions along with the list** ([#49](https://github.com/neilberkman/ccrider/pull/49)) — while the list hides `claude -p` and Agent SDK sessions, TUI search leaves them out too. They are excluded before the match limit, so they cannot crowd out other results. The result count says when they are hidden; press esc, then `a`, to show them. `ccrider search` and the MCP server still search every session. Thanks to @penguinboi
+- **TUI search waits for typing to pause** ([#54](https://github.com/neilberkman/ccrider/pull/54)) — live search ran a query on every keystroke, and because the database runs one query at a time, the search for the finished query waited behind one for every prefix. It now runs 250 ms after typing pauses. In the PR's measurements, results for a 10-character query arrived in about 1 s instead of 6.6–8.8 s. Thanks to @penguinboi
+
 ## [1.17.0] - 2026-11-25
 
 ### Changed
