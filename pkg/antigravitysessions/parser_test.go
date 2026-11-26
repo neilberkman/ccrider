@@ -3,6 +3,7 @@ package antigravitysessions
 import (
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -294,5 +295,81 @@ func TestFingerprintChangesWithParseAllInputs(t *testing.T) {
 func TestFingerprintOfMissingRoot(t *testing.T) {
 	if _, err := Fingerprint(filepath.Join(t.TempDir(), "missing")); err != nil {
 		t.Fatalf("Fingerprint(missing root) error = %v, want nil", err)
+	}
+}
+
+// writeLastConversations writes the CLI's workspace -> latest conversation
+// cache.
+func writeLastConversations(t *testing.T, root string, latest map[string]string) {
+	t.Helper()
+	data, err := json.Marshal(latest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "cache"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "cache", "last_conversations.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// projectPaths parses root repeatedly and returns every project path seen
+// for each conversation, so order-dependent results show up as several.
+func projectPaths(t *testing.T, root string) map[string]map[string]bool {
+	t.Helper()
+	seen := make(map[string]map[string]bool)
+	for range 30 {
+		sessions, err := ParseAll(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, s := range sessions {
+			if seen[s.SessionID] == nil {
+				seen[s.SessionID] = make(map[string]bool)
+			}
+			seen[s.SessionID][s.ProjectPath] = true
+		}
+	}
+	return seen
+}
+
+func TestAmbiguousCacheEntryResolvesThroughRecords(t *testing.T) {
+	root := t.TempDir()
+	writeTranscript(t, root, "continued")
+	writeTranscript(t, root, "solo")
+	// "continued" was started in one directory and resumed from another, so
+	// the cache lists it as the latest conversation of both.
+	writeLastConversations(t, root, map[string]string{
+		"/redacted/worktree": "continued",
+		"/redacted/lane":     "continued",
+		"/redacted/solo":     "solo",
+	})
+	execSQL(t, filepath.Join(root, "conversation_summaries.db"),
+		"CREATE TABLE conversation_summaries (conversation_id text PRIMARY KEY, workspace_uris text NOT NULL)",
+		`INSERT INTO conversation_summaries VALUES ('continued', '["file:///redacted/lane"]')`,
+	)
+
+	seen := projectPaths(t, root)
+	if len(seen["continued"]) != 1 || !seen["continued"]["/redacted/lane"] {
+		t.Errorf("continued: project paths %v, want only /redacted/lane from conversation_summaries.db", seen["continued"])
+	}
+	if len(seen["solo"]) != 1 || !seen["solo"]["/redacted/solo"] {
+		t.Errorf("solo: project paths %v, want only /redacted/solo from the cache", seen["solo"])
+	}
+}
+
+func TestAmbiguousCacheEntryWithoutRecordsIsStable(t *testing.T) {
+	root := t.TempDir()
+	writeTranscript(t, root, "continued")
+	writeLastConversations(t, root, map[string]string{
+		"/redacted/b-second": "continued",
+		"/redacted/a-first":  "continued",
+		"/redacted/c-third":  "continued",
+	})
+
+	seen := projectPaths(t, root)
+	if len(seen["continued"]) != 1 || !seen["continued"]["/redacted/a-first"] {
+		t.Errorf("continued: project paths %v, want only /redacted/a-first, the first candidate", seen["continued"])
 	}
 }
