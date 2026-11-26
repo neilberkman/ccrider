@@ -34,6 +34,7 @@ type SearchFilters struct {
 	ExcludeCurrent   bool   // If true with CurrentSessionID set, exclude that session
 	AfterDate        string // Only results after this timestamp (ISO 8601)
 	BeforeDate       string // Only results before this timestamp (ISO 8601)
+	HideHeadless     bool   // Exclude headless runs (claude -p, Agent SDK)
 }
 
 // SessionSearchResult represents search results grouped by session
@@ -59,7 +60,7 @@ const hitsOrderBy = "hits.timestamp DESC"
 // Search performs a full-text search using the natural language FTS table
 // Results are ordered by timestamp (most recent first)
 func Search(database *db.DB, query string) ([]SearchResult, error) {
-	return search(database, query, "messages_fts", 1000)
+	return search(database, query, "messages_fts", 1000, false)
 }
 
 // SearchWithFilters performs filtered search and groups results by session
@@ -79,7 +80,7 @@ func SearchWithFilters(database *db.DB, filters SearchFilters) ([]SessionSearchR
 	}
 
 	// Perform core search
-	results, err := Search(database, query)
+	results, err := search(database, query, "messages_fts", 1000, filters.HideHeadless)
 	if err != nil {
 		return nil, err
 	}
@@ -170,11 +171,11 @@ func SearchWithFilters(database *db.DB, filters SearchFilters) ([]SessionSearchR
 // SearchCode performs a full-text search using the code-optimized FTS table
 // This table uses unicode61 tokenizer without stemming to preserve code identifiers
 func SearchCode(database *db.DB, query string) ([]SearchResult, error) {
-	return search(database, query, "messages_fts_code", 1000)
+	return search(database, query, "messages_fts_code", 1000, false)
 }
 
 // search is the internal implementation shared by Search and SearchCode
-func search(database *db.DB, query string, ftsTable string, limit int) ([]SearchResult, error) {
+func search(database *db.DB, query string, ftsTable string, limit int, hideHeadless bool) ([]SearchResult, error) {
 	// Validate query
 	query = strings.TrimSpace(query)
 	if query == "" {
@@ -183,6 +184,16 @@ func search(database *db.DB, query string, ftsTable string, limit int) ([]Search
 
 	// Escape query for FTS5 - wraps each token in quotes to handle special characters
 	escapedQuery := escapeFTS5Query(query)
+
+	// Headless sessions are excluded before LIMIT so they cannot take the
+	// places of the sessions being searched for.
+	args := []interface{}{escapedQuery}
+	headlessCondition := ""
+	if hideHeadless {
+		headlessCondition = "AND m.session_id NOT IN (SELECT id FROM sessions WHERE entrypoint LIKE ?)"
+		args = append(args, db.HeadlessEntrypointPattern)
+	}
+	args = append(args, limit)
 
 	// Matches are found first and each session's summary is computed once:
 	// the summary fallback scans the session's messages, so computing it per
@@ -197,7 +208,7 @@ func search(database *db.DB, query string, ftsTable string, limit int) ([]Search
 				m.sequence
 			FROM %s
 			JOIN messages m ON %s.rowid = m.id
-			WHERE %s MATCH ?
+			WHERE %s MATCH ? %s
 			ORDER BY %s
 			LIMIT ?
 		),
@@ -223,9 +234,9 @@ func search(database *db.DB, query string, ftsTable string, limit int) ([]Search
 		JOIN sessions s ON s.id = hits.session_id
 		JOIN summaries ON summaries.id = s.id
 		ORDER BY %s
-	`, ftsTable, ftsTable, ftsTable, ftsTable, defaultOrderBy, db.SummaryExpr, hitsOrderBy)
+	`, ftsTable, ftsTable, ftsTable, ftsTable, headlessCondition, defaultOrderBy, db.SummaryExpr, hitsOrderBy)
 
-	rows, err := database.Query(sql, escapedQuery, limit)
+	rows, err := database.Query(sql, args...)
 	if err != nil {
 		return nil, fmt.Errorf("search query failed: %w", err)
 	}
@@ -319,6 +330,10 @@ func filterOnlySessions(database *db.DB, filters SearchFilters) ([]SessionSearch
 	if filters.Provider != "" {
 		query += " AND COALESCE(s.provider, 'claude') = ?"
 		args = append(args, filters.Provider)
+	}
+	if filters.HideHeadless {
+		query += " AND COALESCE(s.entrypoint, '') NOT LIKE ?"
+		args = append(args, db.HeadlessEntrypointPattern)
 	}
 	// Date filtering done in Go due to timestamp format inconsistencies
 

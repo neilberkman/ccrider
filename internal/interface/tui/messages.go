@@ -55,10 +55,11 @@ type exportCompletedMsg struct {
 	err      error
 }
 
-func performSearch(database *db.DB, query string, seq uint64) tea.Cmd {
+func performSearch(database *db.DB, query string, showHeadless bool, seq uint64) tea.Cmd {
 	return func() tea.Msg {
 		// Parse filters from query using centralized core parser
 		filters := search.ParseQuery(query)
+		filters.HideHeadless = !showHeadless
 
 		// Call core search with filters
 		coreResults, err := search.SearchWithFilters(database, filters)
