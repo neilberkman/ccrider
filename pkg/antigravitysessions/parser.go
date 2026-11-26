@@ -5,15 +5,20 @@
 package antigravitysessions
 
 import (
+	"crypto/sha256"
 	"database/sql"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/neilberkman/ccrider/pkg/ccsessions"
@@ -95,23 +100,10 @@ func ParseAll(root string) ([]*ccsessions.ParsedSession, error) {
 	}
 
 	index := loadWorkspaceIndex(root)
-	var paths []string
-	err := filepath.Walk(brainRoot, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if info.IsDir() || filepath.Base(path) != "transcript.jsonl" {
-			return nil
-		}
-		if _, ok := conversationIDFromTranscript(path, brainRoot); ok {
-			paths = append(paths, path)
-		}
-		return nil
-	})
+	paths, err := transcriptPaths(brainRoot)
 	if err != nil {
-		return nil, fmt.Errorf("walk Antigravity transcripts: %w", err)
+		return nil, fmt.Errorf("list Antigravity transcripts: %w", err)
 	}
-	sort.Strings(paths)
 
 	sessions := make([]*ccsessions.ParsedSession, 0, len(paths))
 	for _, path := range paths {
@@ -124,6 +116,98 @@ func ParseAll(root string) ([]*ccsessions.ParsedSession, error) {
 		}
 	}
 	return sessions, nil
+}
+
+// transcriptPaths lists the canonical transcripts under brainRoot, sorted.
+// Antigravity writes each conversation's transcript at
+// <id>/.system_generated/logs/transcript.jsonl, next to tens of thousands of
+// other artifacts, so this checks that one path per conversation directory
+// instead of walking every file under brain.
+func transcriptPaths(brainRoot string) ([]string, error) {
+	entries, err := os.ReadDir(brainRoot)
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		path := filepath.Join(brainRoot, entry.Name(), ".system_generated", "logs", "transcript.jsonl")
+		info, err := os.Lstat(path)
+		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if !info.IsDir() {
+			paths = append(paths, path)
+		}
+	}
+	sort.Strings(paths)
+	return paths, nil
+}
+
+// Fingerprint returns a digest of the size and modification time of every
+// file ParseAll reads from root: the transcripts, the workspace index files
+// and the conversation databases. Any change that can change ParseAll's
+// result changes the digest, and computing it costs a stat per file rather
+// than a parse.
+func Fingerprint(root string) (string, error) {
+	h := sha256.New()
+	add := func(path string) error {
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			rel = path
+		}
+		info, err := os.Stat(path)
+		if errors.Is(err, fs.ErrNotExist) {
+			_, _ = fmt.Fprintf(h, "%s\x00missing\n", filepath.ToSlash(rel))
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(h, "%s\x00%d\x00%d\n", filepath.ToSlash(rel), info.Size(), info.ModTime().UnixNano())
+		return nil
+	}
+
+	brainRoot := filepath.Join(root, "brain")
+	transcripts, err := transcriptPaths(brainRoot)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return "", err
+	}
+	for _, path := range transcripts {
+		if err := add(path); err != nil {
+			return "", err
+		}
+	}
+
+	for _, name := range []string{
+		filepath.Join("cache", "last_conversations.json"),
+		"history.jsonl",
+		"conversation_summaries.db",
+		"conversation_summaries.db-wal",
+	} {
+		if err := add(filepath.Join(root, name)); err != nil {
+			return "", err
+		}
+	}
+
+	conversationsDir := filepath.Join(root, "conversations")
+	entries, err := os.ReadDir(conversationsDir)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return "", err
+	}
+	for _, entry := range entries {
+		if name := entry.Name(); strings.HasSuffix(name, ".db") || strings.HasSuffix(name, ".db-wal") {
+			if err := add(filepath.Join(conversationsDir, name)); err != nil {
+				return "", err
+			}
+		}
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func parseFile(path, brainRoot string, index workspaceIndex) (*ccsessions.ParsedSession, error) {

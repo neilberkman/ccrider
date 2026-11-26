@@ -67,6 +67,10 @@ type Source struct {
 	// parsing the transcript. File sources that record Entrypoint set it so
 	// sync can backfill rows imported before the field existed.
 	EntrypointFn func(ctx context.Context, path string) (string, error)
+	// FingerprintFn returns a cheap digest of everything EnumerateFn reads.
+	// When it matches the digest recorded after the source's last complete
+	// import, an unforced sync skips the source without enumerating it.
+	FingerprintFn func() (string, error)
 }
 
 // DefaultSources returns the standard import sources. Local optional providers
@@ -148,6 +152,9 @@ func DefaultSources(ampEnabled bool) []Source {
 				EnumerateFn: func() ([]*ccsessions.ParsedSession, error) {
 					return antigravitysessions.ParseAll(root.Path)
 				},
+				FingerprintFn: func() (string, error) {
+					return antigravitysessions.Fingerprint(root.Path)
+				},
 			})
 		}
 	}
@@ -184,16 +191,22 @@ type PreparedSource struct {
 	Path     string
 	Total    int
 	Warning  error
-	run      func(context.Context, ProgressCallback, bool) (ImportResult, error)
+	// Unchanged reports that the source's fingerprint matches its last
+	// complete import, so there is nothing to import and Total is 0.
+	Unchanged bool
+	run       func(context.Context, ProgressCallback) (ImportResult, error)
 }
 
 // Run imports the prepared source, reporting per-unit outcomes.
-func (p PreparedSource) Run(ctx context.Context, progress ProgressCallback, force bool) (ImportResult, error) {
-	return p.run(ctx, progress, force)
+func (p PreparedSource) Run(ctx context.Context, progress ProgressCallback) (ImportResult, error) {
+	return p.run(ctx, progress)
 }
 
 // PrepareSource resolves a Source into its work count and import action.
-func (i *Importer) PrepareSource(ctx context.Context, src Source) (PreparedSource, error) {
+// PrepareSource lists what src has to import. force re-imports every session
+// whether or not it changed, and reads a fingerprinted source even when its
+// fingerprint matches.
+func (i *Importer) PrepareSource(ctx context.Context, src Source, force bool) (PreparedSource, error) {
 	if err := ctx.Err(); err != nil {
 		return PreparedSource{}, err
 	}
@@ -220,7 +233,7 @@ func (i *Importer) PrepareSource(ctx context.Context, src Source) (PreparedSourc
 			Provider: src.Provider,
 			Path:     src.Path,
 			Total:    len(refs),
-			run: func(ctx context.Context, progress ProgressCallback, force bool) (ImportResult, error) {
+			run: func(ctx context.Context, progress ProgressCallback) (ImportResult, error) {
 				result, err := i.ImportRemote(ctx, refs, src.Remote.Fetch, progress, force, src.Provider)
 				if src.Optional && errors.Is(err, context.DeadlineExceeded) {
 					return result, nil
@@ -231,6 +244,18 @@ func (i *Importer) PrepareSource(ctx context.Context, src Source) (PreparedSourc
 	}
 
 	if src.EnumerateFn != nil {
+		// The fingerprint is taken before enumerating, so a change made while
+		// enumerating shows up as a mismatch on the next sync.
+		fingerprint := i.sourceFingerprint(src)
+		if fingerprint != "" && !force {
+			recorded, err := i.db.SourceFingerprint(src.Provider, src.Path)
+			if err != nil {
+				return PreparedSource{}, fmt.Errorf("read %s fingerprint: %w", src.Provider, err)
+			}
+			if recorded == fingerprint {
+				return unchangedPreparedSource(src), nil
+			}
+		}
 		sessions, err := src.EnumerateFn()
 		if err != nil {
 			if ctx.Err() != nil {
@@ -245,11 +270,19 @@ func (i *Importer) PrepareSource(ctx context.Context, src Source) (PreparedSourc
 			Provider: src.Provider,
 			Path:     src.Path,
 			Total:    len(sessions),
-			run: func(ctx context.Context, progress ProgressCallback, force bool) (ImportResult, error) {
+			run: func(ctx context.Context, progress ProgressCallback) (ImportResult, error) {
 				if err := ctx.Err(); err != nil {
 					return ImportResult{}, err
 				}
-				return i.ImportEnumerated(ctx, sessions, progress, force, src.Provider)
+				result, err := i.ImportEnumerated(ctx, sessions, progress, force, src.Provider)
+				// Only a complete import vouches for the fingerprint: a failed
+				// or deferred session must be read again next time.
+				if err == nil && fingerprint != "" && len(result.Failures) == 0 && len(result.Deferred) == 0 {
+					if err := i.db.SetSourceFingerprint(src.Provider, src.Path, fingerprint); err != nil {
+						return result, fmt.Errorf("record %s fingerprint: %w", src.Provider, err)
+					}
+				}
+				return result, err
 			},
 		}, nil
 	}
@@ -268,7 +301,7 @@ func (i *Importer) PrepareSource(ctx context.Context, src Source) (PreparedSourc
 		Provider: src.Provider,
 		Path:     src.Path,
 		Total:    len(files),
-		run: func(ctx context.Context, progress ProgressCallback, force bool) (ImportResult, error) {
+		run: func(ctx context.Context, progress ProgressCallback) (ImportResult, error) {
 			if err := ctx.Err(); err != nil {
 				return ImportResult{}, err
 			}
@@ -296,10 +329,34 @@ func skippedPreparedSource(src Source, warning error) PreparedSource {
 		Provider: src.Provider,
 		Path:     src.Path,
 		Warning:  warning,
-		run: func(context.Context, ProgressCallback, bool) (ImportResult, error) {
+		run: func(context.Context, ProgressCallback) (ImportResult, error) {
 			return ImportResult{}, nil
 		},
 	}
+}
+
+func unchangedPreparedSource(src Source) PreparedSource {
+	return PreparedSource{
+		Provider:  src.Provider,
+		Path:      src.Path,
+		Unchanged: true,
+		run: func(context.Context, ProgressCallback) (ImportResult, error) {
+			return ImportResult{}, nil
+		},
+	}
+}
+
+// sourceFingerprint returns src's current fingerprint, or "" when it has none
+// or it cannot be computed; either way the source is enumerated as usual.
+func (i *Importer) sourceFingerprint(src Source) string {
+	if src.FingerprintFn == nil {
+		return ""
+	}
+	fingerprint, err := src.FingerprintFn()
+	if err != nil {
+		return ""
+	}
+	return fingerprint
 }
 
 // SyncSources runs local sources first, then gives each remote source its own
@@ -349,7 +406,7 @@ func CountJSONLFiles(dirPath string, skipSubagents bool) (int, error) {
 func (i *Importer) SyncAll(ctx context.Context, sources []Source, force bool) error {
 	var failures []error
 	for _, src := range sources {
-		prepared, err := i.PrepareSource(ctx, src)
+		prepared, err := i.PrepareSource(ctx, src, force)
 		if err != nil {
 			failures = append(failures, err)
 			return errors.Join(failures...)
@@ -358,7 +415,7 @@ func (i *Importer) SyncAll(ctx context.Context, sources []Source, force bool) er
 			failures = append(failures, fmt.Errorf("%s sync skipped: %w", prepared.Provider, prepared.Warning))
 			continue
 		}
-		result, runErr := prepared.Run(ctx, nil, force)
+		result, runErr := prepared.Run(ctx, nil)
 		for _, failure := range result.Failures {
 			failures = append(failures, fmt.Errorf("%s %s: %w", src.Provider, failure.ID, failure.Err))
 		}

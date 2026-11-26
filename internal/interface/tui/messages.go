@@ -301,7 +301,7 @@ func startSyncWithProgress(manager *syncManager, database *db.DB) tea.Cmd {
 		sources := importer.DefaultSources(cfg.AmpEnabled)
 
 		err := importer.SyncSources(parent, sources, importer.DefaultRemoteSyncTimeout, func(sourceCtx context.Context, src importer.Source) error {
-			p, err := imp.PrepareSource(sourceCtx, src)
+			p, err := imp.PrepareSource(sourceCtx, src, false)
 			if err != nil {
 				warnings = append(warnings, fmt.Sprintf("%s sync skipped: %v", src.Provider, err))
 				return nil
@@ -311,7 +311,7 @@ func startSyncWithProgress(manager *syncManager, database *db.DB) tea.Cmd {
 				return nil
 			}
 			progress.beginSource(p.Provider, p.Total)
-			result, err := p.Run(sourceCtx, progress, false)
+			result, err := p.Run(sourceCtx, progress)
 			if err != nil {
 				warnings = append(warnings, fmt.Sprintf("%s sync failed: %v", p.Provider, err))
 			}

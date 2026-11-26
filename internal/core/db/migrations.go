@@ -57,12 +57,32 @@ func (db *DB) migrate() error {
 		return err
 	}
 
+	// Migration 11: Fingerprints that let sync skip unchanged sources.
+	if err := db.migration011CreateSourceFingerprints(); err != nil {
+		return err
+	}
+
 	return nil
 }
 
 // migration009CreateWatchSignals creates the signal mailbox. Channel rows
 // record how far pruning has reached so a reader that fell behind retention
 // is told so instead of silently missing signals.
+// migration011CreateSourceFingerprints records, per source, a digest of the
+// inputs it was last imported from completely (see SourceFingerprint).
+func (db *DB) migration011CreateSourceFingerprints() error {
+	_, err := db.conn.Exec(`
+		CREATE TABLE IF NOT EXISTS source_fingerprints (
+			provider TEXT NOT NULL,
+			path TEXT NOT NULL,
+			fingerprint TEXT NOT NULL,
+			recorded_at INTEGER NOT NULL,
+			PRIMARY KEY (provider, path)
+		)
+	`)
+	return err
+}
+
 func (db *DB) migration009CreateWatchSignals() error {
 	_, err := db.conn.Exec(`
 		CREATE TABLE IF NOT EXISTS watch_signals (
