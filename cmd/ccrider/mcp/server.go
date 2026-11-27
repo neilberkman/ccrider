@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -29,8 +30,8 @@ type SearchSessionsArgs struct {
 	Provider         string `json:"provider,omitempty" jsonschema:"description=Filter by provider"`
 	CurrentSessionID string `json:"current_session_id,omitempty" jsonschema:"description=Current session ID to search within (searches only this session)"`
 	ExcludeCurrent   bool   `json:"exclude_current,omitempty" jsonschema:"description=Exclude current session from results (searches only other sessions)"`
-	AfterDate        string `json:"after_date,omitempty" jsonschema:"description=Only sessions updated after this date (ISO 8601 format, e.g. 2025-01-01)"`
-	BeforeDate       string `json:"before_date,omitempty" jsonschema:"description=Only sessions updated before this date (ISO 8601 format)"`
+	AfterDate        string `json:"after_date,omitempty" jsonschema:"description=Only sessions updated after this date: YYYY-MM-DD, YYYY-MM-DDTHH:MM:SS (UTC) or RFC3339"`
+	BeforeDate       string `json:"before_date,omitempty" jsonschema:"description=Only sessions updated before this date: YYYY-MM-DD, YYYY-MM-DDTHH:MM:SS (UTC) or RFC3339"`
 	AnchorPhrase     string `json:"anchor_phrase,omitempty" jsonschema:"description=Exact phrase that must exist in the session (used to find current session - pick a unique phrase you just said/saw)"`
 	ExactMatch       bool   `json:"exact_match,omitempty" jsonschema:"description=If true, query is treated as an exact phrase (auto-quoted for you)"`
 }
@@ -225,9 +226,9 @@ func StartServer(dbPath, version string) error {
 		mcp.WithBoolean("exclude_current",
 			mcp.Description("If true, excludes current session from results (searches only other sessions). Requires current_session_id to be set.")),
 		mcp.WithString("after_date",
-			mcp.Description("Only sessions updated after this date (ISO 8601 format, e.g. '2025-01-01' or '2025-01-08T10:00:00Z')")),
+			mcp.Description("Only sessions updated after this date: YYYY-MM-DD, YYYY-MM-DDTHH:MM:SS (UTC) or RFC3339, e.g. '2025-01-01' or '2025-01-08T10:00:00Z'")),
 		mcp.WithString("before_date",
-			mcp.Description("Only sessions updated before this date (ISO 8601 format)")),
+			mcp.Description("Only sessions updated before this date: YYYY-MM-DD, YYYY-MM-DDTHH:MM:SS (UTC) or RFC3339")),
 		mcp.WithString("anchor_phrase",
 			mcp.Description("Exact phrase that must exist in the session. Use this to find your current session: pick a unique phrase you just said or saw, and the search will only return sessions containing that phrase. Combined with recency, this reliably identifies the current conversation.")),
 		mcp.WithBoolean("exact_match",
@@ -411,6 +412,9 @@ func makeSearchSessionsHandler(database *db.DB, liveCache *liveness.Cache, synce
 					syncer.Refresh(ctx, time.Now(), toolSyncWait)
 				}
 				anchorResults, lastErr = search.SearchWithFilters(database, anchorFilters)
+				if errors.Is(lastErr, search.ErrInvalidDate) {
+					break // A retry can't make the date readable
+				}
 				if lastErr != nil {
 					continue
 				}
