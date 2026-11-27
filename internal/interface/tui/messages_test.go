@@ -448,3 +448,64 @@ func TestSearchFollowsHeadlessToggle(t *testing.T) {
 		t.Errorf("search view with headless shown = %q, want the plain count", view)
 	}
 }
+
+func TestListFooterCountsHiddenHeadlessSessions(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "hidden-count.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	for _, s := range []struct{ id, entrypoint string }{
+		{"interactive", "cli"},
+		{"headless-1", "sdk-cli"},
+		{"headless-2", "sdk-ts"},
+	} {
+		res, err := database.Exec(`
+			INSERT INTO sessions (session_id, project_path, summary, provider, entrypoint, created_at, updated_at)
+			VALUES (?, '/p', 'Test session', 'claude', ?, datetime('now'), datetime('now'))
+		`, s.id, s.entrypoint)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rowID, err := res.LastInsertId()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := database.Exec(`
+			INSERT INTO messages (uuid, session_id, type, sender, text_content, timestamp, sequence)
+			VALUES (?, ?, 'user', 'user', 'hello', datetime('now'), 1)
+		`, s.id+"-msg", rowID); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for _, tc := range []struct {
+		showHeadless bool
+		hidden       int
+	}{{false, 2}, {true, 0}} {
+		loaded, ok := loadSessionsNow(database, false, tc.showHeadless, "", 1, false).(sessionsLoadedMsg)
+		if !ok {
+			t.Fatalf("showHeadless=%v: load did not return sessionsLoadedMsg", tc.showHeadless)
+		}
+		if loaded.hiddenHeadless != tc.hidden {
+			t.Errorf("showHeadless=%v: hiddenHeadless = %d, want %d", tc.showHeadless, loaded.hiddenHeadless, tc.hidden)
+		}
+	}
+
+	model := NewWithContext(context.Background(), database)
+	defer model.Close()
+	model.initialLoad = false
+	model.syncing = false
+	for _, tc := range []struct {
+		hidden int
+		footer string
+	}{
+		{425, "a show headless (425 hidden) •"},
+		{0, "a show headless •"},
+	} {
+		model.hiddenHeadless = tc.hidden
+		if view := model.viewList(); !strings.Contains(view, tc.footer) {
+			t.Errorf("hiddenHeadless=%d: view = %q, want footer containing %q", tc.hidden, view, tc.footer)
+		}
+	}
+}

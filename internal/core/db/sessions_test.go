@@ -239,3 +239,70 @@ func TestListSessionsHideHeadless(t *testing.T) {
 		}
 	}
 }
+
+// CountHeadlessSessions counts the sessions pressing 'a' would add to the
+// list: headless sessions that pass every other ListSessions filter.
+func TestCountHeadlessSessions(t *testing.T) {
+	database := newSessionTestDB(t)
+	seed := []struct {
+		sessionID, project, entrypoint string
+		withMessage                    bool
+	}{
+		{"interactive", "/test/project", "cli", true},
+		{"headless-here", "/test/project", "sdk-cli", true},
+		{"headless-there", "/other/project", "sdk-ts", true},
+		{"headless-empty", "/test/project", "sdk-cli", false}, // no messages: never listed
+	}
+	for _, s := range seed {
+		res, err := database.Exec(`
+			INSERT INTO sessions (session_id, project_path, summary, provider, entrypoint, created_at, updated_at)
+			VALUES (?, ?, 'Test session', 'claude', ?, datetime('now'), datetime('now'))
+		`, s.sessionID, s.project, s.entrypoint)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !s.withMessage {
+			continue
+		}
+		rowID, err := res.LastInsertId()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := database.Exec(`
+			INSERT INTO messages (uuid, session_id, type, sender, text_content, timestamp, sequence)
+			VALUES (?, ?, 'user', 'user', 'hello', datetime('now'), 1)
+		`, s.sessionID+"-msg", rowID); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for _, tc := range []struct {
+		opts ListSessionsOptions
+		want int
+	}{
+		{ListSessionsOptions{}, 2},
+		{ListSessionsOptions{ProjectPath: "/other"}, 1},
+		{ListSessionsOptions{Provider: "codex"}, 0},
+	} {
+		got, err := database.CountHeadlessSessions(tc.opts)
+		if err != nil {
+			t.Fatalf("CountHeadlessSessions(%+v) error = %v", tc.opts, err)
+		}
+		if got != tc.want {
+			t.Errorf("CountHeadlessSessions(%+v) = %d, want %d", tc.opts, got, tc.want)
+		}
+		shown, hidden := tc.opts, tc.opts
+		hidden.HideHeadless = true
+		all, err := database.ListSessions(shown)
+		if err != nil {
+			t.Fatal(err)
+		}
+		visible, err := database.ListSessions(hidden)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if diff := len(all) - len(visible); got != diff {
+			t.Errorf("CountHeadlessSessions(%+v) = %d, but pressing 'a' adds %d sessions", tc.opts, got, diff)
+		}
+	}
+}

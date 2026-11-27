@@ -234,6 +234,9 @@ func (m Model) viewList() string {
 		helpText = "⏳ Syncing..."
 	} else {
 		headlessKey := "a show headless"
+		if !m.showHeadless && m.hiddenHeadless > 0 {
+			headlessKey = fmt.Sprintf("a show headless (%d hidden)", m.hiddenHeadless)
+		}
 		if m.showHeadless {
 			headlessKey = "a hide headless"
 		}
