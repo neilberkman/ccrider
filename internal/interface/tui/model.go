@@ -54,6 +54,7 @@ type Model struct {
 	searchViewOffset  int                // First visible result index (for scrolling)
 	searchSeq         uint64             // Sequence number to discard stale search results
 	searchCancel      context.CancelFunc // Stops the running search, if any
+	searchPending     bool               // A search for the current query is running
 
 	// In-session search state
 	inSessionSearch         textinput.Model
@@ -413,12 +414,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		ctx, cancel := context.WithCancel(context.Background())
 		m.searchCancel = cancel
+		m.searchPending = true
 		return m, performSearch(ctx, m.db, m.searchInput.Value(), m.showHeadless, m.searchSeq)
 
 	case searchResultsMsg:
 		// Only accept results if sequence matches current search (discard stale results)
 		if msg.seq == m.searchSeq {
 			m.searchResults = msg.results
+			m.searchPending = false
 		}
 		return m, nil
 
@@ -482,6 +485,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case errMsg:
 		m.err = msg.err
+		m.searchPending = false
 		return m, nil
 	}
 

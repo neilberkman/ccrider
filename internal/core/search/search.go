@@ -39,6 +39,14 @@ type SearchFilters struct {
 	HideHeadless     bool   // Exclude headless runs (claude -p, Agent SDK)
 }
 
+// Searchable reports whether filters describe a search that can run: a query
+// of at least two characters, or a date or project filter. A search that
+// cannot run returns no results, which callers should present as "keep
+// typing" rather than "nothing found".
+func (f SearchFilters) Searchable() bool {
+	return len(strings.TrimSpace(f.Query)) >= 2 || f.AfterDate != "" || f.BeforeDate != "" || f.ProjectPath != ""
+}
+
 // SessionSearchResult represents search results grouped by session
 type SessionSearchResult struct {
 	SessionID      string
@@ -54,10 +62,12 @@ type SessionSearchResult struct {
 }
 
 // Default sort order for search results (most recent first)
-const defaultOrderBy = "m.timestamp DESC"
+// Messages with the same timestamp are ordered by id, so the order (and which
+// matches the LIMIT keeps) does not depend on the query plan.
+const defaultOrderBy = "m.timestamp DESC, m.id DESC"
 
 // hitsOrderBy is defaultOrderBy applied to the matched-message rows
-const hitsOrderBy = "hits.timestamp DESC"
+const hitsOrderBy = "hits.timestamp DESC, hits.id DESC"
 
 // Search performs a full-text search using the natural language FTS table
 // Results are ordered by timestamp (most recent first)
@@ -210,27 +220,35 @@ func search(ctx context.Context, database *db.DB, query string, ftsTable string,
 		headlessCondition = "AND m.session_id NOT IN (SELECT id FROM sessions WHERE entrypoint LIKE ?)"
 		args = append(args, db.HeadlessEntrypointPattern)
 	}
-	args = append(args, limit)
+	// The snippets' MATCH runs once more, restricted to the kept rows.
+	args = append(args, limit, escapedQuery)
 
-	// Matches are found first and each session's summary is computed once:
-	// the summary fallback scans the session's messages, so computing it per
-	// matching message multiplies that scan by the session's match count.
+	// The newest matches are picked first, and snippets and summaries are
+	// computed only for them. snippet() costs far more than finding a match,
+	// so computing it before the sort and LIMIT made a common word take
+	// seconds: 116k matches of "work" took 13 s against 0.5 s this way. Each
+	// session's summary is computed once, not once per matching message.
 	sql := fmt.Sprintf(`
-		WITH hits AS (
+		WITH hits AS MATERIALIZED (
 			SELECT
+				m.id,
 				m.uuid,
 				m.session_id,
-				snippet(%s, -1, '', '', '...', 64) as snippet,
 				m.timestamp,
 				m.sequence
-			FROM %s
-			JOIN messages m ON %s.rowid = m.id
-			WHERE %s MATCH ? %s
-			ORDER BY %s
+			FROM %[1]s
+			JOIN messages m ON %[1]s.rowid = m.id
+			WHERE %[1]s MATCH ? %[2]s
+			ORDER BY %[3]s
 			LIMIT ?
 		),
+		snippets AS MATERIALIZED (
+			SELECT %[1]s.rowid AS id, snippet(%[1]s, -1, '', '', '...', 64) AS snippet
+			FROM %[1]s
+			WHERE %[1]s MATCH ? AND %[1]s.rowid IN (SELECT id FROM hits)
+		),
 		summaries AS MATERIALIZED (
-			SELECT s.id, %s as summary
+			SELECT s.id, %[4]s as summary
 			FROM sessions s
 			LEFT JOIN session_summaries ss ON s.id = ss.session_id
 			WHERE s.id IN (SELECT session_id FROM hits)
@@ -239,7 +257,7 @@ func search(ctx context.Context, database *db.DB, query string, ftsTable string,
 			hits.uuid,
 			s.session_id,
 			summaries.summary,
-			hits.snippet,
+			COALESCE(snippets.snippet, ''),
 			hits.timestamp,
 			s.project_path,
 			COALESCE(s.cwd, s.project_path),
@@ -250,8 +268,9 @@ func search(ctx context.Context, database *db.DB, query string, ftsTable string,
 		FROM hits
 		JOIN sessions s ON s.id = hits.session_id
 		JOIN summaries ON summaries.id = s.id
-		ORDER BY %s
-	`, ftsTable, ftsTable, ftsTable, ftsTable, headlessCondition, defaultOrderBy, db.SummaryExpr, hitsOrderBy)
+		LEFT JOIN snippets ON snippets.id = hits.id
+		ORDER BY %[5]s
+	`, ftsTable, headlessCondition, defaultOrderBy, db.SummaryExpr, hitsOrderBy)
 
 	rows, err := database.QueryContext(ctx, sql, args...)
 	if err != nil {

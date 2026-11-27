@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/neilberkman/ccrider/internal/core/db"
@@ -625,5 +626,53 @@ func TestSearchWithFiltersContextStopsWhenCancelled(t *testing.T) {
 		if _, err := SearchWithFiltersContext(ctx, database, filters); !errors.Is(err, context.Canceled) {
 			t.Errorf("SearchWithFiltersContext(%+v) error = %v, want context.Canceled", filters, err)
 		}
+	}
+}
+
+// search keeps the newest matches, breaking timestamp ties by message id, and
+// every match it keeps has its snippet: snippets are computed after the LIMIT
+// now, only for the kept rows.
+func TestSearchKeepsNewestMatchesWithSnippets(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "snippets.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	res, err := database.Exec(`
+		INSERT INTO sessions (session_id, project_path, summary, created_at, updated_at)
+		VALUES ('s', '/p', 'Parser work', datetime('now'), datetime('now'))
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionRow, err := res.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Ten matches; the last four share the newest timestamp.
+	for i := range 10 {
+		ts := fmt.Sprintf("2026-11-%02dT10:00:00Z", 10+min(i, 6))
+		if _, err := database.Exec(`
+			INSERT INTO messages (uuid, session_id, type, text_content, timestamp, sequence)
+			VALUES (?, ?, 'user', ?, ?, ?)
+		`, fmt.Sprintf("m%d", i), sessionRow, fmt.Sprintf("intro %d, then the parser keeps going", i), ts, i+1); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	hits, err := search(context.Background(), database, "parser", "messages_fts", 5, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, h := range hits {
+		got = append(got, h.MessageUUID)
+		if !strings.Contains(h.MessageText, "parser") {
+			t.Errorf("%s: snippet = %q, want one containing the match", h.MessageUUID, h.MessageText)
+		}
+	}
+	// Newest first, and among the four tied messages the higher id first.
+	if want := []string{"m9", "m8", "m7", "m6", "m5"}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("kept matches = %v, want %v", got, want)
 	}
 }

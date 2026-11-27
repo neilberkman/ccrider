@@ -31,7 +31,7 @@ func init() {
 // Supported date formats:
 //   - ISO 8601: 2024-01-15, 2024-01-15T10:30:00
 //   - Go duration: 3h, 24h; day or week count: 7d, 2w (treated as "X ago")
-//   - Natural language: yesterday, today, tomorrow
+//   - Natural language: yesterday, today, tomorrow (the start of that day)
 //   - Relative: "3 days ago", "last week", "in 2 hours"
 //   - Hyphenated: 3-days-ago, last-week (converted to spaces)
 //
@@ -112,6 +112,16 @@ func parseDate(dateStr string) *time.Time {
 	// 3. Convert hyphenated format to spaces for natural language
 	// "3-days-ago" -> "3 days ago", "last-week" -> "last week"
 	normalizedStr := strings.ReplaceAll(dateStr, "-", " ")
+
+	// A named day means the start of that day in local time, so after:today
+	// covers all of today. The natural language parser reads these as the
+	// same clock time on that day: after:today meant "after now" and found
+	// nothing.
+	if offset, ok := map[string]int{"today": 0, "yesterday": -1, "tomorrow": 1}[normalizedStr]; ok {
+		now := time.Now()
+		t := time.Date(now.Year(), now.Month(), now.Day()+offset, 0, 0, 0, 0, now.Location())
+		return &t
+	}
 
 	// The natural language parser has no rule for "last week", so it means
 	// seven days ago, like the other relative forms.
