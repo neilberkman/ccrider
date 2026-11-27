@@ -14,6 +14,7 @@ func (m Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch msg.String() {
 	case "esc":
+		m.cancelSearch()
 		m.mode = listView
 		m.searchInput.SetValue("")
 		m.searchResults = nil
@@ -61,10 +62,20 @@ func (m Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.searchSelectedIdx = 0
 	m.searchViewOffset = 0 // Reset scroll on new search
 	m.searchSeq++          // Increment sequence to invalidate in-flight searches
+	m.cancelSearch()       // Free the database for the search this keystroke leads to
 	seq := m.searchSeq
 	return m, tea.Batch(cmd, tea.Tick(searchTypingPause, func(time.Time) tea.Msg {
 		return searchPauseMsg{seq: seq}
 	}))
+}
+
+// cancelSearch stops the running search, if any. Its command then reports
+// nothing, and the database connection is free for the next query.
+func (m *Model) cancelSearch() {
+	if m.searchCancel != nil {
+		m.searchCancel()
+		m.searchCancel = nil
+	}
 }
 
 func (m Model) viewSearch() string {

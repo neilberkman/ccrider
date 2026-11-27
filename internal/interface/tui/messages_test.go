@@ -414,7 +414,7 @@ func TestSearchFollowsHeadlessToggle(t *testing.T) {
 
 	searchIDs := func(showHeadless bool) []string {
 		t.Helper()
-		msg, ok := performSearch(database, "deploy", showHeadless, 1)().(searchResultsMsg)
+		msg, ok := performSearch(context.Background(), database, "deploy", showHeadless, 1)().(searchResultsMsg)
 		if !ok {
 			t.Fatalf("performSearch(showHeadless=%v) did not return searchResultsMsg", showHeadless)
 		}

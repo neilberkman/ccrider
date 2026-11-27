@@ -1,6 +1,7 @@
 package search
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"sort"
@@ -60,18 +61,26 @@ const hitsOrderBy = "hits.timestamp DESC"
 // Search performs a full-text search using the natural language FTS table
 // Results are ordered by timestamp (most recent first)
 func Search(database *db.DB, query string) ([]SearchResult, error) {
-	return search(database, query, "messages_fts", 1000, false)
+	return search(context.Background(), database, query, "messages_fts", 1000, false)
 }
 
 // SearchWithFilters performs filtered search and groups results by session
 // This consolidates business logic that was duplicated across TUI and MCP
 func SearchWithFilters(database *db.DB, filters SearchFilters) ([]SessionSearchResult, error) {
+	return SearchWithFiltersContext(context.Background(), database, filters)
+}
+
+// SearchWithFiltersContext is SearchWithFilters, stopping the query when ctx
+// is done. The database has one connection, so a caller that abandons a
+// search (such as live search as the user types) should cancel it rather
+// than leave it running ahead of the next query.
+func SearchWithFiltersContext(ctx context.Context, database *db.DB, filters SearchFilters) ([]SessionSearchResult, error) {
 	query := strings.TrimSpace(filters.Query)
 	hasFilters := filters.AfterDate != "" || filters.BeforeDate != "" || filters.ProjectPath != ""
 
 	// If no query but has filters, do filter-only search (no FTS)
 	if len(query) < 2 && hasFilters {
-		return filterOnlySessions(database, filters)
+		return filterOnlySessions(ctx, database, filters)
 	}
 
 	// Require minimum 2 characters for text search
@@ -80,7 +89,7 @@ func SearchWithFilters(database *db.DB, filters SearchFilters) ([]SessionSearchR
 	}
 
 	// Perform core search
-	results, err := search(database, query, "messages_fts", 1000, filters.HideHeadless)
+	results, err := search(ctx, database, query, "messages_fts", 1000, filters.HideHeadless)
 	if err != nil {
 		return nil, err
 	}
@@ -171,11 +180,11 @@ func SearchWithFilters(database *db.DB, filters SearchFilters) ([]SessionSearchR
 // SearchCode performs a full-text search using the code-optimized FTS table
 // This table uses unicode61 tokenizer without stemming to preserve code identifiers
 func SearchCode(database *db.DB, query string) ([]SearchResult, error) {
-	return search(database, query, "messages_fts_code", 1000, false)
+	return search(context.Background(), database, query, "messages_fts_code", 1000, false)
 }
 
 // search is the internal implementation shared by Search and SearchCode
-func search(database *db.DB, query string, ftsTable string, limit int, hideHeadless bool) ([]SearchResult, error) {
+func search(ctx context.Context, database *db.DB, query string, ftsTable string, limit int, hideHeadless bool) ([]SearchResult, error) {
 	// Validate query
 	query = strings.TrimSpace(query)
 	if query == "" {
@@ -236,7 +245,7 @@ func search(database *db.DB, query string, ftsTable string, limit int, hideHeadl
 		ORDER BY %s
 	`, ftsTable, ftsTable, ftsTable, ftsTable, headlessCondition, defaultOrderBy, db.SummaryExpr, hitsOrderBy)
 
-	rows, err := database.Query(sql, args...)
+	rows, err := database.QueryContext(ctx, sql, args...)
 	if err != nil {
 		return nil, fmt.Errorf("search query failed: %w", err)
 	}
@@ -305,7 +314,7 @@ func calculateRelevanceScore(query string, session *SessionSearchResult, now tim
 }
 
 // filterOnlySessions returns sessions matching date/project filters without text search
-func filterOnlySessions(database *db.DB, filters SearchFilters) ([]SessionSearchResult, error) {
+func filterOnlySessions(ctx context.Context, database *db.DB, filters SearchFilters) ([]SessionSearchResult, error) {
 	// Build query with optional filters
 	query := `
 		SELECT
@@ -339,7 +348,7 @@ func filterOnlySessions(database *db.DB, filters SearchFilters) ([]SessionSearch
 
 	query += " ORDER BY s.updated_at DESC LIMIT 500" // Fetch more, filter in Go
 
-	rows, err := database.Query(query, args...)
+	rows, err := database.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("filter query failed: %w", err)
 	}
@@ -392,6 +401,9 @@ func filterOnlySessions(database *db.DB, filters SearchFilters) ([]SessionSearch
 		if len(results) >= 100 {
 			break
 		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("filter query failed: %w", err)
 	}
 
 	return results, nil

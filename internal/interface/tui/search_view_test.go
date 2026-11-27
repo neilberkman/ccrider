@@ -136,3 +136,31 @@ func TestSearchAfterPauseFollowsHeadlessToggle(t *testing.T) {
 		t.Errorf("headless shown: search found %v, want both sessions", ids)
 	}
 }
+
+// A keystroke cancels the search already running, so the slow search for a
+// short prefix can't hold the database while the user keeps typing. The
+// cancelled search reports nothing: no stale results and no error.
+func TestKeystrokeCancelsRunningSearch(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "cancel.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	model := NewWithContext(context.Background(), database)
+	defer model.Close()
+	model.mode = searchView
+	model.searchInput.Focus()
+
+	for _, r := range "re" {
+		updated, _ := model.updateSearch(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		model = updated.(Model)
+	}
+	updated, running := model.Update(searchPauseMsg{seq: model.searchSeq})
+	model = updated.(Model)
+	updated, _ = model.updateSearch(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	model = updated.(Model)
+
+	if msgs := runCmd(running); len(msgs) != 1 || msgs[0] != nil {
+		t.Errorf("search overtaken by a keystroke produced %#v, want nothing", msgs)
+	}
+}
