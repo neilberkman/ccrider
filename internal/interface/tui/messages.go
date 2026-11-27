@@ -93,6 +93,7 @@ func performSearch(ctx context.Context, database *db.DB, query string, showHeadl
 		for _, coreSession := range coreResults {
 			result := searchResult{
 				SessionID: coreSession.SessionID,
+				Provider:  coreSession.Provider,
 				Summary:   coreSession.SessionSummary,
 				Project:   coreSession.ProjectPath,
 				UpdatedAt: coreSession.UpdatedAt,

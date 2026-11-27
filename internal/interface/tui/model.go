@@ -132,6 +132,7 @@ type messageItem struct {
 
 type searchResult struct {
 	SessionID string
+	Provider  string
 	Summary   string
 	Project   string
 	UpdatedAt string
