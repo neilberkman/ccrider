@@ -11,7 +11,7 @@ import (
 )
 
 // A session titled by a multi-line pasted first prompt must print as one
-// title line, the same as `ccrider list`.
+// title line, the same as `ccrider list`, and each match as one line.
 func TestSearchPrintsPastedFirstPromptOnOneLine(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "search-output.db")
 	database, err := db.New(path)
@@ -60,5 +60,8 @@ func TestSearchPrintsPastedFirstPromptOnOneLine(t *testing.T) {
 
 	if !strings.Contains(string(out), "=== Session 1 ===\nRefactor the parser so it streams\nID: pasted\n") {
 		t.Errorf("output = %q, want the title on one line between the header and the ID", out)
+	}
+	if !strings.Contains(string(out), "  Match 1:\n  <pasted_content> Refactor the parser so it streams </pasted_content>\n") {
+		t.Errorf("output = %q, want the match on one line under its heading", out)
 	}
 }

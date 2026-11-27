@@ -448,3 +448,31 @@ func TestSearchFollowsHeadlessToggle(t *testing.T) {
 		t.Errorf("search view with headless shown = %q, want the plain count", view)
 	}
 }
+
+// An FTS snippet can hold newlines, and the match can sit after one. The
+// search view must show the whole snippet on one line, match included.
+func TestSearchViewShowsMultiLineSnippetOnOneLine(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "snippet.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	model := NewWithContext(context.Background(), database)
+	defer model.Close()
+	model.width, model.height = 120, 40
+	model.searchResults = []searchResult{{
+		SessionID: "s", Summary: "Title", Project: "/p",
+		Matches: []matchInfo{{Snippet: "...intro line\n\nthe parser streams..."}},
+	}}
+
+	view := model.viewSearch()
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(line, "intro line") {
+			if !strings.Contains(line, "the") || !strings.Contains(line, "streams") {
+				t.Errorf("snippet line = %q, want the whole snippet, match included, on one line", line)
+			}
+			return
+		}
+	}
+	t.Errorf("view = %q, want the snippet shown", view)
+}

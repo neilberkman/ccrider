@@ -66,10 +66,17 @@ func DisplaySummary(summary string, maxRunes int) string {
 			}
 		}
 	}
-	summary = strings.Join(strings.Fields(summary), " ")
-	runes := []rune(summary)
+	return DisplayLine(summary, maxRunes)
+}
+
+// DisplayLine fits text on one line for display: it collapses all whitespace,
+// newlines included, to single spaces and caps the result at maxRunes runes,
+// marking a cut with an ellipsis.
+func DisplayLine(text string, maxRunes int) string {
+	text = strings.Join(strings.Fields(text), " ")
+	runes := []rune(text)
 	if len(runes) <= maxRunes {
-		return summary
+		return text
 	}
 	return string(runes[:maxRunes]) + "…"
 }
