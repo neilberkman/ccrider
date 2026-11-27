@@ -22,6 +22,7 @@ type errMsg struct {
 
 type sessionsLoadedMsg struct {
 	sessions         []sessionItem
+	hiddenHeadless   int // headless sessions the load left out
 	generation       uint64
 	restoreSelection bool
 }
@@ -130,9 +131,16 @@ func loadSessionsNow(database *db.DB, filterByProject bool, showHeadless bool, p
 		filterPath = projectPath
 	}
 
-	coreSessions, err := database.ListSessions(db.ListSessionsOptions{ProjectPath: filterPath, HideHeadless: !showHeadless})
+	opts := db.ListSessionsOptions{ProjectPath: filterPath, HideHeadless: !showHeadless}
+	coreSessions, err := database.ListSessions(opts)
 	if err != nil {
 		return sessionsLoadFailedMsg{err: err, generation: generation}
+	}
+	hiddenHeadless := 0
+	if opts.HideHeadless {
+		if hiddenHeadless, err = database.CountHeadlessSessions(opts); err != nil {
+			return sessionsLoadFailedMsg{err: err, generation: generation}
+		}
 	}
 
 	// Best-effort liveness: a failed scan means no badges, never a failed load.
@@ -161,23 +169,7 @@ func loadSessionsNow(database *db.DB, filterByProject bool, showHeadless bool, p
 		sessions = append(sessions, s)
 	}
 
-	return sessionsLoadedMsg{sessions: sessions, generation: generation, restoreSelection: restoreSelection}
-}
-
-func firstLine(s string, maxLen int) string {
-	// Find first newline or max length
-	for i, r := range s {
-		if r == '\n' || i >= maxLen {
-			if i > maxLen {
-				return s[:maxLen] + "..."
-			}
-			return s[:i]
-		}
-	}
-	if len(s) > maxLen {
-		return s[:maxLen] + "..."
-	}
-	return s
+	return sessionsLoadedMsg{sessions: sessions, hiddenHeadless: hiddenHeadless, generation: generation, restoreSelection: restoreSelection}
 }
 
 // loadSessionForLaunch loads just the info needed to launch a session (no messages)

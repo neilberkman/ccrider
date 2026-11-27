@@ -153,7 +153,7 @@ func (m Model) viewSearch() string {
 			// Session header (one rune of the budget is kept for the ellipsis)
 			summary := coresession.DisplaySummary(result.Summary, maxSummaryLen-1)
 			if summary == "" && len(result.Matches) > 0 {
-				summary = firstLine(result.Matches[0].Snippet, 60)
+				summary = coresession.DisplayLine(result.Matches[0].Snippet, 60)
 			}
 			if summary == "" {
 				summary = "[No summary]"
@@ -185,9 +185,10 @@ func (m Model) viewSearch() string {
 			// Show each match with clear separation
 			query := m.searchInput.Value()
 			for j, match := range result.Matches {
-				snippet := highlightQuery(match.Snippet, query)
-				// Show full snippet (100 chars max to match core extraction)
-				snippetLine := firstLine(snippet, 100)
+				// Fit the snippet on one line (100 runes max to match core
+				// extraction) before highlighting, so the cut never lands inside
+				// a highlight's escape codes.
+				snippetLine := highlightQuery(coresession.DisplayLine(match.Snippet, 100), query)
 				fmt.Fprintf(&b, "    %s", snippetLine)
 
 				if j < len(result.Matches)-1 {

@@ -543,6 +543,70 @@ func TestSearchHideHeadless(t *testing.T) {
 	}
 }
 
+// MCP passes dates as the user wrote them, such as 2025-01-01, not as RFC3339.
+// Both search paths must honor them, and a date that can't be read must be an
+// error rather than a filter that silently matches everything or nothing.
+func TestSearchWithFiltersAcceptsPlainDates(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "dates.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	for _, s := range []struct{ id, ts string }{
+		{"old", "2024-06-01 10:00:00 +0000 UTC"},
+		{"new", "2026-06-01 10:00:00 +0000 UTC"},
+	} {
+		res, err := database.Exec(`
+			INSERT INTO sessions (session_id, project_path, summary, created_at, updated_at)
+			VALUES (?, '/project', 'Parser work', ?, ?)
+		`, s.id, s.ts, s.ts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rowID, err := res.LastInsertId()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := database.Exec(`
+			INSERT INTO messages (uuid, session_id, type, text_content, timestamp, sequence)
+			VALUES (?, ?, 'user', 'fix the parser', ?, 1)
+		`, s.id+"-msg", rowID, s.ts); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ids := func(filters SearchFilters) []string {
+		t.Helper()
+		results, err := SearchWithFilters(database, filters)
+		if err != nil {
+			t.Fatalf("SearchWithFilters(%+v) error = %v", filters, err)
+		}
+		var got []string
+		for _, r := range results {
+			got = append(got, r.SessionID)
+		}
+		sort.Strings(got)
+		return got
+	}
+	for _, tc := range []struct {
+		filters SearchFilters
+		want    []string
+	}{
+		{SearchFilters{Query: "parser", BeforeDate: "2025-01-01"}, []string{"old"}},
+		{SearchFilters{Query: "parser", AfterDate: "2025-01-01"}, []string{"new"}},
+		{SearchFilters{ProjectPath: "/project", BeforeDate: "2025-01-01"}, []string{"old"}},
+		{SearchFilters{ProjectPath: "/project", AfterDate: "2025-01-01T00:00:00"}, []string{"new"}},
+	} {
+		if got := ids(tc.filters); !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("SearchWithFilters(%+v) = %v, want %v", tc.filters, got, tc.want)
+		}
+	}
+
+	if _, err := SearchWithFilters(database, SearchFilters{Query: "parser", BeforeDate: "next tuesday"}); err == nil {
+		t.Error("SearchWithFilters with an unreadable BeforeDate returned no error, want one")
+	}
+}
+
 // A cancelled search must stop instead of running to the end: the database
 // has one connection, so an abandoned search delays every query after it.
 func TestSearchWithFiltersContextStopsWhenCancelled(t *testing.T) {

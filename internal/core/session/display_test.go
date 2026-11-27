@@ -258,3 +258,24 @@ func TestDisplaySummary(t *testing.T) {
 		})
 	}
 }
+
+func TestDisplayLine(t *testing.T) {
+	tests := []struct {
+		name     string
+		text     string
+		maxRunes int
+		want     string
+	}{
+		{"short text unchanged", "the parser streams", 80, "the parser streams"},
+		{"lines join into one", "...intro\n\n  the parser\tstreams...", 80, "...intro the parser streams..."},
+		{"tags are kept", "<b>bold</b>", 80, "<b>bold</b>"},
+		{"capped with an ellipsis", "one two three", 7, "one two…"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := DisplayLine(tt.text, tt.maxRunes); got != tt.want {
+				t.Errorf("DisplayLine(%q, %d) = %q, want %q", tt.text, tt.maxRunes, got, tt.want)
+			}
+		})
+	}
+}

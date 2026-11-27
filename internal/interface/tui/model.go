@@ -44,6 +44,7 @@ type Model struct {
 	// showHeadless lists sessions started programmatically (`claude -p`),
 	// which are hidden by default.
 	showHeadless     bool
+	hiddenHeadless   int // headless sessions the last load left out
 	currentDirectory string
 
 	// Search state
@@ -370,6 +371,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.initialLoad = false
+		m.hiddenHeadless = msg.hiddenHeadless
 		m.applySessions(msg.sessions, msg.restoreSelection)
 		return m, nil
 

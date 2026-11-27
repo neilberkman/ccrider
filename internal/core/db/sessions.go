@@ -149,6 +149,7 @@ type ListSessionsOptions struct {
 // ListSessionsOptions). Sessions with no meaningful content (warmup-only,
 // etc) are excluded.
 func (db *DB) ListSessions(opts ListSessionsOptions) ([]Session, error) {
+	where, args := listSessionsFilter(opts)
 	query := `
 		SELECT
 			s.session_id,
@@ -171,41 +172,7 @@ func (db *DB) ListSessions(opts ListSessionsOptions) ([]Session, error) {
 			COALESCE(s.resume_via, '') as resume_via
 		FROM sessions s
 		LEFT JOIN session_summaries ss ON s.id = ss.session_id
-		WHERE (SELECT COUNT(*) FROM messages WHERE session_id = s.id) > 0
-		  -- Exclude sessions with no meaningful content
-		  AND NOT (
-			  -- Has bad/empty summary
-			  (s.summary LIKE '<user%prompt%>' OR s.summary = '<user_prompt>' OR TRIM(s.summary) = '')
-			  -- AND no meaningful user messages
-			  AND NOT EXISTS (
-				  SELECT 1 FROM messages
-				  WHERE session_id = s.id
-					AND type = 'user'
-					AND TRIM(text_content) != ''
-					AND text_content NOT LIKE 'This session is being continued%'
-					AND text_content NOT LIKE 'Resuming session from%'
-					AND text_content NOT LIKE '[Image %'
-					AND text_content NOT LIKE '%Request interrupted by user%'
-					AND text_content NOT LIKE 'Warmup'
-					AND text_content NOT LIKE 'Base directory for this skill:%'
-			  )
-		  )`
-
-	args := []interface{}{}
-	if opts.ProjectPath != "" {
-		query += " AND s.project_path LIKE ?"
-		args = append(args, "%"+opts.ProjectPath+"%")
-	}
-	if opts.Provider != "" {
-		query += " AND COALESCE(s.provider, 'claude') = ?"
-		args = append(args, opts.Provider)
-	}
-	if opts.HideHeadless {
-		query += " AND COALESCE(s.entrypoint, '') NOT LIKE ?"
-		args = append(args, HeadlessEntrypointPattern)
-	}
-
-	query += `
+		WHERE ` + where + `
 		ORDER BY s.updated_at DESC
 		LIMIT 1000
 	`
@@ -237,6 +204,57 @@ func (db *DB) ListSessions(opts ListSessionsOptions) ([]Session, error) {
 	}
 
 	return sessions, rows.Err()
+}
+
+// listSessionsFilter returns the WHERE clause, and its arguments, that picks
+// the sessions ListSessions returns for opts.
+func listSessionsFilter(opts ListSessionsOptions) (string, []interface{}) {
+	where := `(SELECT COUNT(*) FROM messages WHERE session_id = s.id) > 0
+		  -- Exclude sessions with no meaningful content
+		  AND NOT (
+			  -- Has bad/empty summary
+			  (s.summary LIKE '<user%prompt%>' OR s.summary = '<user_prompt>' OR TRIM(s.summary) = '')
+			  -- AND no meaningful user messages
+			  AND NOT EXISTS (
+				  SELECT 1 FROM messages
+				  WHERE session_id = s.id
+					AND type = 'user'
+					AND TRIM(text_content) != ''
+					AND text_content NOT LIKE 'This session is being continued%'
+					AND text_content NOT LIKE 'Resuming session from%'
+					AND text_content NOT LIKE '[Image %'
+					AND text_content NOT LIKE '%Request interrupted by user%'
+					AND text_content NOT LIKE 'Warmup'
+					AND text_content NOT LIKE 'Base directory for this skill:%'
+			  )
+		  )`
+
+	args := []interface{}{}
+	if opts.ProjectPath != "" {
+		where += " AND s.project_path LIKE ?"
+		args = append(args, "%"+opts.ProjectPath+"%")
+	}
+	if opts.Provider != "" {
+		where += " AND COALESCE(s.provider, 'claude') = ?"
+		args = append(args, opts.Provider)
+	}
+	if opts.HideHeadless {
+		where += " AND COALESCE(s.entrypoint, '') NOT LIKE ?"
+		args = append(args, HeadlessEntrypointPattern)
+	}
+	return where, args
+}
+
+// CountHeadlessSessions counts the headless sessions ListSessions hides for
+// opts: those that pass every other filter, so the count matches what
+// showing headless sessions would add.
+func (db *DB) CountHeadlessSessions(opts ListSessionsOptions) (int, error) {
+	opts.HideHeadless = false
+	where, args := listSessionsFilter(opts)
+	var count int
+	err := db.QueryRow(`SELECT COUNT(*) FROM sessions s WHERE `+where+` AND COALESCE(s.entrypoint, '') LIKE ?`,
+		append(args, HeadlessEntrypointPattern)...).Scan(&count)
+	return count, err
 }
 
 // GetSessionLaunchInfo returns the minimal info needed to launch/resume a session
