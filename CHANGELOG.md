@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.19.0] - 2026-11-27
+
+### Added
+
+- **The TUI footer counts hidden headless sessions** ([#58](https://github.com/neilberkman/ccrider/pull/58)) — while headless sessions are hidden, the footer reads `a show headless (1161 hidden)`. The count covers every session the other filters allow, including ones past the list's newest 1,000. Thanks to @penguinboi
+- **`7d`, `2w` and `last-week` in date filters** ([#60](https://github.com/neilberkman/ccrider/pull/60)) — the date filter documentation listed these, but they didn't parse, and the filter was dropped, so `after:7d` searched every session. They now mean that many days or weeks ago. Thanks to @penguinboi
+
+### Fixed
+
+- **MCP search date filters accept plain dates** ([#59](https://github.com/neilberkman/ccrider/pull/59)) — `search_sessions` documents `after_date` and `before_date` as dates like `2025-01-01`, but only full RFC3339 timestamps worked. A plain `before_date` returned no sessions, and a plain `after_date` was ignored. Both now accept `YYYY-MM-DD`, `YYYY-MM-DDTHH:MM:SS` (UTC) and RFC3339, and any other value is an error instead of a silently dropped filter. Thanks to @penguinboi
+- **Search match snippets stay on one line** ([#56](https://github.com/neilberkman/ccrider/pull/56)) — `ccrider search` printed snippets with their line breaks, and TUI search cut each snippet at its first newline, which hid a match that came after one. Both now show the whole snippet on one line. Thanks to @penguinboi
+
 ## [1.18.1] - 2026-11-26
 
 ### Changed
