@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.19.2] - 2026-11-27
+
+### Fixed
+
+- **Searching for a common word is fast** ([#61](https://github.com/neilberkman/ccrider/pull/61)) — search built a text snippet for every match before keeping the newest 1,000, so a word with many matches took seconds: "work", with 116k matches, took 13 s and now takes under 1 s. This applies to `ccrider search`, TUI search and the MCP server. Matches with the same timestamp are now ordered consistently
+- **`today`, `yesterday` and `tomorrow` mean the start of that day** ([#61](https://github.com/neilberkman/ccrider/pull/61)) — `after:today` meant "after right now" and found nothing, and `yesterday` meant exactly 24 hours ago. Both now count from midnight local time
+- **TUI search shows what it is doing** ([#61](https://github.com/neilberkman/ccrider/pull/61)) — a search that found nothing showed "Type to search (minimum 2 characters)", and a search still running showed the previous screen. It now shows "No results found" and "Searching…", and Enter waits for the results instead of opening one from the previous query. Results listed by a date or project filter alone no longer show "(0 matches)"
+
 ## [1.19.1] - 2026-11-27
 
 ### Fixed
