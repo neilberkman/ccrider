@@ -15,6 +15,7 @@ func (m Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		m.cancelSearch()
+		m.searchPending = false
 		m.mode = listView
 		m.searchInput.SetValue("")
 		m.searchResults = nil
@@ -24,7 +25,8 @@ func (m Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "enter":
 		// Open selected session
-		if len(m.searchResults) > 0 && m.searchSelectedIdx < len(m.searchResults) {
+		// While a search runs, the results on hand belong to an earlier query.
+		if !m.searchPending && len(m.searchResults) > 0 && m.searchSelectedIdx < len(m.searchResults) {
 			sessionID := m.searchResults[m.searchSelectedIdx].SessionID
 			return m, loadSessionDetail(m.db, sessionID)
 		}
@@ -89,7 +91,10 @@ func (m Model) viewSearch() string {
 	b.WriteString("\n\n")
 
 	// Results
-	if m.searchResults == nil {
+	if m.searchPending {
+		// Results for an earlier query would be misleading while this one runs.
+		b.WriteString(searchMetaStyle.Render("Searching…"))
+	} else if m.searchResults == nil {
 		b.WriteString(searchMetaStyle.Render("Type to search (minimum 2 characters)"))
 	} else if len(m.searchResults) == 0 {
 		if m.showHeadless {
@@ -169,11 +174,17 @@ func (m Model) viewSearch() string {
 			}
 
 			// Session header with match count and updated time
-			matchCount := fmt.Sprintf("(%d %s)", len(result.Matches),
-				map[bool]string{true: "match", false: "matches"}[len(result.Matches) == 1])
+			// A filter-only search (a date or project, no words) lists
+			// sessions without matching text, so it shows no match count.
 			updatedTime := formatTime(result.UpdatedAt)
-			fmt.Fprintf(&b, "%s%s %s | %s\n", prefix, summary,
-				searchMetaStyle.Render(matchCount), searchMetaStyle.Render(updatedTime))
+			if len(result.Matches) > 0 {
+				matchCount := fmt.Sprintf("(%d %s)", len(result.Matches),
+					map[bool]string{true: "match", false: "matches"}[len(result.Matches) == 1])
+				fmt.Fprintf(&b, "%s%s %s | %s\n", prefix, summary,
+					searchMetaStyle.Render(matchCount), searchMetaStyle.Render(updatedTime))
+			} else {
+				fmt.Fprintf(&b, "%s%s %s\n", prefix, summary, searchMetaStyle.Render("| "+updatedTime))
+			}
 
 			// Truncate project path too
 			project := result.Project

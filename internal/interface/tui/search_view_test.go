@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -162,5 +163,91 @@ func TestKeystrokeCancelsRunningSearch(t *testing.T) {
 
 	if msgs := runCmd(running); len(msgs) != 1 || msgs[0] != nil {
 		t.Errorf("search overtaken by a keystroke produced %#v, want nothing", msgs)
+	}
+}
+
+// The search view tells apart a query too short to run, a search still
+// running, and a search that found nothing.
+func TestSearchViewStates(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "states.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+
+	results := func(query string) []searchResult {
+		t.Helper()
+		msg, ok := performSearch(context.Background(), database, query, true, 1)().(searchResultsMsg)
+		if !ok {
+			t.Fatalf("performSearch(%q) did not return searchResultsMsg", query)
+		}
+		return msg.results
+	}
+	if got := results("w"); got != nil {
+		t.Errorf("one-character query: results = %v, want nil (keep typing)", got)
+	}
+	if got := results("nothingmatchesthis"); got == nil || len(got) != 0 {
+		t.Errorf("query with no matches: results = %#v, want an empty, non-nil list", got)
+	}
+
+	model := NewWithContext(context.Background(), database)
+	defer model.Close()
+	model.mode = searchView
+	model.width, model.height = 120, 40
+	model.showHeadless = true
+	for _, tc := range []struct {
+		name    string
+		pending bool
+		results []searchResult
+		want    string
+	}{
+		{"too short", false, nil, "Type to search"},
+		{"running", true, nil, "Searching…"},
+		{"running, earlier results on hand", true, []searchResult{{SessionID: "old", Summary: "Earlier query"}}, "Searching…"},
+		{"found nothing", false, []searchResult{}, "No results found"},
+	} {
+		model.searchPending, model.searchResults = tc.pending, tc.results
+		view := model.viewSearch()
+		if !strings.Contains(view, tc.want) {
+			t.Errorf("%s: view = %q, want %q", tc.name, view, tc.want)
+		}
+		if tc.pending && strings.Contains(view, "Earlier query") {
+			t.Errorf("%s: view shows an earlier query's results while searching", tc.name)
+		}
+	}
+
+	// Enter while a search runs must not open a result from the earlier query.
+	model.searchPending = true
+	model.searchResults = []searchResult{{SessionID: "old", Summary: "Earlier query"}}
+	if _, cmd := model.updateSearch(tea.KeyMsg{Type: tea.KeyEnter}); cmd != nil {
+		t.Error("enter while searching returned a command, want none")
+	}
+}
+
+// A filter-only search lists sessions without matching text, so its rows show
+// no match count.
+func TestFilterOnlyResultsShowNoMatchCount(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "filter-only.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	model := NewWithContext(context.Background(), database)
+	defer model.Close()
+	model.mode = searchView
+	model.width, model.height = 120, 40
+	model.showHeadless = true
+	model.searchResults = []searchResult{
+		{SessionID: "listed", Summary: "Listed by date", UpdatedAt: "2026-11-27T10:00:00Z"},
+		{SessionID: "matched", Summary: "Matched text", UpdatedAt: "2026-11-27T10:00:00Z", Matches: []matchInfo{{Snippet: "the parser"}}},
+	}
+	view := model.viewSearch()
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(line, "Listed by date") && strings.Contains(line, "match") {
+			t.Errorf("filter-only row = %q, want no match count", line)
+		}
+		if strings.Contains(line, "Matched text") && !strings.Contains(line, "(1 match)") {
+			t.Errorf("text match row = %q, want (1 match)", line)
+		}
 	}
 }

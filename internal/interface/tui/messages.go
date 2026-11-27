@@ -72,6 +72,10 @@ func performSearch(ctx context.Context, database *db.DB, query string, showHeadl
 		// Parse filters from query using centralized core parser
 		filters := search.ParseQuery(query)
 		filters.HideHeadless = !showHeadless
+		if !filters.Searchable() {
+			// Nil results show the "keep typing" prompt, not "no results".
+			return searchResultsMsg{seq: seq}
+		}
 
 		// Call core search with filters
 		coreResults, err := search.SearchWithFiltersContext(ctx, database, filters)
@@ -83,7 +87,9 @@ func performSearch(ctx context.Context, database *db.DB, query string, showHeadl
 		}
 
 		// Convert core types to interface types (interface concern - presentation)
-		var results []searchResult
+		// Non-nil even when empty: a search that ran and found nothing shows
+		// "No results found", not the prompt to type.
+		results := []searchResult{}
 		for _, coreSession := range coreResults {
 			result := searchResult{
 				SessionID: coreSession.SessionID,
