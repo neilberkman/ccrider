@@ -1,6 +1,7 @@
 package search
 
 import (
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,7 +30,7 @@ func init() {
 //
 // Supported date formats:
 //   - ISO 8601: 2024-01-15, 2024-01-15T10:30:00
-//   - Go duration: 3h, 24h, 7d (treated as "X ago")
+//   - Go duration: 3h, 24h; day or week count: 7d, 2w (treated as "X ago")
 //   - Natural language: yesterday, today, tomorrow
 //   - Relative: "3 days ago", "last week", "in 2 hours"
 //   - Hyphenated: 3-days-ago, last-week (converted to spaces)
@@ -88,6 +89,12 @@ func parseDate(dateStr string) *time.Time {
 		return &t
 	}
 
+	// 1b. Day and week counts (7d, 2w), which Go durations lack, also "X ago"
+	if days, ok := dayCount(dateStr); ok {
+		t := time.Now().AddDate(0, 0, -days)
+		return &t
+	}
+
 	// 2. Try standard ISO date formats (before natural language to avoid misparses)
 	formats := []string{
 		"2006-01-02",
@@ -106,6 +113,13 @@ func parseDate(dateStr string) *time.Time {
 	// "3-days-ago" -> "3 days ago", "last-week" -> "last week"
 	normalizedStr := strings.ReplaceAll(dateStr, "-", " ")
 
+	// The natural language parser has no rule for "last week", so it means
+	// seven days ago, like the other relative forms.
+	if normalizedStr == "last week" {
+		t := time.Now().AddDate(0, 0, -7)
+		return &t
+	}
+
 	// 4. Try natural language parsing with 'when' library
 	result, err := dateParser.Parse(normalizedStr, time.Now())
 	if err == nil && result != nil {
@@ -113,4 +127,29 @@ func parseDate(dateStr string) *time.Time {
 	}
 
 	return nil
+}
+
+// maxDayCount bounds a day or week count at 100 years, far past any session
+// history, so a typo can't overflow into a date in the future.
+const maxDayCount = 100 * 366
+
+// dayCount reads a count of days (7d) or weeks (2w) as a number of days.
+func dayCount(s string) (int, bool) {
+	if len(s) < 2 {
+		return 0, false
+	}
+	n, err := strconv.Atoi(s[:len(s)-1])
+	if err != nil || n < 0 || n > maxDayCount {
+		return 0, false
+	}
+	switch s[len(s)-1] {
+	case 'd':
+		return n, true
+	case 'w':
+		if n*7 > maxDayCount {
+			return 0, false
+		}
+		return n * 7, true
+	}
+	return 0, false
 }
