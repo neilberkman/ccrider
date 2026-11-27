@@ -151,6 +151,9 @@ func (m Model) viewSearch() string {
 			// Format: "► summary (N matches) | time ago"
 			// Reserve: 4 for prefix, ~20 for match count, ~15 for time = ~40
 			maxSummaryLen := m.width - 40
+			if result.Provider != "" {
+				maxSummaryLen -= len(result.Provider) + 3 // "[provider] "
+			}
 			if maxSummaryLen < 30 {
 				maxSummaryLen = 30
 			}
@@ -162,6 +165,11 @@ func (m Model) viewSearch() string {
 			}
 			if summary == "" {
 				summary = "[No summary]"
+			}
+			// Name the agent, as the session list does: runs of the same
+			// brief by different agents otherwise look identical.
+			if result.Provider != "" {
+				summary = "[" + result.Provider + "] " + summary
 			}
 
 			// Add selection indicator

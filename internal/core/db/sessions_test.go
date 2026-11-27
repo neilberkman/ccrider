@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"testing"
 )
@@ -303,6 +304,60 @@ func TestCountHeadlessSessions(t *testing.T) {
 		}
 		if diff := len(all) - len(visible); got != diff {
 			t.Errorf("CountHeadlessSessions(%+v) = %d, but pressing 'a' adds %d sessions", tc.opts, got, diff)
+		}
+	}
+}
+
+// A session's fallback title skips Claude Code's records of slash commands,
+// and a session with no user message is titled with its first assistant
+// message instead of having no title.
+func TestSummaryFallbackSkipsCommandsAndUsesAssistant(t *testing.T) {
+	database := newSessionTestDB(t)
+	sessions := map[string][][2]string{
+		"after-command": {
+			{"user", "<local-command-caveat>The command below was run directly in Claude Code, not sent to you as a request.</local-command-caveat>"},
+			{"user", "<command-name>/model</command-name>"},
+			{"user", "<local-command-stdout>Set model to opus</local-command-stdout>"},
+			{"user", "find the pelican session"},
+		},
+		"assistant-only": {
+			{"assistant", "Phase 3 audit complete across all 9 repositories."},
+		},
+	}
+	for id, msgs := range sessions {
+		res, err := database.Exec(`
+			INSERT INTO sessions (session_id, project_path, summary, provider, created_at, updated_at)
+			VALUES (?, '/p', '', 'claude', datetime('now'), datetime('now'))
+		`, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rowID, err := res.LastInsertId()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, m := range msgs {
+			if _, err := database.Exec(`
+				INSERT INTO messages (uuid, session_id, type, sender, text_content, timestamp, sequence)
+				VALUES (?, ?, ?, ?, ?, datetime('now'), ?)
+			`, fmt.Sprintf("%s-%d", id, i), rowID, m[0], m[0], m[1], i+1); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	want := map[string]string{
+		"after-command":  "find the pelican session",
+		"assistant-only": "Phase 3 audit complete across all 9 repositories.",
+	}
+	for id, title := range want {
+		var got string
+		if err := database.QueryRow(`
+			SELECT `+SummaryExpr+` FROM sessions s LEFT JOIN session_summaries ss ON s.id = ss.session_id
+			WHERE s.session_id = ?`, id).Scan(&got); err != nil {
+			t.Fatal(err)
+		}
+		if got != title {
+			t.Errorf("%s: title = %q, want %q", id, got, title)
 		}
 	}
 }

@@ -251,3 +251,28 @@ func TestFilterOnlyResultsShowNoMatchCount(t *testing.T) {
 		}
 	}
 }
+
+// Search rows name the agent, as the session list does, so runs of the same
+// brief by different agents can be told apart.
+func TestSearchRowsShowProvider(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "provider.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	model := NewWithContext(context.Background(), database)
+	defer model.Close()
+	model.mode = searchView
+	model.width, model.height = 120, 40
+	model.showHeadless = true
+	model.searchResults = []searchResult{
+		{SessionID: "a", Provider: "codex", Summary: "Read the brief", UpdatedAt: "2026-11-27T10:00:00Z"},
+		{SessionID: "b", Provider: "antigravity", Summary: "Read the brief", UpdatedAt: "2026-11-27T10:00:00Z"},
+	}
+	view := model.viewSearch()
+	for _, want := range []string{"[codex] Read the brief", "[antigravity] Read the brief"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("view = %q, want a row %q", view, want)
+		}
+	}
+}

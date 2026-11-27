@@ -95,7 +95,8 @@ const HeadlessEntrypointPattern = "sdk-%"
 
 // SummaryExpr computes a session's display summary with fallbacks: the LLM
 // one-line summary, then the stored llm_summary, then — when the recorded
-// summary is a placeholder — the first meaningful user message. It requires
+// summary is a placeholder — the first meaningful user message, or the first
+// assistant message when the session has no user message. It requires
 // `sessions s LEFT JOIN session_summaries ss` aliases in the enclosing query.
 const SummaryExpr = `COALESCE(
 	NULLIF(ss.one_line_summary, ''),
@@ -119,6 +120,10 @@ const SummaryExpr = `COALESCE(
 			   AND text_content NOT LIKE 'Warmup'
 			   AND text_content NOT LIKE 'Base directory for this skill:%'
 			   AND text_content NOT LIKE 'Caveat: The messages below%'
+			   -- Claude Code's records of slash commands the user ran
+			   AND text_content NOT LIKE '<local-command-caveat>%'
+			   AND text_content NOT LIKE '<local-command-stdout>%'
+			   AND text_content NOT LIKE '<command-name>%'
 			   AND LENGTH(LTRIM(
 			     CASE
 			       WHEN text_content LIKE '<%'
@@ -127,6 +132,15 @@ const SummaryExpr = `COALESCE(
 			     END,
 			     char(10) || char(13) || char(9) || ' '
 			   )) > 0
+			 ORDER BY sequence ASC
+			 LIMIT 1),
+			-- A session with no user message (an agent run that only
+			-- reported back) is titled with its first assistant message.
+			(SELECT text_content
+			 FROM messages
+			 WHERE session_id = s.id
+			   AND type = 'assistant'
+			   AND LENGTH(TRIM(text_content, char(10) || char(13) || char(9) || ' ')) > 0
 			 ORDER BY sequence ASC
 			 LIMIT 1),
 			''
