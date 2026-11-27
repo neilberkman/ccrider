@@ -1,6 +1,8 @@
 package search
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -602,5 +604,26 @@ func TestSearchWithFiltersAcceptsPlainDates(t *testing.T) {
 
 	if _, err := SearchWithFilters(database, SearchFilters{Query: "parser", BeforeDate: "next tuesday"}); err == nil {
 		t.Error("SearchWithFilters with an unreadable BeforeDate returned no error, want one")
+	}
+}
+
+// A cancelled search must stop instead of running to the end: the database
+// has one connection, so an abandoned search delays every query after it.
+func TestSearchWithFiltersContextStopsWhenCancelled(t *testing.T) {
+	database, err := db.New(filepath.Join(t.TempDir(), "cancel.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	for _, filters := range []SearchFilters{
+		{Query: "parser"},         // full-text search
+		{ProjectPath: "/project"}, // filter-only search
+	} {
+		if _, err := SearchWithFiltersContext(ctx, database, filters); !errors.Is(err, context.Canceled) {
+			t.Errorf("SearchWithFiltersContext(%+v) error = %v, want context.Canceled", filters, err)
+		}
 	}
 }

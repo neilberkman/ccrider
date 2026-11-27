@@ -51,8 +51,9 @@ type Model struct {
 	searchInput       textinput.Model
 	searchResults     []searchResult
 	searchSelectedIdx int
-	searchViewOffset  int    // First visible result index (for scrolling)
-	searchSeq         uint64 // Sequence number to discard stale search results
+	searchViewOffset  int                // First visible result index (for scrolling)
+	searchSeq         uint64             // Sequence number to discard stale search results
+	searchCancel      context.CancelFunc // Stops the running search, if any
 
 	// In-session search state
 	inSessionSearch         textinput.Model
@@ -231,6 +232,7 @@ func (m Model) Init() tea.Cmd {
 
 // Close cancels and joins any active sync before its database is closed.
 func (m Model) Close() {
+	m.cancelSearch()
 	if m.syncManager != nil {
 		m.syncManager.close()
 	}
@@ -409,7 +411,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.seq != m.searchSeq {
 			return m, nil
 		}
-		return m, performSearch(m.db, m.searchInput.Value(), m.showHeadless, m.searchSeq)
+		ctx, cancel := context.WithCancel(context.Background())
+		m.searchCancel = cancel
+		return m, performSearch(ctx, m.db, m.searchInput.Value(), m.showHeadless, m.searchSeq)
 
 	case searchResultsMsg:
 		// Only accept results if sequence matches current search (discard stale results)

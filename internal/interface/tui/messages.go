@@ -65,14 +65,19 @@ type exportCompletedMsg struct {
 	err      error
 }
 
-func performSearch(database *db.DB, query string, showHeadless bool, seq uint64) tea.Cmd {
+// performSearch runs a search and reports its results, or nothing when ctx
+// was cancelled because a newer search replaced it.
+func performSearch(ctx context.Context, database *db.DB, query string, showHeadless bool, seq uint64) tea.Cmd {
 	return func() tea.Msg {
 		// Parse filters from query using centralized core parser
 		filters := search.ParseQuery(query)
 		filters.HideHeadless = !showHeadless
 
 		// Call core search with filters
-		coreResults, err := search.SearchWithFilters(database, filters)
+		coreResults, err := search.SearchWithFiltersContext(ctx, database, filters)
+		if ctx.Err() != nil {
+			return nil
+		}
 		if err != nil {
 			return errMsg{err}
 		}

@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -72,6 +73,11 @@ func (db *DB) Exec(query string, args ...interface{}) (sql.Result, error) {
 // Query executes a query that returns rows
 func (db *DB) Query(query string, args ...interface{}) (*sql.Rows, error) {
 	return db.conn.Query(query, args...)
+}
+
+// QueryContext executes a query that returns rows, stopping when ctx is done
+func (db *DB) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
+	return db.conn.QueryContext(ctx, query, args...)
 }
 
 // QueryRow executes a query that returns a single row
