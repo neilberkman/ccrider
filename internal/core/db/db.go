@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -56,8 +57,26 @@ func New(dbPath string) (*DB, error) {
 }
 
 // Close closes the database connection
+// closeWait bounds how long Close waits for busy connections to close.
+const closeWait = 5 * time.Second
+
+// Close closes the database and waits until every connection has closed, so
+// the database file is released when Close returns. database/sql closes idle
+// connections at once, but a connection still busy, such as one rolling back
+// a transaction whose context expired, closes only when it is released; Close
+// alone could return with the file still open, and on Windows the file then
+// cannot be deleted or replaced. A connection still open after closeWait has
+// leaked, and Close reports it.
 func (db *DB) Close() error {
-	return db.conn.Close()
+	err := db.conn.Close()
+	deadline := time.Now().Add(closeWait)
+	for db.conn.Stats().OpenConnections > 0 {
+		if time.Now().After(deadline) {
+			return errors.Join(err, fmt.Errorf("%d database connections still open %v after close", db.conn.Stats().OpenConnections, closeWait))
+		}
+		time.Sleep(time.Millisecond)
+	}
+	return err
 }
 
 // Begin starts a new transaction
