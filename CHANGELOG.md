@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.19.1] - 2026-11-27
+
+### Fixed
+
+- **Typing in TUI search cancels the search it replaces** ([#57](https://github.com/neilberkman/ccrider/pull/57)) — live search waits for typing to pause, but a search started on a short prefix kept running, and the database runs one query at a time, so the search for the finished query waited behind it. Typing again now cancels the running search, and so do esc and quitting. With a pause after the first two characters of a 10-character query, results arrived in about 0.7 s instead of 1.5–3.8 s. Thanks to @penguinboi
+
 ## [1.19.0] - 2026-11-27
 
 ### Added
