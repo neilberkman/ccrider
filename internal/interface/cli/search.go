@@ -104,7 +104,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 				break
 			}
 			fmt.Printf("  Match %d:\n", i+1)
-			fmt.Printf("  %s\n", truncateMessage(match.MessageText, 200))
+			fmt.Printf("  %s\n", coresession.DisplayLine(match.MessageText, 200))
 			fmt.Println()
 		}
 	}
