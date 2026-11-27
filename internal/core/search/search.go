@@ -1,6 +1,7 @@
 package search
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -66,6 +67,13 @@ func Search(database *db.DB, query string) ([]SearchResult, error) {
 // SearchWithFilters performs filtered search and groups results by session
 // This consolidates business logic that was duplicated across TUI and MCP
 func SearchWithFilters(database *db.DB, filters SearchFilters) ([]SessionSearchResult, error) {
+	var err error
+	if filters.AfterDate, err = normalizeFilterDate(filters.AfterDate); err != nil {
+		return nil, fmt.Errorf("after date: %w", err)
+	}
+	if filters.BeforeDate, err = normalizeFilterDate(filters.BeforeDate); err != nil {
+		return nil, fmt.Errorf("before date: %w", err)
+	}
 	query := strings.TrimSpace(filters.Query)
 	hasFilters := filters.AfterDate != "" || filters.BeforeDate != "" || filters.ProjectPath != ""
 
@@ -302,6 +310,29 @@ func calculateRelevanceScore(query string, session *SessionSearchResult, now tim
 	}
 
 	return score
+}
+
+// ErrInvalidDate means a filter date is in no form SearchFilters accepts.
+// Retrying the search cannot fix it.
+var ErrInvalidDate = errors.New("unrecognized date")
+
+// filterDateFormats are the date forms SearchFilters accepts: RFC3339, as
+// ParseQuery produces, and the plain ISO 8601 dates MCP callers pass.
+var filterDateFormats = []string{time.RFC3339, "2006-01-02T15:04:05", "2006-01-02"}
+
+// normalizeFilterDate rewrites a filter date in RFC3339, the form the date
+// comparisons read. An empty date stays empty; an unreadable one is an error,
+// since dropping it would silently widen or empty the results.
+func normalizeFilterDate(date string) (string, error) {
+	if date == "" {
+		return "", nil
+	}
+	for _, format := range filterDateFormats {
+		if t, err := time.Parse(format, date); err == nil {
+			return t.Format(time.RFC3339), nil
+		}
+	}
+	return "", fmt.Errorf("%w %q, want YYYY-MM-DD, YYYY-MM-DDTHH:MM:SS (UTC) or RFC3339", ErrInvalidDate, date)
 }
 
 // filterOnlySessions returns sessions matching date/project filters without text search

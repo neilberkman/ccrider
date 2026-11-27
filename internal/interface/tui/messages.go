@@ -167,22 +167,6 @@ func loadSessionsNow(database *db.DB, filterByProject bool, showHeadless bool, p
 	return sessionsLoadedMsg{sessions: sessions, hiddenHeadless: hiddenHeadless, generation: generation, restoreSelection: restoreSelection}
 }
 
-func firstLine(s string, maxLen int) string {
-	// Find first newline or max length
-	for i, r := range s {
-		if r == '\n' || i >= maxLen {
-			if i > maxLen {
-				return s[:maxLen] + "..."
-			}
-			return s[:i]
-		}
-	}
-	if len(s) > maxLen {
-		return s[:maxLen] + "..."
-	}
-	return s
-}
-
 // loadSessionForLaunch loads just the info needed to launch a session (no messages)
 func loadSessionForLaunch(database *db.DB, sessionID string) tea.Cmd {
 	return func() tea.Msg {
