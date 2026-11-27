@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.19.3] - 2026-11-27
+
+### Fixed
+
+- **TUI search rows name the agent** ([#62](https://github.com/neilberkman/ccrider/pull/62)) — search results start with `[codex]`, `[antigravity]` and so on, as the session list does. Runs of the same brief by different agents had identical rows
+- **Sessions that start with a slash command get a real title** ([#62](https://github.com/neilberkman/ccrider/pull/62)) — the title fell back to Claude Code's notice "The command below was run directly in Claude Code…". It now skips Claude Code's records of slash commands and uses the first real prompt
+- **Sessions with no user message get a title** ([#62](https://github.com/neilberkman/ccrider/pull/62)) — an agent run that only reported back showed `[No summary]`. It is now titled with its first assistant message
+
 ## [1.19.2] - 2026-11-27
 
 ### Fixed
